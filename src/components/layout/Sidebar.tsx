@@ -12,6 +12,7 @@ import {
   FileText,
   GraduationCap,
   Search,
+  UserCog,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -34,6 +35,7 @@ const navItems = [
   { to: '/contracts', icon: FileText, label: 'Contracts' },
   { to: '/draft', icon: GraduationCap, label: 'Draft' },
   { to: '/scouting', icon: Search, label: 'Scouting' },
+  { to: '/staff', icon: UserCog, label: 'Staff' },
 ]
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {

@@ -18,6 +18,7 @@ import { generateFinalsRound, isSeasonComplete, getPremier } from '@/engine/seas
 import { rollMatchInjuries, healInjuries } from '@/engine/players/injuries'
 import { updateMoralePostMatch } from '@/engine/players/morale'
 import { SeededRNG } from '@/engine/core/rng'
+import { generateClubStaff, generateStaffPool } from '@/engine/staff/staffEngine'
 
 // ---------------------------------------------------------------------------
 // IndexedDB storage adapter (via idb-keyval)
@@ -148,6 +149,21 @@ export const useGameStore = create<GameStore>()(
           }
         }
 
+        // Generate staff for all 18 clubs + a free agent pool
+        const staffRecord: Record<string, import('@/types/staff').StaffMember> = {}
+        const staffRng = new SeededRNG(seed + 7777)
+        for (const c of clubsJson as Club[]) {
+          const clubStaff = generateClubStaff(c.id, staffRng)
+          for (const s of clubStaff) {
+            staffRecord[s.id] = s
+          }
+        }
+        // Generate a pool of available coaches for hiring
+        const freeAgentStaff = generateStaffPool(20, staffRng)
+        for (const s of freeAgentStaff) {
+          staffRecord[s.id] = s
+        }
+
         // Generate fixture
         const season = generateFixture(clubsRecord, seed)
 
@@ -176,6 +192,7 @@ export const useGameStore = create<GameStore>()(
 
           state.clubs = clubsRecord
           state.players = playersRecord
+          state.staff = staffRecord
           state.season = season
           state.ladder = ladder
         })
