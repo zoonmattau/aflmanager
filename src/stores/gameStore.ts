@@ -82,6 +82,8 @@ const createDefaultState = (): GameState => ({
   newsLog: [],
   rngSeed: Date.now(),
   selectedLineup: null,
+  draft: null,
+  scouts: [],
 })
 
 // ---------------------------------------------------------------------------

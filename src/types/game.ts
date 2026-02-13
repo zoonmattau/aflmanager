@@ -3,6 +3,7 @@ import type { Player } from './player'
 import type { Season, LadderEntry } from './season'
 import type { Match } from './match'
 import type { StaffMember } from './staff'
+import type { DraftState, Scout } from './draft'
 
 export type GamePhase =
   | 'setup'           // Choosing club
@@ -64,4 +65,8 @@ export interface GameState {
 
   // Lineup for user's club (player IDs assigned to positions)
   selectedLineup: Record<string, string> | null
+
+  // Draft data
+  draft: DraftState | null
+  scouts: Scout[]
 }

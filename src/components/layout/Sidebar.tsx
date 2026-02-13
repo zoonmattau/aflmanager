@@ -10,6 +10,8 @@ import {
   Settings,
   DollarSign,
   FileText,
+  GraduationCap,
+  Search,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -30,6 +32,8 @@ const navItems = [
   { to: '/ladder', icon: Trophy, label: 'Ladder' },
   { to: '/salary-cap', icon: DollarSign, label: 'Salary Cap' },
   { to: '/contracts', icon: FileText, label: 'Contracts' },
+  { to: '/draft', icon: GraduationCap, label: 'Draft' },
+  { to: '/scouting', icon: Search, label: 'Scouting' },
 ]
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
