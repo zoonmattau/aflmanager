@@ -16,6 +16,7 @@ import {
   ArrowLeftRight,
   Building2,
   Dumbbell,
+  CalendarClock,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -42,6 +43,7 @@ const navItems = [
   { to: '/trades', icon: ArrowLeftRight, label: 'Trades' },
   { to: '/club', icon: Building2, label: 'Club' },
   { to: '/training', icon: Dumbbell, label: 'Training' },
+  { to: '/offseason', icon: CalendarClock, label: 'Offseason' },
 ]
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {

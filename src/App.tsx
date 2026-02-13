@@ -2,7 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ThemeProvider } from '@/components/layout/ThemeProvider'
 import { AppLayout } from '@/components/layout/AppLayout'
-import { SetupPage } from '@/pages/SetupPage'
+import { NewGamePage } from '@/pages/NewGamePage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { SquadPage } from '@/pages/SquadPage'
 import { MatchDayPage } from '@/pages/MatchDayPage'
@@ -18,6 +18,7 @@ import { StaffPage } from '@/pages/StaffPage'
 import { TradePage } from '@/pages/TradePage'
 import { ClubPage } from '@/pages/ClubPage'
 import { TrainingPage } from '@/pages/TrainingPage'
+import { OffseasonPage } from '@/pages/OffseasonPage'
 import { useGameStore } from '@/stores/gameStore'
 
 export default function App() {
@@ -29,7 +30,7 @@ export default function App() {
         <BrowserRouter>
           {phase === 'setup' ? (
             <Routes>
-              <Route path="*" element={<SetupPage />} />
+              <Route path="*" element={<NewGamePage />} />
             </Routes>
           ) : (
             <AppLayout>
@@ -49,6 +50,7 @@ export default function App() {
                 <Route path="/trades" element={<TradePage />} />
                 <Route path="/club" element={<ClubPage />} />
                 <Route path="/training" element={<TrainingPage />} />
+                <Route path="/offseason" element={<OffseasonPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </AppLayout>
