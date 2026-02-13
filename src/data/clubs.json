@@ -1,0 +1,714 @@
+[
+  {
+    "id": "adelaide",
+    "name": "Adelaide",
+    "fullName": "Adelaide Crows",
+    "abbreviation": "ADEL",
+    "mascot": "Crows",
+    "homeGround": "Adelaide Oval",
+    "colors": {
+      "primary": "#002B5C",
+      "secondary": "#E21937",
+      "tertiary": "#F6B207"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "brisbane",
+    "name": "Brisbane",
+    "fullName": "Brisbane Lions",
+    "abbreviation": "BRL",
+    "mascot": "Lions",
+    "homeGround": "The Gabba",
+    "colors": {
+      "primary": "#A30046",
+      "secondary": "#0054A4",
+      "tertiary": "#F9A01B"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "carlton",
+    "name": "Carlton",
+    "fullName": "Carlton Blues",
+    "abbreviation": "CARL",
+    "mascot": "Blues",
+    "homeGround": "Marvel Stadium",
+    "colors": {
+      "primary": "#002B5C",
+      "secondary": "#FFFFFF"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "collingwood",
+    "name": "Collingwood",
+    "fullName": "Collingwood Magpies",
+    "abbreviation": "COLL",
+    "mascot": "Magpies",
+    "homeGround": "MCG",
+    "colors": {
+      "primary": "#000000",
+      "secondary": "#FFFFFF"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "essendon",
+    "name": "Essendon",
+    "fullName": "Essendon Bombers",
+    "abbreviation": "ESS",
+    "mascot": "Bombers",
+    "homeGround": "Marvel Stadium",
+    "colors": {
+      "primary": "#CC2031",
+      "secondary": "#000000"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "fremantle",
+    "name": "Fremantle",
+    "fullName": "Fremantle Dockers",
+    "abbreviation": "FRE",
+    "mascot": "Dockers",
+    "homeGround": "Optus Stadium",
+    "colors": {
+      "primary": "#2A0D45",
+      "secondary": "#FFFFFF",
+      "tertiary": "#2EAC6D"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "geelong",
+    "name": "Geelong",
+    "fullName": "Geelong Cats",
+    "abbreviation": "GEEL",
+    "mascot": "Cats",
+    "homeGround": "GMHBA Stadium",
+    "colors": {
+      "primary": "#001F3D",
+      "secondary": "#FFFFFF"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "goldcoast",
+    "name": "Gold Coast",
+    "fullName": "Gold Coast Suns",
+    "abbreviation": "GCS",
+    "mascot": "Suns",
+    "homeGround": "People First Stadium",
+    "colors": {
+      "primary": "#CE0E2D",
+      "secondary": "#F4AA00",
+      "tertiary": "#003DA5"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "gws",
+    "name": "GWS",
+    "fullName": "GWS Giants",
+    "abbreviation": "GWS",
+    "mascot": "Giants",
+    "homeGround": "Engie Stadium",
+    "colors": {
+      "primary": "#F47920",
+      "secondary": "#4A4F55",
+      "tertiary": "#FFFFFF"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "hawthorn",
+    "name": "Hawthorn",
+    "fullName": "Hawthorn Hawks",
+    "abbreviation": "HAW",
+    "mascot": "Hawks",
+    "homeGround": "MCG",
+    "colors": {
+      "primary": "#4D2004",
+      "secondary": "#FBBF15",
+      "tertiary": "#003B1E"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "melbourne",
+    "name": "Melbourne",
+    "fullName": "Melbourne Demons",
+    "abbreviation": "MELB",
+    "mascot": "Demons",
+    "homeGround": "MCG",
+    "colors": {
+      "primary": "#002D72",
+      "secondary": "#CC2031"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "northmelbourne",
+    "name": "North Melbourne",
+    "fullName": "North Melbourne Kangaroos",
+    "abbreviation": "NMFC",
+    "mascot": "Kangaroos",
+    "homeGround": "Marvel Stadium",
+    "colors": {
+      "primary": "#003C71",
+      "secondary": "#FFFFFF",
+      "tertiary": "#B09A5A"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "portadelaide",
+    "name": "Port Adelaide",
+    "fullName": "Port Adelaide Power",
+    "abbreviation": "PORT",
+    "mascot": "Power",
+    "homeGround": "Adelaide Oval",
+    "colors": {
+      "primary": "#008AAB",
+      "secondary": "#000000",
+      "tertiary": "#FFFFFF"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "richmond",
+    "name": "Richmond",
+    "fullName": "Richmond Tigers",
+    "abbreviation": "RICH",
+    "mascot": "Tigers",
+    "homeGround": "MCG",
+    "colors": {
+      "primary": "#000000",
+      "secondary": "#FED102"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "stkilda",
+    "name": "St Kilda",
+    "fullName": "St Kilda Saints",
+    "abbreviation": "STK",
+    "mascot": "Saints",
+    "homeGround": "Marvel Stadium",
+    "colors": {
+      "primary": "#ED0F05",
+      "secondary": "#FFFFFF",
+      "tertiary": "#000000"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "sydney",
+    "name": "Sydney",
+    "fullName": "Sydney Swans",
+    "abbreviation": "SYD",
+    "mascot": "Swans",
+    "homeGround": "SCG",
+    "colors": {
+      "primary": "#ED171F",
+      "secondary": "#FFFFFF"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "westcoast",
+    "name": "West Coast",
+    "fullName": "West Coast Eagles",
+    "abbreviation": "WCE",
+    "mascot": "Eagles",
+    "homeGround": "Optus Stadium",
+    "colors": {
+      "primary": "#002B5C",
+      "secondary": "#F2A900"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  },
+  {
+    "id": "westernbulldogs",
+    "name": "Western Bulldogs",
+    "fullName": "Western Bulldogs",
+    "abbreviation": "WBD",
+    "mascot": "Bulldogs",
+    "homeGround": "Marvel Stadium",
+    "colors": {
+      "primary": "#003DA5",
+      "secondary": "#CC2031",
+      "tertiary": "#FFFFFF"
+    },
+    "facilities": {
+      "trainingGround": 3,
+      "gym": 3,
+      "medicalCentre": 3,
+      "recoveryPool": 3,
+      "analysisSuite": 3,
+      "youthAcademy": 3
+    },
+    "finances": {
+      "salaryCap": 15500000,
+      "currentSpend": 14000000,
+      "revenue": 50000000,
+      "expenses": 48000000,
+      "balance": 2000000
+    },
+    "draftPicks": [],
+    "gameplan": {
+      "offensiveStyle": "balanced",
+      "tempo": "medium",
+      "aggression": "medium"
+    },
+    "aiPersonality": {
+      "competitiveWindow": "balanced",
+      "draftPhilosophy": "best-available",
+      "riskTolerance": "moderate",
+      "tradeActivity": "moderate"
+    }
+  }
+]
