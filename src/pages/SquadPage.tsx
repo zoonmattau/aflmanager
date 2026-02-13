@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   useReactTable,
   getCoreRowModel,
@@ -43,7 +44,9 @@ const columns = [
   columnHelper.accessor((row) => `${row.firstName} ${row.lastName}`, {
     id: 'name',
     header: 'Name',
-    cell: (info) => <span className="font-medium">{info.getValue()}</span>,
+    cell: (info) => (
+      <NameCell playerId={info.row.original.id} name={info.getValue()} />
+    ),
     size: 180,
   }),
   columnHelper.accessor('age', {
@@ -146,6 +149,18 @@ const columns = [
     size: 70,
   }),
 ]
+
+function NameCell({ playerId, name }: { playerId: string; name: string }) {
+  const navigate = useNavigate()
+  return (
+    <button
+      className="font-medium text-left hover:underline hover:text-primary cursor-pointer"
+      onClick={() => navigate(`/player/${playerId}`)}
+    >
+      {name}
+    </button>
+  )
+}
 
 export function SquadPage() {
   const playerClubId = useGameStore((s) => s.playerClubId)

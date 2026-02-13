@@ -17,56 +17,79 @@ export interface PlayerPosition {
 }
 
 export interface PlayerAttributes {
-  // Kicking
+  // Kicking (5)
   kickingEfficiency: number
   kickingDistance: number
   setShot: number
+  dropPunt: number
+  snap: number
 
-  // Handball
+  // Handball (3)
   handballEfficiency: number
   handballDistance: number
+  handballReceive: number
 
-  // Marking
+  // Marking (4)
   markingOverhead: number
   markingLeading: number
   markingContested: number
+  markingUncontested: number
 
-  // Physical
+  // Physical (7)
   speed: number
   acceleration: number
   endurance: number
   strength: number
   agility: number
+  leap: number
+  recovery: number
 
-  // Contested
+  // Contested (4)
   tackling: number
   contested: number
+  clearance: number
+  hardness: number
 
-  // Game sense
+  // Game Sense (6)
   disposalDecision: number
   fieldKicking: number
   positioning: number
   creativity: number
+  anticipation: number
+  composure: number
 
-  // Offensive
+  // Offensive (5)
   goalkicking: number
   groundBallGet: number
   insideForward: number
+  leadingPatterns: number
+  scoringInstinct: number
 
-  // Defensive
+  // Defensive (5)
   intercept: number
   spoiling: number
   oneOnOne: number
+  zonalAwareness: number
+  rebounding: number
 
-  // Ruck
+  // Ruck (3)
   hitouts: number
   ruckCreative: number
+  followUp: number
 
-  // Mental
+  // Mental (7)
   pressure: number
   leadership: number
   workRate: number
   consistency: number
+  determination: number
+  teamPlayer: number
+  clutch: number
+
+  // Set Pieces (3)
+  centreBounce: number
+  boundaryThrowIn: number
+  stoppage: number
 }
 
 export interface HiddenAttributes {

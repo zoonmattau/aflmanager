@@ -9,6 +9,7 @@ import { MatchDayPage } from '@/pages/MatchDayPage'
 import { LadderPage } from '@/pages/LadderPage'
 import { LineupPage } from '@/pages/LineupPage'
 import { GameplanPage } from '@/pages/GameplanPage'
+import { PlayerProfilePage } from '@/pages/PlayerProfilePage'
 import { useGameStore } from '@/stores/gameStore'
 
 export default function App() {
@@ -31,6 +32,7 @@ export default function App() {
                 <Route path="/ladder" element={<LadderPage />} />
                 <Route path="/lineup" element={<LineupPage />} />
                 <Route path="/gameplan" element={<GameplanPage />} />
+                <Route path="/player/:playerId" element={<PlayerProfilePage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </AppLayout>

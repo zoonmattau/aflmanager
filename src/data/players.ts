@@ -70,6 +70,7 @@ function buildSquadTemplates(): RoleTemplate[] {
         kickingEfficiency: 0.85, kickingDistance: 0.8, fieldKicking: 0.85,
         intercept: 0.75, speed: 0.75, disposalDecision: 0.8,
         markingLeading: 0.7, positioning: 0.75,
+        zonalAwareness: 0.8, rebounding: 0.75,
       },
     })
   }
@@ -86,6 +87,7 @@ function buildSquadTemplates(): RoleTemplate[] {
         contested: 0.9, groundBallGet: 0.9, tackling: 0.85, endurance: 0.9,
         handballEfficiency: 0.8, workRate: 0.85,
         disposalDecision: 0.8, pressure: 0.8, strength: 0.7,
+        clearance: 0.85, hardness: 0.8, centreBounce: 0.75, stoppage: 0.8,
       },
     })
   }
@@ -131,6 +133,7 @@ function buildSquadTemplates(): RoleTemplate[] {
         goalkicking: 0.9, markingContested: 0.85, markingOverhead: 0.85,
         setShot: 0.85, insideForward: 0.8, strength: 0.8,
         markingLeading: 0.8, positioning: 0.7,
+        leadingPatterns: 0.8, scoringInstinct: 0.85,
       },
     })
   }
@@ -144,7 +147,7 @@ function buildSquadTemplates(): RoleTemplate[] {
       biases: {
         goalkicking: 0.8, speed: 0.8, agility: 0.8, groundBallGet: 0.75,
         creativity: 0.75, pressure: 0.8, insideForward: 0.75,
-        markingLeading: 0.75, acceleration: 0.75,
+        markingLeading: 0.75, acceleration: 0.75, snap: 0.8,
       },
     })
   }
@@ -160,6 +163,7 @@ function buildSquadTemplates(): RoleTemplate[] {
         hitouts: 0.95, ruckCreative: 0.85, strength: 0.85,
         markingOverhead: 0.8, endurance: 0.7, tackling: 0.7,
         contested: 0.75, positioning: 0.7,
+        followUp: 0.8, centreBounce: 0.7,
       },
     })
   }
@@ -260,11 +264,12 @@ function ageMultiplier(age: number, category: 'physical' | 'mental' | 'general')
 }
 
 const PHYSICAL_ATTRS: (keyof PlayerAttributes)[] = [
-  'speed', 'acceleration', 'endurance', 'strength', 'agility',
+  'speed', 'acceleration', 'endurance', 'strength', 'agility', 'leap', 'recovery',
 ]
 
 const MENTAL_ATTRS: (keyof PlayerAttributes)[] = [
   'disposalDecision', 'positioning', 'creativity', 'leadership', 'workRate', 'consistency',
+  'anticipation', 'composure', 'determination', 'teamPlayer', 'clutch',
 ]
 
 function attrCategory(attr: keyof PlayerAttributes): 'physical' | 'mental' | 'general' {
@@ -288,16 +293,28 @@ function generateAttributes(
   isRookie: boolean,
 ): PlayerAttributes {
   const ALL_ATTRS: (keyof PlayerAttributes)[] = [
-    'kickingEfficiency', 'kickingDistance', 'setShot',
-    'handballEfficiency', 'handballDistance',
-    'markingOverhead', 'markingLeading', 'markingContested',
-    'speed', 'acceleration', 'endurance', 'strength', 'agility',
-    'tackling', 'contested',
-    'disposalDecision', 'fieldKicking', 'positioning', 'creativity',
-    'goalkicking', 'groundBallGet', 'insideForward',
-    'intercept', 'spoiling', 'oneOnOne',
-    'hitouts', 'ruckCreative',
-    'pressure', 'leadership', 'workRate', 'consistency',
+    // Kicking (5)
+    'kickingEfficiency', 'kickingDistance', 'setShot', 'dropPunt', 'snap',
+    // Handball (3)
+    'handballEfficiency', 'handballDistance', 'handballReceive',
+    // Marking (4)
+    'markingOverhead', 'markingLeading', 'markingContested', 'markingUncontested',
+    // Physical (7)
+    'speed', 'acceleration', 'endurance', 'strength', 'agility', 'leap', 'recovery',
+    // Contested (4)
+    'tackling', 'contested', 'clearance', 'hardness',
+    // Game Sense (6)
+    'disposalDecision', 'fieldKicking', 'positioning', 'creativity', 'anticipation', 'composure',
+    // Offensive (5)
+    'goalkicking', 'groundBallGet', 'insideForward', 'leadingPatterns', 'scoringInstinct',
+    // Defensive (5)
+    'intercept', 'spoiling', 'oneOnOne', 'zonalAwareness', 'rebounding',
+    // Ruck (3)
+    'hitouts', 'ruckCreative', 'followUp',
+    // Mental (7)
+    'pressure', 'leadership', 'workRate', 'consistency', 'determination', 'teamPlayer', 'clutch',
+    // Set Pieces (3)
+    'centreBounce', 'boundaryThrowIn', 'stoppage',
   ]
 
   const rookieDebuff = isRookie ? 0.78 : 1.0
@@ -321,10 +338,11 @@ function generateAttributes(
     attrs[attr] = clamp(Math.round(scaled + jitter), 1, 100)
   }
 
-  // Special: hitouts and ruckCreative should be very low for non-rucks
+  // Special: hitouts, ruckCreative, and followUp should be very low for non-rucks
   if (!biases.hitouts || biases.hitouts < 0.3) {
     attrs.hitouts = clamp(rng.nextInt(5, 20), 1, 100)
     attrs.ruckCreative = clamp(rng.nextInt(5, 20), 1, 100)
+    attrs.followUp = clamp(rng.nextInt(5, 20), 1, 100)
   }
 
   // Leadership scales heavily with age

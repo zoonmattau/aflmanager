@@ -15,6 +15,9 @@ import { generateFixture, createInitialLadder } from '@/engine/season/fixtureGen
 import { simulateRound, isRegularSeasonComplete, applyPostRoundEffects } from '@/engine/season/advanceRound'
 import { processMatchResults } from '@/engine/season/processResults'
 import { generateFinalsRound, isSeasonComplete, getPremier } from '@/engine/season/finals'
+import { rollMatchInjuries, healInjuries } from '@/engine/players/injuries'
+import { updateMoralePostMatch } from '@/engine/players/morale'
+import { SeededRNG } from '@/engine/core/rng'
 
 // ---------------------------------------------------------------------------
 // IndexedDB storage adapter (via idb-keyval)
@@ -299,8 +302,43 @@ export const useGameStore = create<GameStore>()(
             playedIds.add(ps.playerId)
           }
         }
+        // Roll for match injuries
+        const injuryRng = new SeededRNG(state.rngSeed + state.currentRound * 997)
+        const allInjuries = result.matches.flatMap((m) => {
+          if (!m.result) return []
+          const matchPlayerIds = [
+            ...m.result.homePlayerStats.map((ps) => ps.playerId),
+            ...m.result.awayPlayerStats.map((ps) => ps.playerId),
+          ]
+          return rollMatchInjuries(matchPlayerIds, state.players, injuryRng, 'medium')
+        })
+
         set((s) => {
           applyPostRoundEffects(s.players, playedIds)
+
+          // Apply injuries from this round's matches
+          for (const inj of allInjuries) {
+            const p = s.players[inj.playerId]
+            if (p) {
+              p.injury = { type: inj.type, weeksRemaining: inj.weeksOut }
+            }
+          }
+
+          // Heal existing injuries (decrement weeks)
+          healInjuries(s.players)
+
+          // Update morale post-match for each club
+          for (const m of result.matches) {
+            if (!m.result) continue
+            const homeSelected = new Set(m.result.homePlayerStats.map((ps) => ps.playerId))
+            const awaySelected = new Set(m.result.awayPlayerStats.map((ps) => ps.playerId))
+            const homeWon = m.result.homeTotalScore > m.result.awayTotalScore
+            const awayWon = m.result.awayTotalScore > m.result.homeTotalScore
+            const draw = m.result.homeTotalScore === m.result.awayTotalScore
+            updateMoralePostMatch(s.players, homeSelected, m.homeClubId, homeWon, draw)
+            updateMoralePostMatch(s.players, awaySelected, m.awayClubId, awayWon, draw)
+          }
+
           s.currentRound += 1
           s.meta.lastSaved = new Date().toISOString()
         })
@@ -380,8 +418,42 @@ export const useGameStore = create<GameStore>()(
               playedIds.add(ps.playerId)
             }
           }
+
+          // Roll for finals match injuries
+          const finalsInjuryRng = new SeededRNG(state.rngSeed + finalsWeek * 1013)
+          const finalsInjuries = finalsResults.flatMap((m) => {
+            if (!m.result) return []
+            const matchPlayerIds = [
+              ...m.result.homePlayerStats.map((ps) => ps.playerId),
+              ...m.result.awayPlayerStats.map((ps) => ps.playerId),
+            ]
+            return rollMatchInjuries(matchPlayerIds, state.players, finalsInjuryRng, 'high')
+          })
+
           set((s) => {
             applyPostRoundEffects(s.players, playedIds)
+
+            // Apply finals injuries
+            for (const inj of finalsInjuries) {
+              const p = s.players[inj.playerId]
+              if (p) {
+                p.injury = { type: inj.type, weeksRemaining: inj.weeksOut }
+              }
+            }
+
+            healInjuries(s.players)
+
+            // Update morale post-match for finals
+            for (const m of finalsResults) {
+              if (!m.result) continue
+              const homeSelected = new Set(m.result.homePlayerStats.map((ps) => ps.playerId))
+              const awaySelected = new Set(m.result.awayPlayerStats.map((ps) => ps.playerId))
+              const homeWon = m.result.homeTotalScore > m.result.awayTotalScore
+              const awayWon = m.result.awayTotalScore > m.result.homeTotalScore
+              const draw = m.result.homeTotalScore === m.result.awayTotalScore
+              updateMoralePostMatch(s.players, homeSelected, m.homeClubId, homeWon, draw)
+              updateMoralePostMatch(s.players, awaySelected, m.awayClubId, awayWon, draw)
+            }
           })
 
           const allFinals = [...finalsMatches, ...finalsResults]
