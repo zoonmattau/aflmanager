@@ -14,6 +14,7 @@ import {
   Search,
   UserCog,
   ArrowLeftRight,
+  Building2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -38,6 +39,7 @@ const navItems = [
   { to: '/scouting', icon: Search, label: 'Scouting' },
   { to: '/staff', icon: UserCog, label: 'Staff' },
   { to: '/trades', icon: ArrowLeftRight, label: 'Trades' },
+  { to: '/club', icon: Building2, label: 'Club' },
 ]
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {

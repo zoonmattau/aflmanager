@@ -16,6 +16,7 @@ import { DraftPage } from '@/pages/DraftPage'
 import { ScoutingPage } from '@/pages/ScoutingPage'
 import { StaffPage } from '@/pages/StaffPage'
 import { TradePage } from '@/pages/TradePage'
+import { ClubPage } from '@/pages/ClubPage'
 import { useGameStore } from '@/stores/gameStore'
 
 export default function App() {
@@ -45,6 +46,7 @@ export default function App() {
                 <Route path="/scouting" element={<ScoutingPage />} />
                 <Route path="/staff" element={<StaffPage />} />
                 <Route path="/trades" element={<TradePage />} />
+                <Route path="/club" element={<ClubPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </AppLayout>
