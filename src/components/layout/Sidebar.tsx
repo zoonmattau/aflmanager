@@ -6,6 +6,8 @@ import {
   Trophy,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
+  Settings,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -20,6 +22,8 @@ interface SidebarProps {
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/squad', icon: Users, label: 'Squad' },
+  { to: '/lineup', icon: ClipboardList, label: 'Lineup' },
+  { to: '/gameplan', icon: Settings, label: 'Gameplan' },
   { to: '/match', icon: Swords, label: 'Match Day' },
   { to: '/ladder', icon: Trophy, label: 'Ladder' },
 ]

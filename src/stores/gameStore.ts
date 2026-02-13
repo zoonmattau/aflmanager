@@ -8,9 +8,13 @@ import type { Club } from '@/types/club'
 import type { Player } from '@/types/player'
 import type { Match } from '@/types/match'
 import type { Season, LadderEntry } from '@/types/season'
+import type { ClubGameplan } from '@/types/club'
 import clubsJson from '@/data/clubs.json'
 import { generatePlayers } from '@/data/players'
 import { generateFixture, createInitialLadder } from '@/engine/season/fixtureGenerator'
+import { simulateRound, isRegularSeasonComplete, applyPostRoundEffects } from '@/engine/season/advanceRound'
+import { processMatchResults } from '@/engine/season/processResults'
+import { generateFinalsRound, isSeasonComplete, getPremier } from '@/engine/season/finals'
 
 // ---------------------------------------------------------------------------
 // IndexedDB storage adapter (via idb-keyval)
@@ -92,9 +96,18 @@ interface GameActions {
   setSelectedLineup: (lineup: Record<string, string> | null) => void
   addNewsItem: (item: NewsItem) => void
   resetGame: () => void
+  updateGameplan: (gameplan: Partial<ClubGameplan>) => void
+
+  // Season progression
+  simCurrentRound: () => { userMatch: Match | null }
+  simToEnd: () => void
+  startFinals: () => void
+  simFinalsRound: () => { userMatch: Match | null; seasonOver: boolean }
 
   // Computed / derived
   getPlayersByClub: (clubId: string) => Player[]
+  getCurrentRoundData: () => import('@/types/season').Round | null
+  isUserInFinals: () => boolean
 }
 
 export type GameStore = GameState & GameActions
@@ -229,6 +242,173 @@ export const useGameStore = create<GameStore>()(
         return Object.values(state.players).filter(
           (p) => p.clubId === clubId,
         )
+      },
+
+      updateGameplan: (gameplan: Partial<ClubGameplan>) => {
+        set((state) => {
+          const club = state.clubs[state.playerClubId]
+          if (club) {
+            Object.assign(club.gameplan, gameplan)
+          }
+        })
+      },
+
+      getCurrentRoundData: () => {
+        const state = get()
+        if (state.phase === 'finals') {
+          return state.season.finalsRounds[state.season.finalsRounds.length - 1] ?? null
+        }
+        return state.season.rounds[state.currentRound] ?? null
+      },
+
+      isUserInFinals: () => {
+        const state = get()
+        const pos = state.ladder.findIndex((e) => e.clubId === state.playerClubId)
+        return pos >= 0 && pos < 8
+      },
+
+      simCurrentRound: () => {
+        const state = get()
+        const round = state.season.rounds[state.currentRound]
+        if (!round) return { userMatch: null }
+
+        const result = simulateRound({
+          round,
+          roundIndex: state.currentRound,
+          players: state.players,
+          clubs: state.clubs,
+          rngSeed: state.rngSeed,
+          playerClubId: state.playerClubId,
+        })
+
+        // Commit results to store
+        set((s) => {
+          for (const m of result.matches) {
+            s.matchResults.push(m)
+          }
+        })
+
+        // Update ladder
+        processMatchResults(result.matches, get as () => GameState, set as unknown as (fn: (state: GameState) => void) => void)
+
+        // Apply post-round effects (fatigue, fitness, form)
+        const playedIds = new Set<string>()
+        for (const m of result.matches) {
+          if (!m.result) continue
+          for (const ps of [...m.result.homePlayerStats, ...m.result.awayPlayerStats]) {
+            playedIds.add(ps.playerId)
+          }
+        }
+        set((s) => {
+          applyPostRoundEffects(s.players, playedIds)
+          s.currentRound += 1
+          s.meta.lastSaved = new Date().toISOString()
+        })
+
+        // Check if regular season is over
+        if (isRegularSeasonComplete(get().currentRound)) {
+          set((s) => {
+            s.phase = 'finals'
+          })
+        }
+
+        return { userMatch: result.userMatch }
+      },
+
+      simToEnd: () => {
+        const state = get()
+        const totalRounds = state.season.rounds.length
+        while (get().currentRound < totalRounds && get().phase === 'regular-season') {
+          get().simCurrentRound()
+        }
+      },
+
+      startFinals: () => {
+        set((state) => {
+          state.phase = 'finals'
+        })
+      },
+
+      simFinalsRound: () => {
+        // Dynamic import to avoid circular deps - finals module will be loaded
+        // We'll call generateFinalsRound inline
+        const state = get()
+        const finalsWeek = state.season.finalsRounds.length + 1
+
+        // Get only finals match results
+        const finalsMatches = state.matchResults.filter((m) => m.isFinal)
+
+        // We need to dynamically generate the next finals round
+        // Import is static but the module may not exist yet - handle gracefully
+        try {
+          const round = generateFinalsRound(finalsWeek, state.ladder, finalsMatches, state.clubs)
+
+          if (!round || round.fixtures.length === 0) {
+            return { userMatch: null, seasonOver: true }
+          }
+
+          // Add round to season
+          set((s) => {
+            s.season.finalsRounds.push(round)
+          })
+
+          // Simulate the round
+          const result = simulateRound({
+            round,
+            roundIndex: 100 + finalsWeek, // Offset to avoid colliding with H&A round indices
+            players: state.players,
+            clubs: state.clubs,
+            rngSeed: state.rngSeed,
+            playerClubId: state.playerClubId,
+          })
+
+          // Mark finals matches
+          const finalsResults = result.matches.map((m) => ({ ...m, isFinal: true }))
+
+          set((s) => {
+            for (const m of finalsResults) {
+              s.matchResults.push(m)
+            }
+            s.meta.lastSaved = new Date().toISOString()
+          })
+
+          // Apply effects
+          const playedIds = new Set<string>()
+          for (const m of finalsResults) {
+            if (!m.result) continue
+            for (const ps of [...m.result.homePlayerStats, ...m.result.awayPlayerStats]) {
+              playedIds.add(ps.playerId)
+            }
+          }
+          set((s) => {
+            applyPostRoundEffects(s.players, playedIds)
+          })
+
+          const allFinals = [...finalsMatches, ...finalsResults]
+          const seasonOver = isSeasonComplete(allFinals)
+          if (seasonOver) {
+            const premier = getPremier(allFinals)
+            set((s) => {
+              s.phase = 'post-season'
+              if (premier) {
+                s.newsLog.push({
+                  id: crypto.randomUUID(),
+                  date: s.currentDate,
+                  headline: `${s.clubs[premier]?.fullName ?? premier} wins the ${s.currentYear} Premiership!`,
+                  body: `Congratulations to ${s.clubs[premier]?.fullName ?? premier} on winning the Grand Final.`,
+                  category: 'match',
+                  clubIds: [premier],
+                  playerIds: [],
+                })
+              }
+            })
+          }
+
+          return { userMatch: result.userMatch, seasonOver }
+        } catch {
+          // Finals module not available yet
+          return { userMatch: null, seasonOver: false }
+        }
       },
     })),
     {
