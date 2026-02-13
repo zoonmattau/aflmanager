@@ -1,10 +1,11 @@
 import type { DraftProspect, DraftPick, DraftState } from '@/types/draft'
 import type { Club } from '@/types/club'
-import type { Player, PositionGroup } from '@/types/player'
+import type { Player, PlayerPositionType } from '@/types/player'
 import type { LadderEntry } from '@/types/season'
 import type { SeededRNG } from '@/engine/core/rng'
 import { getProspectOverall } from '@/engine/draft/prospects'
-import { MINIMUM_SALARY, TOTAL_CLUBS } from '@/engine/core/constants'
+import type { ExpansionPlan } from '@/types/expansion'
+import { MINIMUM_SALARY } from '@/engine/core/constants'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -17,17 +18,20 @@ const NATIONAL_DRAFT_ROUNDS = 3
  *  on the AFL draft value index used for Father-Son / Academy bidding. */
 const DRAFT_POINTS: Record<number, number> = buildDraftPointsTable()
 
-/** Ideal number of players per position group on a roster. */
+/** Ideal number of players per position type on a roster. */
 const IDEAL_POSITIONAL_COUNTS: Record<string, number> = {
-  FB: 5,
-  HB: 6,
-  C: 4,
-  HF: 6,
-  FF: 5,
-  FOLL: 3,
-  INT: 0,
-  MID: 8,
-  WING: 5,
+  BP: 3,
+  FB: 3,
+  HBF: 4,
+  CHB: 3,
+  W: 3,
+  IM: 6,
+  OM: 5,
+  RK: 3,
+  HFF: 4,
+  CHF: 3,
+  FP: 3,
+  FF: 3,
 }
 
 // ---------------------------------------------------------------------------
@@ -82,15 +86,15 @@ function getPositionalCounts(
 function identifyPositionalNeeds(
   players: Record<string, Player>,
   clubId: string,
-): PositionGroup[] {
+): PlayerPositionType[] {
   const counts = getPositionalCounts(players, clubId)
-  const needs: { position: PositionGroup; deficit: number }[] = []
+  const needs: { position: PlayerPositionType; deficit: number }[] = []
 
   for (const [pos, ideal] of Object.entries(IDEAL_POSITIONAL_COUNTS)) {
     const current = counts[pos] ?? 0
     const deficit = ideal - current
     if (deficit > 0) {
-      needs.push({ position: pos as PositionGroup, deficit })
+      needs.push({ position: pos as PlayerPositionType, deficit })
     }
   }
 
@@ -114,7 +118,7 @@ function scoreBestAvailable(prospect: DraftProspect): number {
  */
 function scorePositionalNeed(
   prospect: DraftProspect,
-  neededPositions: PositionGroup[],
+  neededPositions: PlayerPositionType[],
 ): number {
   const overall = getProspectOverall(prospect)
 
@@ -202,6 +206,15 @@ function emptyStats(): Player['careerStats'] {
     clearances: 0,
     insideFifties: 0,
     rebound50s: 0,
+    contestedMarks: 0,
+    scoreInvolvements: 0,
+    metresGained: 0,
+    turnovers: 0,
+    intercepts: 0,
+    onePercenters: 0,
+    bounces: 0,
+    clangers: 0,
+    goalAssists: 0,
   }
 }
 
@@ -222,20 +235,42 @@ function emptyStats(): Player['careerStats'] {
 export function generateDraftOrder(
   ladder: LadderEntry[],
   _clubs: Record<string, Club>,
+  expansionPlans?: ExpansionPlan[],
+  currentYear?: number,
 ): DraftPick[] {
+  const totalClubs = ladder.length
   // Sort ladder from worst to best (reverse finishing order)
   const sorted = [...ladder].sort((a, b) => {
-    // Fewer points = worse finishing position = earlier pick
     if (a.points !== b.points) return a.points - b.points
-    // Tiebreaker: lower percentage picks earlier
     return a.percentage - b.percentage
   })
 
   const picks: DraftPick[] = []
   let pickNumber = 1
 
+  // Insert priority picks for expansion teams at the start of round 1
+  if (expansionPlans && currentYear) {
+    for (const plan of expansionPlans) {
+      if (plan.status !== 'active') continue
+      const yearsInAFL = currentYear - plan.aflEntryYear
+      if (yearsInAFL >= 0 && yearsInAFL < plan.priorityPickYears) {
+        for (let p = 0; p < plan.priorityPicksPerYear; p++) {
+          picks.push({
+            pickNumber,
+            round: 1,
+            clubId: plan.clubId,
+            originalClubId: plan.clubId,
+            selectedProspectId: null,
+            isBid: false,
+          })
+          pickNumber++
+        }
+      }
+    }
+  }
+
   for (let round = 1; round <= NATIONAL_DRAFT_ROUNDS; round++) {
-    for (let i = 0; i < TOTAL_CLUBS; i++) {
+    for (let i = 0; i < totalClubs; i++) {
       const clubId = sorted[i].clubId
       picks.push({
         pickNumber,
@@ -268,15 +303,16 @@ export function generateDraftOrder(
 export function generateRookieDraftOrder(
   ladder: LadderEntry[],
 ): DraftPick[] {
+  const totalClubs = ladder.length
   const sorted = [...ladder].sort((a, b) => {
     if (a.points !== b.points) return a.points - b.points
     return a.percentage - b.percentage
   })
 
   const picks: DraftPick[] = []
-  const startingPickNumber = NATIONAL_DRAFT_ROUNDS * TOTAL_CLUBS + 1 // 55
+  const startingPickNumber = NATIONAL_DRAFT_ROUNDS * totalClubs + 1
 
-  for (let i = 0; i < TOTAL_CLUBS; i++) {
+  for (let i = 0; i < totalClubs; i++) {
     const clubId = sorted[i].clubId
     picks.push({
       pickNumber: startingPickNumber + i,
@@ -323,17 +359,22 @@ export function aiSelectProspect(
   availableProspects: DraftProspect[],
   players: Record<string, Player>,
   rng: SeededRNG,
+  options?: { ngaAcademyEnabled?: boolean },
 ): string {
   if (availableProspects.length === 0) {
     throw new Error(`No available prospects for club ${club.id} to select`)
   }
 
   // --- Father-Son / Academy: always pick a linked prospect if available ---
-  const linkedProspect = availableProspects.find(
-    (p) => p.linkedClubId === club.id,
-  )
-  if (linkedProspect) {
-    return linkedProspect.id
+  // Skipped when ngaAcademy realism setting is disabled
+  const ngaEnabled = options?.ngaAcademyEnabled !== false
+  if (ngaEnabled) {
+    const linkedProspect = availableProspects.find(
+      (p) => p.linkedClubId === club.id,
+    )
+    if (linkedProspect) {
+      return linkedProspect.id
+    }
   }
 
   // --- Score each prospect based on club philosophy ---
@@ -490,6 +531,7 @@ export function convertProspectToPlayer(
     form: 50,
     injury: null,
     isRookie: prospect.tier === 'rookie-list',
+    listStatus: 'senior',
     draftYear,
     draftPick,
     careerStats: emptyStats(),
@@ -498,7 +540,53 @@ export function convertProspectToPlayer(
 }
 
 // ---------------------------------------------------------------------------
-// 6. advanceDraftPick
+// 6. applyPriorityPicks (AFL House Interference)
+// ---------------------------------------------------------------------------
+
+/**
+ * When AFL House interference is enabled, bottom-2 clubs on the ladder
+ * receive an additional priority pick inserted at positions 1-2.
+ * Existing picks shift down.
+ *
+ * When disabled, returns the draft order unchanged.
+ */
+export function applyPriorityPicks(
+  draftOrder: DraftPick[],
+  ladder: LadderEntry[],
+  enabled: boolean,
+): DraftPick[] {
+  if (!enabled) return draftOrder
+
+  // Sort ladder worst to best
+  const sorted = [...ladder].sort((a, b) => {
+    if (a.points !== b.points) return a.points - b.points
+    return a.percentage - b.percentage
+  })
+
+  // Bottom 2 clubs
+  const bottomClubs = sorted.slice(0, 2).map((e) => e.clubId)
+
+  // Build priority picks
+  const priorityPicks: DraftPick[] = bottomClubs.map((clubId, i) => ({
+    pickNumber: i + 1,
+    round: 1,
+    clubId,
+    originalClubId: clubId,
+    selectedProspectId: null,
+    isBid: false,
+  }))
+
+  // Shift existing pick numbers up
+  const shifted = draftOrder.map((p) => ({
+    ...p,
+    pickNumber: p.pickNumber + priorityPicks.length,
+  }))
+
+  return [...priorityPicks, ...shifted]
+}
+
+// ---------------------------------------------------------------------------
+// 7. advanceDraftPick
 // ---------------------------------------------------------------------------
 
 /**

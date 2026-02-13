@@ -1,5 +1,5 @@
 import type { Match } from '@/types/match'
-import type { GameState } from '@/types/game'
+import type { GameState, LadderPointsSettings } from '@/types/game'
 
 type GetState = () => GameState
 type SetState = (fn: (state: GameState) => void) => void
@@ -7,8 +7,12 @@ type SetState = (fn: (state: GameState) => void) => void
 export function processMatchResults(
   matches: Match[],
   getState: GetState,
-  setState: SetState
+  setState: SetState,
+  ladderPoints?: LadderPointsSettings,
 ) {
+  const ptsWin = ladderPoints?.pointsForWin ?? 4
+  const ptsDraw = ladderPoints?.pointsForDraw ?? 2
+  // pointsForLoss is available but typically 0
   const state = getState()
   const ladder = [...state.ladder]
 
@@ -30,17 +34,17 @@ export function processMatchResults(
 
     if (match.result.homeTotalScore > match.result.awayTotalScore) {
       homeEntry.wins++
-      homeEntry.points += 4
+      homeEntry.points += ptsWin
       awayEntry.losses++
     } else if (match.result.awayTotalScore > match.result.homeTotalScore) {
       awayEntry.wins++
-      awayEntry.points += 4
+      awayEntry.points += ptsWin
       homeEntry.losses++
     } else {
       homeEntry.draws++
       awayEntry.draws++
-      homeEntry.points += 2
-      awayEntry.points += 2
+      homeEntry.points += ptsDraw
+      awayEntry.points += ptsDraw
     }
 
     // Update percentage
@@ -70,34 +74,48 @@ export function processMatchResults(
       for (const stat of allStats) {
         const player = state.players[stat.playerId]
         if (!player) continue
-        player.seasonStats.gamesPlayed++
-        player.seasonStats.disposals += stat.disposals
-        player.seasonStats.kicks += stat.kicks
-        player.seasonStats.handballs += stat.handballs
-        player.seasonStats.marks += stat.marks
-        player.seasonStats.tackles += stat.tackles
-        player.seasonStats.goals += stat.goals
-        player.seasonStats.behinds += stat.behinds
-        player.seasonStats.hitouts += stat.hitouts
-        player.seasonStats.contestedPossessions += stat.contestedPossessions
-        player.seasonStats.clearances += stat.clearances
-        player.seasonStats.insideFifties += stat.insideFifties
-        player.seasonStats.rebound50s += stat.rebound50s
 
-        // Also update career stats
+        // Ensure extended stat fields exist on old saves
+        if (player.seasonStats.contestedMarks === undefined) {
+          player.seasonStats.contestedMarks = 0
+          player.seasonStats.scoreInvolvements = 0
+          player.seasonStats.metresGained = 0
+          player.seasonStats.turnovers = 0
+          player.seasonStats.intercepts = 0
+          player.seasonStats.onePercenters = 0
+          player.seasonStats.bounces = 0
+          player.seasonStats.clangers = 0
+          player.seasonStats.goalAssists = 0
+        }
+        if (player.careerStats.contestedMarks === undefined) {
+          player.careerStats.contestedMarks = 0
+          player.careerStats.scoreInvolvements = 0
+          player.careerStats.metresGained = 0
+          player.careerStats.turnovers = 0
+          player.careerStats.intercepts = 0
+          player.careerStats.onePercenters = 0
+          player.careerStats.bounces = 0
+          player.careerStats.clangers = 0
+          player.careerStats.goalAssists = 0
+        }
+
+        const STAT_KEYS = [
+          'gamesPlayed', 'disposals', 'kicks', 'handballs', 'marks', 'tackles',
+          'goals', 'behinds', 'hitouts', 'contestedPossessions', 'clearances',
+          'insideFifties', 'rebound50s', 'contestedMarks', 'scoreInvolvements',
+          'metresGained', 'turnovers', 'intercepts', 'onePercenters', 'bounces',
+          'clangers', 'goalAssists',
+        ] as const
+
+        player.seasonStats.gamesPlayed++
         player.careerStats.gamesPlayed++
-        player.careerStats.disposals += stat.disposals
-        player.careerStats.kicks += stat.kicks
-        player.careerStats.handballs += stat.handballs
-        player.careerStats.marks += stat.marks
-        player.careerStats.tackles += stat.tackles
-        player.careerStats.goals += stat.goals
-        player.careerStats.behinds += stat.behinds
-        player.careerStats.hitouts += stat.hitouts
-        player.careerStats.contestedPossessions += stat.contestedPossessions
-        player.careerStats.clearances += stat.clearances
-        player.careerStats.insideFifties += stat.insideFifties
-        player.careerStats.rebound50s += stat.rebound50s
+
+        for (const key of STAT_KEYS) {
+          if (key === 'gamesPlayed') continue
+          const value = (stat as unknown as Record<string, number>)[key] ?? 0
+          ;(player.seasonStats as unknown as Record<string, number>)[key] += value
+          ;(player.careerStats as unknown as Record<string, number>)[key] += value
+        }
       }
     })
   }

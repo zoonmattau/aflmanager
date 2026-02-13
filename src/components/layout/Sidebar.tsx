@@ -1,55 +1,23 @@
-import { NavLink } from 'react-router-dom'
-import {
-  LayoutDashboard,
-  Users,
-  Swords,
-  Trophy,
-  ChevronLeft,
-  ChevronRight,
-  ClipboardList,
-  Settings,
-  DollarSign,
-  FileText,
-  GraduationCap,
-  Search,
-  UserCog,
-  ArrowLeftRight,
-  Building2,
-  Dumbbell,
-  CalendarClock,
-} from 'lucide-react'
+import { NavLink, useLocation } from 'react-router-dom'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Separator } from '@/components/ui/separator'
 import { useGameStore } from '@/stores/gameStore'
+import { standaloneItems, navGroups, getActiveGroup } from './navConfig'
 
 interface SidebarProps {
   collapsed: boolean
   onToggle: () => void
 }
 
-const navItems = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/squad', icon: Users, label: 'Squad' },
-  { to: '/lineup', icon: ClipboardList, label: 'Lineup' },
-  { to: '/gameplan', icon: Settings, label: 'Gameplan' },
-  { to: '/match', icon: Swords, label: 'Match Day' },
-  { to: '/ladder', icon: Trophy, label: 'Ladder' },
-  { to: '/salary-cap', icon: DollarSign, label: 'Salary Cap' },
-  { to: '/contracts', icon: FileText, label: 'Contracts' },
-  { to: '/draft', icon: GraduationCap, label: 'Draft' },
-  { to: '/scouting', icon: Search, label: 'Scouting' },
-  { to: '/staff', icon: UserCog, label: 'Staff' },
-  { to: '/trades', icon: ArrowLeftRight, label: 'Trades' },
-  { to: '/club', icon: Building2, label: 'Club' },
-  { to: '/training', icon: Dumbbell, label: 'Training' },
-  { to: '/offseason', icon: CalendarClock, label: 'Offseason' },
-]
-
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const playerClubId = useGameStore((s) => s.playerClubId)
   const clubs = useGameStore((s) => s.clubs)
   const club = clubs[playerClubId]
+  const location = useLocation()
+  const activeGroup = getActiveGroup(location.pathname)
 
   return (
     <aside
@@ -84,13 +52,15 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       {/* Navigation */}
       <ScrollArea className="flex-1 py-2">
         <nav className="flex flex-col gap-1 px-2">
-          {navItems.map((item) => (
+          {/* Standalone items */}
+          {standaloneItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
+              end={item.to === '/'}
               className={({ isActive }) =>
                 cn(
-                  'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  'relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
                   'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
                   isActive
                     ? 'bg-sidebar-accent text-sidebar-accent-foreground'
@@ -98,10 +68,33 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                 )
               }
             >
-              <item.icon className="h-4 w-4 flex-shrink-0" />
+              {item.icon && <item.icon className="h-4 w-4 flex-shrink-0" />}
               {!collapsed && <span>{item.label}</span>}
             </NavLink>
           ))}
+
+          <Separator className="my-1" />
+
+          {/* Group items */}
+          {navGroups.map((group) => {
+            const isActive = activeGroup?.id === group.id
+            return (
+              <NavLink
+                key={group.id}
+                to={group.defaultTo}
+                className={cn(
+                  'relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+                  isActive
+                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                    : 'text-sidebar-foreground/70'
+                )}
+              >
+                <group.icon className="h-4 w-4 flex-shrink-0" />
+                {!collapsed && <span>{group.label}</span>}
+              </NavLink>
+            )
+          })}
         </nav>
       </ScrollArea>
 

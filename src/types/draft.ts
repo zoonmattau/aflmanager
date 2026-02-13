@@ -1,4 +1,4 @@
-import type { PositionGroup, PlayerAttributes, HiddenAttributes, PlayerPersonality } from './player'
+import type { PlayerPositionType, PlayerAttributes, HiddenAttributes, PlayerPersonality } from './player'
 
 /** A region from which draft prospects originate. */
 export type ScoutingRegion = 'VIC' | 'SA' | 'WA' | 'NSW/ACT' | 'QLD' | 'TAS/NT'
@@ -11,8 +11,8 @@ export interface DraftProspect {
   age: number                    // 17-19
   region: ScoutingRegion
   position: {
-    primary: PositionGroup
-    secondary: PositionGroup[]
+    primary: PlayerPositionType
+    secondary: PlayerPositionType[]
   }
   height: number                 // cm
   weight: number                 // kg
@@ -40,6 +40,9 @@ export interface DraftProspect {
 
   /** Development pathway */
   pathway: 'Coates Talent League' | 'APS' | 'State League' | 'International'
+
+  /** U18 talent league club ID (if applicable — mainly VIC prospects). */
+  u18ClubId: string | null
 }
 
 /** A scouting report for a specific club's evaluation of a prospect. */

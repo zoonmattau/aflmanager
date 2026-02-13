@@ -43,6 +43,8 @@ import {
   TrendingDown,
   Minus,
 } from 'lucide-react'
+import { gradeTradeRetrospective } from '@/engine/history/summaryEngine'
+import type { TradeGradeLetter } from '@/engine/history/summaryEngine'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -954,10 +956,29 @@ function MakeTradeTab() {
 // Trade History Tab
 // ---------------------------------------------------------------------------
 
+function tradeGradeColor(grade: TradeGradeLetter): string {
+  if (grade.startsWith('A')) return 'bg-green-600 text-white'
+  if (grade.startsWith('B')) return 'bg-yellow-500 text-black'
+  if (grade === 'C') return 'bg-yellow-600 text-white'
+  return 'bg-red-500 text-white'
+}
+
 function TradeHistoryTab() {
+  const tradeHistoryStore = useGameStore((s) => s.tradeHistory)
   const newsLog = useGameStore((s) => s.newsLog)
   const clubs = useGameStore((s) => s.clubs)
   const players = useGameStore((s) => s.players)
+
+  // Use tradeHistory from store if available, fall back to news
+  const gradedTrades = useMemo(() => {
+    if (tradeHistoryStore.length > 0) {
+      return [...tradeHistoryStore].reverse().map((trade) => ({
+        trade,
+        grade: gradeTradeRetrospective(trade, players, clubs),
+      }))
+    }
+    return []
+  }, [tradeHistoryStore, players, clubs])
 
   const tradeNews = useMemo(
     () =>
@@ -968,7 +989,7 @@ function TradeHistoryTab() {
     [newsLog],
   )
 
-  if (tradeNews.length === 0) {
+  if (gradedTrades.length === 0 && tradeNews.length === 0) {
     return (
       <Card>
         <CardContent className="py-12 text-center">
@@ -986,7 +1007,57 @@ function TradeHistoryTab() {
 
   return (
     <div className="space-y-3">
-      {tradeNews.map((news) => {
+      {/* Graded trades from tradeHistory */}
+      {gradedTrades.map(({ trade, grade }) => {
+        const clubA = clubs[trade.clubA]
+        const clubB = clubs[trade.clubB]
+        const playersToA = trade.playersToA.map((pid) => players[pid]).filter(Boolean)
+        const playersToB = trade.playersToB.map((pid) => players[pid]).filter(Boolean)
+
+        return (
+          <Card key={trade.id}>
+            <CardContent className="py-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-2 min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <ArrowLeftRight className="h-4 w-4 text-primary shrink-0" />
+                    <p className="font-semibold text-sm">
+                      {clubA?.abbreviation ?? trade.clubA} &harr; {clubB?.abbreviation ?? trade.clubB}
+                    </p>
+                    <Badge className={tradeGradeColor(grade.clubAGrade)}>
+                      {clubA?.abbreviation}: {grade.clubAGrade}
+                    </Badge>
+                    <Badge className={tradeGradeColor(grade.clubBGrade)}>
+                      {clubB?.abbreviation}: {grade.clubBGrade}
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div>
+                      <p className="text-xs text-muted-foreground">{clubA?.abbreviation} receives:</p>
+                      {playersToA.map((p) => (
+                        <p key={p.id}>{p.firstName} {p.lastName}</p>
+                      ))}
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">{clubB?.abbreviation} receives:</p>
+                      {playersToB.map((p) => (
+                        <p key={p.id}>{p.firstName} {p.lastName}</p>
+                      ))}
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground italic">{grade.assessment}</p>
+                </div>
+                <span className="text-xs text-muted-foreground whitespace-nowrap shrink-0">
+                  {trade.date}
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        )
+      })}
+
+      {/* Fallback: trade news if no structured trade history */}
+      {gradedTrades.length === 0 && tradeNews.map((news) => {
         const involvedClubs = news.clubIds
           .map((cId) => clubs[cId])
           .filter(Boolean)

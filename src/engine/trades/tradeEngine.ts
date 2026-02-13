@@ -1,4 +1,4 @@
-import type { Player, PositionGroup } from '@/types/player'
+import type { Player, PlayerPositionType } from '@/types/player'
 import type { Club, DraftPick } from '@/types/club'
 import type { SeededRNG } from '@/engine/core/rng'
 import { calculatePlayerValue } from '@/engine/contracts/negotiation'
@@ -43,9 +43,9 @@ export interface CompletedTrade {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/** All position groups used in the game. */
-const ALL_POSITIONS: PositionGroup[] = [
-  'FB', 'HB', 'C', 'HF', 'FF', 'FOLL', 'MID', 'WING', 'INT',
+/** All position types used in the game. */
+const ALL_POSITIONS: PlayerPositionType[] = [
+  'BP', 'FB', 'HBF', 'CHB', 'W', 'IM', 'OM', 'RK', 'HFF', 'CHF', 'FP', 'FF',
 ]
 
 /**
@@ -95,8 +95,8 @@ function pickValue(pick: DraftPick, currentYear: number = new Date().getFullYear
 function getPositionalNeeds(
   clubId: string,
   players: Record<string, Player>,
-): Set<PositionGroup> {
-  const counts = new Map<PositionGroup, number>()
+): Set<PlayerPositionType> {
+  const counts = new Map<PlayerPositionType, number>()
   for (const pos of ALL_POSITIONS) {
     counts.set(pos, 0)
   }
@@ -108,7 +108,7 @@ function getPositionalNeeds(
     }
   }
 
-  const needs = new Set<PositionGroup>()
+  const needs = new Set<PlayerPositionType>()
   for (const [pos, count] of counts) {
     if (count < 3) {
       needs.add(pos)
@@ -246,6 +246,7 @@ export function evaluateTradeProposal(
   players: Record<string, Player>,
   clubs: Record<string, Club>,
   rng: SeededRNG,
+  options?: { salaryDumpTradesEnabled?: boolean },
 ): TradeResult {
   const receivingClub = clubs[proposal.receivingClubId]
   if (!receivingClub) {
@@ -328,17 +329,19 @@ export function evaluateTradeProposal(
   // --- Contract burden discount ---
   // Players on large or long contracts are worth less in trade because the
   // receiving club inherits the salary obligation.
+  // When salaryDumpTrades is disabled, contract burden is ignored.
+  const salaryDumpEnabled = options?.salaryDumpTradesEnabled !== false
   let contractDiscount = 0
   for (const playerId of proposal.playersOffered) {
     const player = players[playerId]
     if (!player) continue
     const { yearsRemaining, aav } = player.contract
     // Penalty for contracts longer than 3 years
-    if (yearsRemaining > 3) {
+    if (salaryDumpEnabled && yearsRemaining > 3) {
       contractDiscount -= aav * (yearsRemaining - 3) * 0.05
     }
     // Penalty for high-AAV players (over $700k)
-    if (aav > 700_000) {
+    if (salaryDumpEnabled && aav > 700_000) {
       contractDiscount -= (aav - 700_000) * 0.10
     }
   }
@@ -348,18 +351,18 @@ export function evaluateTradeProposal(
     const player = players[playerId]
     if (!player) continue
     const { yearsRemaining, aav } = player.contract
-    if (yearsRemaining > 3) {
+    if (salaryDumpEnabled && yearsRemaining > 3) {
       contractDiscount += aav * (yearsRemaining - 3) * 0.05
     }
-    if (aav > 700_000) {
+    if (salaryDumpEnabled && aav > 700_000) {
       contractDiscount += (aav - 700_000) * 0.10
     }
   }
 
   // --- Salary retention bonus ---
   // If the proposing club is retaining salary, the deal is sweeter for
-  // the receiving club.
-  const retentionBonus = proposal.salaryRetained * 0.5
+  // the receiving club. When salaryDumpTrades is disabled, retention is ignored.
+  const retentionBonus = salaryDumpEnabled ? proposal.salaryRetained * 0.5 : 0
 
   // --- Trade activity threshold ---
   // Passive clubs require a bigger surplus; active clubs accept smaller ones.
@@ -580,12 +583,15 @@ export function generateTradeRumour(
   players: Record<string, Player>,
   clubs: Record<string, Club>,
   rng: SeededRNG,
+  options?: { tradeRequestsEnabled?: boolean },
 ): { headline: string; body: string; playerIds: string[]; clubIds: string[] } | null {
   const allPlayers = Object.values(players)
+  const tradeRequestsEnabled = options?.tradeRequestsEnabled !== false
 
   // Find candidates: unhappy or expiring contract
+  // When tradeRequests is disabled, only contract-expiry rumours are generated
   const candidates = allPlayers.filter(
-    (p) => p.morale < 50 || p.contract.yearsRemaining <= 1,
+    (p) => tradeRequestsEnabled ? (p.morale < 50 || p.contract.yearsRemaining <= 1) : p.contract.yearsRemaining <= 1,
   )
 
   if (candidates.length === 0) {

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import {
   useReactTable,
   getCoreRowModel,
@@ -163,14 +163,16 @@ function NameCell({ playerId, name }: { playerId: string; name: string }) {
 }
 
 export function SquadPage() {
+  const { clubId: routeClubId } = useParams<{ clubId?: string }>()
   const playerClubId = useGameStore((s) => s.playerClubId)
   const players = useGameStore((s) => s.players)
   const clubs = useGameStore((s) => s.clubs)
 
-  const club = clubs[playerClubId]
+  const clubId = routeClubId ?? playerClubId
+  const club = clubs[clubId]
   const clubPlayers = useMemo(
-    () => Object.values(players).filter((p) => p.clubId === playerClubId),
-    [players, playerClubId]
+    () => Object.values(players).filter((p) => p.clubId === clubId),
+    [players, clubId]
   )
 
   const [sorting, setSorting] = useState<SortingState>([])

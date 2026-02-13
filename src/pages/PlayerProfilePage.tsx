@@ -1,9 +1,10 @@
+import { useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, Heart, Zap, TrendingUp, Shield, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, Heart, Zap, TrendingUp, Shield, AlertTriangle, Trophy } from 'lucide-react'
 import type { Player, PlayerAttributes } from '@/types/player'
 
 const ATTR_CATEGORIES: { label: string; attrs: { key: keyof PlayerAttributes; label: string }[] }[] = [
@@ -164,10 +165,44 @@ export function PlayerProfilePage() {
     )
   }
 
+  const history = useGameStore((s) => s.history)
+  const awards = useGameStore((s) => s.awards)
+  const brownlowTracker = useGameStore((s) => s.brownlowTracker)
+
   const club = clubs[player.clubId]
   const overall = getOverall(player)
   const ss = player.seasonStats
   const cs = player.careerStats
+
+  // Find draft info from history
+  const draftInfo = useMemo(() => {
+    if (!playerId) return null
+    return history.draftHistory.find((d) => d.playerId === playerId) ?? null
+  }, [history.draftHistory, playerId])
+
+  // Honours
+  const honours = useMemo(() => {
+    if (!playerId) return { brownlowVotes: 0, brownlowWins: 0, colemanWins: 0, risingStarWins: 0, allAustralianCount: 0, bnfWins: 0 }
+    let brownlowVotes = 0
+    for (const round of brownlowTracker) {
+      for (const v of round.votes) {
+        if (v.playerId === playerId) brownlowVotes += v.votes
+      }
+    }
+    let brownlowWins = 0
+    let colemanWins = 0
+    let risingStarWins = 0
+    let allAustralianCount = 0
+    let bnfWins = 0
+    for (const a of awards) {
+      if (a.brownlowMedal?.playerId === playerId) brownlowWins++
+      if (a.colemanMedal?.playerId === playerId) colemanWins++
+      if (a.risingStar?.playerId === playerId) risingStarWins++
+      if (a.allAustralian.includes(playerId)) allAustralianCount++
+      if (Object.values(a.clubBestAndFairest).includes(playerId)) bnfWins++
+    }
+    return { brownlowVotes, brownlowWins, colemanWins, risingStarWins, allAustralianCount, bnfWins }
+  }, [playerId, brownlowTracker, awards])
 
   return (
     <div className="space-y-6">
@@ -329,6 +364,91 @@ export function PlayerProfilePage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Career Info */}
+      {(draftInfo || cs.gamesPlayed > 0) && (
+        <Card>
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm">Career</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {draftInfo && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Draft</span>
+                <span className="font-medium">
+                  Drafted by {clubs[draftInfo.clubId]?.name ?? draftInfo.clubId} in {draftInfo.year}, Pick #{draftInfo.pickNumber}
+                </span>
+              </div>
+            )}
+            {cs.gamesPlayed > 0 && (
+              <>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Career Games</span>
+                  <span className="font-mono font-medium">{cs.gamesPlayed}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Career Goals</span>
+                  <span className="font-mono font-medium">{cs.goals}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Career Disposals</span>
+                  <span className="font-mono font-medium">{cs.disposals}</span>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Honours */}
+      {(honours.brownlowVotes > 0 || honours.brownlowWins > 0 || honours.colemanWins > 0 || honours.risingStarWins > 0 || honours.allAustralianCount > 0 || honours.bnfWins > 0) && (
+        <Card>
+          <CardHeader className="py-3">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Trophy className="h-4 w-4 text-yellow-500" />
+              Honours
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {honours.brownlowWins > 0 && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Brownlow Medals</span>
+                <span className="font-mono font-bold text-yellow-500">{honours.brownlowWins}</span>
+              </div>
+            )}
+            {honours.brownlowVotes > 0 && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Brownlow Votes (current season)</span>
+                <span className="font-mono font-medium">{honours.brownlowVotes}</span>
+              </div>
+            )}
+            {honours.colemanWins > 0 && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Coleman Medals</span>
+                <span className="font-mono font-bold text-yellow-500">{honours.colemanWins}</span>
+              </div>
+            )}
+            {honours.risingStarWins > 0 && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Rising Star Awards</span>
+                <span className="font-mono font-bold">{honours.risingStarWins}</span>
+              </div>
+            )}
+            {honours.allAustralianCount > 0 && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">All-Australian Selections</span>
+                <span className="font-mono font-bold">{honours.allAustralianCount}</span>
+              </div>
+            )}
+            {honours.bnfWins > 0 && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Club Best & Fairest</span>
+                <span className="font-mono font-bold">{honours.bnfWins}</span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }
@@ -387,16 +507,26 @@ function StatsTable({
   const rows = [
     { label: 'Games', total: gamesPlayed, avg: null },
     { label: 'Goals', total: stats.goals, avg: stats.goals / gamesPlayed },
+    { label: 'Behinds', total: stats.behinds, avg: stats.behinds / gamesPlayed },
     { label: 'Disposals', total: stats.disposals, avg: stats.disposals / gamesPlayed },
     { label: 'Kicks', total: stats.kicks, avg: stats.kicks / gamesPlayed },
     { label: 'Handballs', total: stats.handballs, avg: stats.handballs / gamesPlayed },
     { label: 'Marks', total: stats.marks, avg: stats.marks / gamesPlayed },
+    { label: 'Contested Marks', total: stats.contestedMarks, avg: stats.contestedMarks / gamesPlayed },
     { label: 'Tackles', total: stats.tackles, avg: stats.tackles / gamesPlayed },
     { label: 'Hitouts', total: stats.hitouts, avg: stats.hitouts / gamesPlayed },
     { label: 'Contested Poss', total: stats.contestedPossessions, avg: stats.contestedPossessions / gamesPlayed },
     { label: 'Clearances', total: stats.clearances, avg: stats.clearances / gamesPlayed },
     { label: 'Inside 50s', total: stats.insideFifties, avg: stats.insideFifties / gamesPlayed },
     { label: 'Rebound 50s', total: stats.rebound50s, avg: stats.rebound50s / gamesPlayed },
+    { label: 'Goal Assists', total: stats.goalAssists, avg: stats.goalAssists / gamesPlayed },
+    { label: 'Score Inv.', total: stats.scoreInvolvements, avg: stats.scoreInvolvements / gamesPlayed },
+    { label: 'Metres Gained', total: stats.metresGained, avg: stats.metresGained / gamesPlayed },
+    { label: 'Intercepts', total: stats.intercepts, avg: stats.intercepts / gamesPlayed },
+    { label: 'One Percenters', total: stats.onePercenters, avg: stats.onePercenters / gamesPlayed },
+    { label: 'Turnovers', total: stats.turnovers, avg: stats.turnovers / gamesPlayed },
+    { label: 'Clangers', total: stats.clangers, avg: stats.clangers / gamesPlayed },
+    { label: 'Bounces', total: stats.bounces, avg: stats.bounces / gamesPlayed },
   ]
 
   return (

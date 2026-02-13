@@ -12,7 +12,7 @@ import {
 } from '@tanstack/react-table'
 import { useGameStore } from '@/stores/gameStore'
 import type { Player } from '@/types/player'
-import type { PositionGroup } from '@/types/player'
+import type { PlayerPositionType } from '@/types/player'
 import {
   Table,
   TableBody,
@@ -77,8 +77,8 @@ function capBarColor(ratio: number): string {
   return 'bg-green-500'
 }
 
-const POSITION_GROUPS: PositionGroup[] = [
-  'FB', 'HB', 'C', 'HF', 'FF', 'FOLL', 'INT', 'MID', 'WING',
+const POSITION_GROUPS: PlayerPositionType[] = [
+  'BP', 'FB', 'HBF', 'CHB', 'W', 'IM', 'OM', 'RK', 'HFF', 'CHF', 'FP', 'FF',
 ]
 
 // ---------------------------------------------------------------------------

@@ -94,7 +94,7 @@ function getDeclineAgeFactor(yearsPostPeak: number): number {
  * Applies age-based attribute growth, peak fluctuation, or decline depending
  * on the player's current age relative to their hidden peak window.
  */
-export function developPlayer(player: Player, rng: SeededRNG): void {
+export function developPlayer(player: Player, rng: SeededRNG, speedMultiplier?: number): void {
   const { age, hiddenAttributes } = player
   const { peakAgeStart, peakAgeEnd, developmentRate, declineRate, potentialCeiling } = hiddenAttributes
 
@@ -113,7 +113,7 @@ export function developPlayer(player: Player, rng: SeededRNG): void {
         else if (isMental) typeMultiplier = 0.8
       }
 
-      const growth = rng.nextFloat(0, 3) * developmentRate * ageFactor * typeMultiplier
+      const growth = rng.nextFloat(0, 3) * developmentRate * ageFactor * typeMultiplier * (speedMultiplier ?? 1.0)
       const currentValue = player.attributes[key]
 
       // Cap growth so attributes don't exceed the potential ceiling

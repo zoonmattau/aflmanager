@@ -1,48 +1,43 @@
-import type { Player, PositionGroup } from '@/types/player'
+import type { Player, PlayerPositionType, LineupSlot } from '@/types/player'
 
 // ---------------------------------------------------------------------------
 // Position codes that make up a full 22-player AFL lineup
 // ---------------------------------------------------------------------------
 
-const BACK_LINE = ['FB', 'BPL', 'BPR'] as const
-const HALF_BACK_LINE = ['HBF', 'CHB', 'HBF2'] as const
-const CENTRE_LINE = ['W', 'C', 'W2'] as const
-const HALF_FORWARD_LINE = ['HFF', 'CHF', 'HFF2'] as const
-const FORWARD_LINE = ['FP', 'FF', 'FP2'] as const
-const FOLLOWERS = ['RK', 'RR', 'ROV'] as const
-const INTERCHANGE = ['I1', 'I2', 'I3', 'I4'] as const
-
-type PositionCode =
-  | (typeof BACK_LINE)[number]
-  | (typeof HALF_BACK_LINE)[number]
-  | (typeof CENTRE_LINE)[number]
-  | (typeof HALF_FORWARD_LINE)[number]
-  | (typeof FORWARD_LINE)[number]
-  | (typeof FOLLOWERS)[number]
-  | (typeof INTERCHANGE)[number]
+const BACK_LINE: LineupSlot[] = ['LBP', 'RBP', 'FB']
+const HALF_BACK_LINE: LineupSlot[] = ['LHB', 'RHB', 'CHB']
+const CENTRE_LINE: LineupSlot[] = ['LW', 'RW', 'C']
+const HALF_FORWARD_LINE: LineupSlot[] = ['LHF', 'RHF', 'CHF']
+const FORWARD_LINE: LineupSlot[] = ['LFP', 'RFP', 'FF']
+const FOLLOWERS: LineupSlot[] = ['RK', 'RR', 'ROV']
+const INTERCHANGE: LineupSlot[] = ['I1', 'I2', 'I3', 'I4']
 
 /**
- * Ordered list describing which position groups fill which slots, and in what
+ * Ordered list describing which position types fill which slots, and in what
  * priority.  We fill specialist roles first (ruck, centre, wings) before the
  * lines so that versatile players are not wasted on less critical positions.
  */
-const FILL_ORDER: { group: PositionGroup; codes: readonly PositionCode[] }[] = [
-  // Ruck is hardest to fill – only FOLL players suit it
-  { group: 'FOLL', codes: ['RK'] },
-  // Centre – only C group maps here
-  { group: 'C', codes: ['C'] },
+const FILL_ORDER: { posType: PlayerPositionType; slots: LineupSlot[] }[] = [
+  // Ruck is hardest to fill – only RK players suit it
+  { posType: 'RK', slots: ['RK'] },
+  // Centre – outside mids map here
+  { posType: 'OM', slots: ['C'] },
   // Wings
-  { group: 'WING', codes: ['W', 'W2'] },
+  { posType: 'W', slots: ['LW', 'RW'] },
   // Back line
-  { group: 'FB', codes: BACK_LINE },
+  { posType: 'FB', slots: ['FB'] },
+  { posType: 'BP', slots: ['LBP', 'RBP'] },
   // Half-back line
-  { group: 'HB', codes: HALF_BACK_LINE },
+  { posType: 'CHB', slots: ['CHB'] },
+  { posType: 'HBF', slots: ['LHB', 'RHB'] },
   // Half-forward line
-  { group: 'HF', codes: HALF_FORWARD_LINE },
+  { posType: 'CHF', slots: ['CHF'] },
+  { posType: 'HFF', slots: ['LHF', 'RHF'] },
   // Forward line
-  { group: 'FF', codes: FORWARD_LINE },
-  // Midfield followers (rover, ruck-rover) and interchange
-  { group: 'MID', codes: ['RR', 'ROV'] },
+  { posType: 'FF', slots: ['FF'] },
+  { posType: 'FP', slots: ['LFP', 'RFP'] },
+  // Midfield followers (rover, ruck-rover)
+  { posType: 'IM', slots: ['RR', 'ROV'] },
 ]
 
 // ---------------------------------------------------------------------------
@@ -72,28 +67,28 @@ function computeEffectiveRating(player: Player): number {
 
 /**
  * Compute a position-aware suitability score for a player at a given position
- * group. Uses the player's position ratings when available, falling back to
+ * type. Uses the player's position ratings when available, falling back to
  * the generic effective rating.
  */
-function computeSuitability(player: Player, targetGroup: PositionGroup): number {
+function computeSuitability(player: Player, targetType: PlayerPositionType): number {
   const effectiveRating = computeEffectiveRating(player)
 
-  // If the player's primary position matches the target group, they are
+  // If the player's primary position matches the target, they are
   // inherently a better fit.
-  if (player.position.primary === targetGroup) {
+  if (player.position.primary === targetType) {
     return effectiveRating
   }
 
-  // If the target group appears in the player's position ratings, apply
+  // If the target type appears in the player's position ratings, apply
   // that rating as a scaling factor (0-100 mapped to 0.0-1.0).
-  const posRating = player.position.ratings[targetGroup]
+  const posRating = player.position.ratings[targetType]
   if (posRating !== undefined) {
     return effectiveRating * (posRating / 100)
   }
 
-  // If the target group is a listed secondary position, give a moderate
+  // If the target type is a listed secondary position, give a moderate
   // discount (80% of effective rating).
-  if (player.position.secondary.includes(targetGroup)) {
+  if (player.position.secondary.includes(targetType)) {
     return effectiveRating * 0.8
   }
 
@@ -111,7 +106,7 @@ function computeSuitability(player: Player, targetGroup: PositionGroup): number 
  * @param players - The full squad of players available for selection.
  * @param clubId  - The club ID to select a lineup for.
  * @returns An object containing:
- *   - `lineup`: a mapping of position codes to player IDs
+ *   - `lineup`: a mapping of lineup slots to player IDs
  *   - `selectedPlayerIds`: the 22 chosen player IDs
  */
 export function selectBestLineup(
@@ -132,63 +127,63 @@ export function selectBestLineup(
     ratingCache.set(p.id, computeEffectiveRating(p))
   }
 
-  // ---- 2. Greedy position-group assignment --------------------------------
+  // ---- 2. Greedy position-type assignment --------------------------------
 
   const lineup: Record<string, string> = {}
   const assigned = new Set<string>()
 
   // Helper: from a pool of candidates, pick the best one for a given
-  // position group and assign them to the given position code.
+  // position type and assign them to the given slot.
   const assignBest = (
-    code: PositionCode,
+    slot: LineupSlot,
     candidates: Player[],
-    targetGroup: PositionGroup,
+    targetType: PlayerPositionType,
   ): boolean => {
     // Filter to unassigned candidates and sort by suitability descending
     const available = candidates
       .filter((p) => !assigned.has(p.id))
-      .map((p) => ({ player: p, score: computeSuitability(p, targetGroup) }))
+      .map((p) => ({ player: p, score: computeSuitability(p, targetType) }))
       .sort((a, b) => b.score - a.score)
 
     if (available.length === 0) return false
 
     const best = available[0]
-    lineup[code] = best.player.id
+    lineup[slot] = best.player.id
     assigned.add(best.player.id)
     return true
   }
 
   // Build a lookup of eligible players grouped by their primary position.
-  const byGroup = new Map<PositionGroup, Player[]>()
+  const byType = new Map<PlayerPositionType, Player[]>()
   for (const p of eligible) {
-    const group = p.position.primary
-    if (!byGroup.has(group)) byGroup.set(group, [])
-    byGroup.get(group)!.push(p)
+    const type = p.position.primary
+    if (!byType.has(type)) byType.set(type, [])
+    byType.get(type)!.push(p)
   }
 
-  // Fill each position-group block in priority order.
-  for (const { group, codes } of FILL_ORDER) {
+  // Fill each position-type block in priority order.
+  for (const { posType, slots } of FILL_ORDER) {
     // Primary candidates: players whose primary position matches.
-    const primaryCandidates = byGroup.get(group) ?? []
+    const primaryCandidates = byType.get(posType) ?? []
 
-    // Secondary candidates: players who list this group as a secondary
+    // Secondary candidates: players who list this type as a secondary
     // position. These are used as fallback.
     const secondaryCandidates = eligible.filter(
       (p) =>
-        p.position.primary !== group && p.position.secondary.includes(group),
+        p.position.primary !== posType && p.position.secondary.includes(posType),
     )
 
     // Combined pool: primary first, then secondary.
     const pool = [...primaryCandidates, ...secondaryCandidates]
 
-    for (const code of codes) {
-      assignBest(code, pool, group)
+    for (const slot of slots) {
+      assignBest(slot, pool, posType)
     }
   }
 
   // ---- 3. Fill any remaining on-field slots with best available -----------
 
-  const ALL_ON_FIELD_CODES: PositionCode[] = [
+  const ALL_ON_FIELD_SLOTS: LineupSlot[] = [
     ...BACK_LINE,
     ...HALF_BACK_LINE,
     ...CENTRE_LINE,
@@ -198,52 +193,52 @@ export function selectBestLineup(
   ]
 
   // Some on-field positions may still be empty if the squad was thin at a
-  // particular position group. Fill them with the best remaining players.
-  for (const code of ALL_ON_FIELD_CODES) {
-    if (lineup[code]) continue
+  // particular position type. Fill them with the best remaining players.
+  for (const slot of ALL_ON_FIELD_SLOTS) {
+    if (lineup[slot]) continue
 
     const remaining = eligible
       .filter((p) => !assigned.has(p.id))
       .sort((a, b) => (ratingCache.get(b.id) ?? 0) - (ratingCache.get(a.id) ?? 0))
 
     if (remaining.length > 0) {
-      lineup[code] = remaining[0].id
+      lineup[slot] = remaining[0].id
       assigned.add(remaining[0].id)
     }
   }
 
   // ---- 4. Fill interchange with best remaining players --------------------
 
-  const interchangeCodes: PositionCode[] = [...INTERCHANGE]
+  const interchangeSlots: LineupSlot[] = [...INTERCHANGE]
 
-  // Midfield-group players already assigned to RR / ROV above; now fill
+  // Midfield-type players already assigned to RR / ROV above; now fill
   // interchange slots. Start with unassigned midfielders (natural
   // interchange candidates), then any remaining players.
-  const remainingMids = (byGroup.get('MID') ?? [])
+  const remainingMids = [...(byType.get('IM') ?? []), ...(byType.get('OM') ?? [])]
     .filter((p) => !assigned.has(p.id))
     .sort((a, b) => (ratingCache.get(b.id) ?? 0) - (ratingCache.get(a.id) ?? 0))
 
-  for (const code of interchangeCodes) {
-    if (lineup[code]) continue
+  for (const slot of interchangeSlots) {
+    if (lineup[slot]) continue
 
     if (remainingMids.length > 0) {
       const mid = remainingMids.shift()!
-      lineup[code] = mid.id
+      lineup[slot] = mid.id
       assigned.add(mid.id)
     }
   }
 
   // If interchange spots are still unfilled, use the best remaining from
   // any position.
-  for (const code of interchangeCodes) {
-    if (lineup[code]) continue
+  for (const slot of interchangeSlots) {
+    if (lineup[slot]) continue
 
     const remaining = eligible
       .filter((p) => !assigned.has(p.id))
       .sort((a, b) => (ratingCache.get(b.id) ?? 0) - (ratingCache.get(a.id) ?? 0))
 
     if (remaining.length > 0) {
-      lineup[code] = remaining[0].id
+      lineup[slot] = remaining[0].id
       assigned.add(remaining[0].id)
     }
   }

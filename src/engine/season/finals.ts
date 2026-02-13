@@ -1,31 +1,10 @@
 import type { Round, Fixture, LadderEntry } from '@/types/season'
 import type { Match } from '@/types/match'
 import type { Club } from '@/types/club'
-
-/**
- * AFL Finals Series Engine
- *
- * Implements the full AFL top-8 finals system:
- *
- * Week 1:
- *   QF1: 1st vs 4th   (winner -> PF1, loser -> SF1)
- *   EF1: 5th vs 8th   (winner -> SF1, loser eliminated)
- *   QF2: 2nd vs 3rd   (winner -> PF2, loser -> SF2)
- *   EF2: 6th vs 7th   (winner -> SF2, loser eliminated)
- *
- * Week 2:
- *   SF1: Loser QF1 vs Winner EF1   (winner -> PF1, loser eliminated)
- *   SF2: Loser QF2 vs Winner EF2   (winner -> PF2, loser eliminated)
- *
- * Week 3:
- *   PF1: Winner QF1 vs Winner SF1  (winner -> GF)
- *   PF2: Winner QF2 vs Winner SF2  (winner -> GF)
- *
- * Week 4:
- *   GF: Winner PF1 vs Winner PF2   (venue: MCG)
- */
-
-const GRAND_FINAL_VENUE = 'MCG'
+import type { FinalsSettings } from '@/types/game'
+import type { FinalsFormat, TeamSource } from '@/types/finals'
+import { getFinalsFormatById } from './finalsFormats'
+import { GF_VENUES } from '@/engine/core/defaultSettings'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -38,11 +17,9 @@ function getWinner(match: Match): string {
   if (!match.result) {
     throw new Error(`Match ${match.id} has no result — cannot determine winner`)
   }
-
-  if (match.result.homeTotalScore >= match.result.awayTotalScore) {
-    return match.homeClubId
-  }
-  return match.awayClubId
+  return match.result.homeTotalScore >= match.result.awayTotalScore
+    ? match.homeClubId
+    : match.awayClubId
 }
 
 /**
@@ -52,53 +29,14 @@ function getLoser(match: Match): string {
   if (!match.result) {
     throw new Error(`Match ${match.id} has no result — cannot determine loser`)
   }
-
-  if (match.result.homeTotalScore >= match.result.awayTotalScore) {
-    return match.awayClubId
-  }
-  return match.homeClubId
-}
-
-/**
- * Find a completed match by its finalType from a list of results.
- * When there are multiple matches of the same type (e.g. two QFs),
- * an optional index (0-based) selects which one.
- */
-function findFinalMatch(
-  results: Match[],
-  finalType: 'QF' | 'EF' | 'SF' | 'PF' | 'GF',
-  index: number = 0
-): Match {
-  const matches = results.filter((m) => m.isFinal && m.finalType === finalType)
-  if (matches.length <= index) {
-    throw new Error(
-      `Expected at least ${index + 1} ${finalType} match(es) in results, found ${matches.length}`
-    )
-  }
-  return matches[index]
-}
-
-/**
- * Determine the venue for a finals match.
- * The higher-ranked team (homeClubId) gets home ground advantage,
- * except in the Grand Final which is always at the MCG.
- */
-function getFinalsVenue(
-  homeClubId: string,
-  clubs: Record<string, Club>,
-  isGrandFinal: boolean
-): string {
-  if (isGrandFinal) {
-    return GRAND_FINAL_VENUE
-  }
-  return clubs[homeClubId].homeGround
+  return match.result.homeTotalScore >= match.result.awayTotalScore
+    ? match.awayClubId
+    : match.homeClubId
 }
 
 /**
  * Determine which of two clubs is higher-ranked on the ladder.
  * Returns [higherRanked, lowerRanked].
- * If neither club appears on the ladder (e.g. in later weeks where
- * the ladder isn't directly used), falls back to the order provided.
  */
 function orderByLadderPosition(
   clubA: string,
@@ -108,191 +46,234 @@ function orderByLadderPosition(
   const posA = ladder.findIndex((e) => e.clubId === clubA)
   const posB = ladder.findIndex((e) => e.clubId === clubB)
 
-  // Lower index = higher rank
   if (posA !== -1 && posB !== -1) {
     return posA < posB ? [clubA, clubB] : [clubB, clubA]
   }
-  // Fallback: keep original order
   return [clubA, clubB]
 }
 
 /**
- * Create a Fixture with home ground advantage for the higher-ranked team.
+ * Resolve the Grand Final venue based on the venue mode setting.
+ *
+ * - 'fixed': use the user-selected venue from settings
+ * - 'random': pick a venue from the major venues list (deterministic per year)
+ * - 'top-club': use the home ground of the higher-ranked finalist
  */
-function createFinalsFixture(
-  higherRankedClubId: string,
-  lowerRankedClubId: string,
+export function resolveGrandFinalVenue(
+  finalsSettings: FinalsSettings | undefined,
+  homeClubId: string,
   clubs: Record<string, Club>,
-  isGrandFinal: boolean
-): Fixture {
-  return {
-    homeClubId: higherRankedClubId,
-    awayClubId: lowerRankedClubId,
-    venue: getFinalsVenue(higherRankedClubId, clubs, isGrandFinal),
+  year: number,
+): string {
+  const mode = finalsSettings?.grandFinalVenueMode ?? 'fixed'
+
+  switch (mode) {
+    case 'fixed':
+      return finalsSettings?.grandFinalVenue ?? 'MCG'
+
+    case 'random': {
+      // Deterministic per year so the venue stays consistent within a season
+      const idx = year % GF_VENUES.length
+      return GF_VENUES[idx]
+    }
+
+    case 'top-club':
+      return clubs[homeClubId]?.homeGround ?? 'MCG'
+
+    default:
+      return finalsSettings?.grandFinalVenue ?? 'MCG'
   }
 }
-
-// ── Week generators ──────────────────────────────────────────────────────────
-
-function generateWeek1(ladder: LadderEntry[], clubs: Record<string, Club>): Fixture[] {
-  const top8 = ladder.slice(0, 8)
-
-  if (top8.length < 8) {
-    throw new Error(`Need at least 8 teams on the ladder for finals, found ${top8.length}`)
-  }
-
-  const first = top8[0].clubId
-  const second = top8[1].clubId
-  const third = top8[2].clubId
-  const fourth = top8[3].clubId
-  const fifth = top8[4].clubId
-  const sixth = top8[5].clubId
-  const seventh = top8[6].clubId
-  const eighth = top8[7].clubId
-
-  return [
-    // QF1: 1st vs 4th
-    createFinalsFixture(first, fourth, clubs, false),
-    // EF1: 5th vs 8th
-    createFinalsFixture(fifth, eighth, clubs, false),
-    // QF2: 2nd vs 3rd
-    createFinalsFixture(second, third, clubs, false),
-    // EF2: 6th vs 7th
-    createFinalsFixture(sixth, seventh, clubs, false),
-  ]
-}
-
-function generateWeek2(
-  previousResults: Match[],
-  ladder: LadderEntry[],
-  clubs: Record<string, Club>
-): Fixture[] {
-  const qf1 = findFinalMatch(previousResults, 'QF', 0)
-  const ef1 = findFinalMatch(previousResults, 'EF', 0)
-  const qf2 = findFinalMatch(previousResults, 'QF', 1)
-  const ef2 = findFinalMatch(previousResults, 'EF', 1)
-
-  // SF1: Loser QF1 vs Winner EF1
-  const sf1TeamA = getLoser(qf1)
-  const sf1TeamB = getWinner(ef1)
-  const [sf1Home, sf1Away] = orderByLadderPosition(sf1TeamA, sf1TeamB, ladder)
-
-  // SF2: Loser QF2 vs Winner EF2
-  const sf2TeamA = getLoser(qf2)
-  const sf2TeamB = getWinner(ef2)
-  const [sf2Home, sf2Away] = orderByLadderPosition(sf2TeamA, sf2TeamB, ladder)
-
-  return [
-    createFinalsFixture(sf1Home, sf1Away, clubs, false),
-    createFinalsFixture(sf2Home, sf2Away, clubs, false),
-  ]
-}
-
-function generateWeek3(
-  previousResults: Match[],
-  ladder: LadderEntry[],
-  clubs: Record<string, Club>
-): Fixture[] {
-  const qf1 = findFinalMatch(previousResults, 'QF', 0)
-  const sf1 = findFinalMatch(previousResults, 'SF', 0)
-  const qf2 = findFinalMatch(previousResults, 'QF', 1)
-  const sf2 = findFinalMatch(previousResults, 'SF', 1)
-
-  // PF1: Winner QF1 vs Winner SF1
-  const pf1TeamA = getWinner(qf1)
-  const pf1TeamB = getWinner(sf1)
-  const [pf1Home, pf1Away] = orderByLadderPosition(pf1TeamA, pf1TeamB, ladder)
-
-  // PF2: Winner QF2 vs Winner SF2
-  const pf2TeamA = getWinner(qf2)
-  const pf2TeamB = getWinner(sf2)
-  const [pf2Home, pf2Away] = orderByLadderPosition(pf2TeamA, pf2TeamB, ladder)
-
-  return [
-    createFinalsFixture(pf1Home, pf1Away, clubs, false),
-    createFinalsFixture(pf2Home, pf2Away, clubs, false),
-  ]
-}
-
-function generateWeek4(
-  previousResults: Match[],
-  ladder: LadderEntry[],
-  clubs: Record<string, Club>
-): Fixture[] {
-  const pf1 = findFinalMatch(previousResults, 'PF', 0)
-  const pf2 = findFinalMatch(previousResults, 'PF', 1)
-
-  // GF: Winner PF1 vs Winner PF2
-  const gfTeamA = getWinner(pf1)
-  const gfTeamB = getWinner(pf2)
-  const [gfHome, gfAway] = orderByLadderPosition(gfTeamA, gfTeamB, ladder)
-
-  return [createFinalsFixture(gfHome, gfAway, clubs, true)]
-}
-
-// ── Finals type assignment ───────────────────────────────────────────────────
 
 /**
- * Map week number and fixture index to the appropriate finalType.
+ * Get the venue for a finals match.
  */
-function getFinalType(
-  weekNumber: number,
-  fixtureIndex: number
-): 'QF' | 'EF' | 'SF' | 'PF' | 'GF' {
-  if (weekNumber === 1) {
-    // Order: QF1, EF1, QF2, EF2
-    return fixtureIndex === 0 || fixtureIndex === 2 ? 'QF' : 'EF'
+function getFinalsVenue(
+  homeClubId: string,
+  clubs: Record<string, Club>,
+  isGrandFinal: boolean,
+  grandFinalVenue: string
+): string {
+  if (isGrandFinal) return grandFinalVenue
+  return clubs[homeClubId]?.homeGround ?? 'MCG'
+}
+
+/**
+ * Organize previous results by finals week number.
+ * Returns a map: weekNumber -> array of matches in fixture order.
+ */
+function organizeByWeek(
+  previousResults: Match[],
+  finalsRoundsPlayed: Round[]
+): Map<number, Match[]> {
+  const weekMap = new Map<number, Match[]>()
+
+  for (const round of finalsRoundsPlayed) {
+    const weekMatches: Match[] = []
+    for (const fixture of round.fixtures) {
+      const match = previousResults.find(
+        (m) =>
+          m.isFinal &&
+          m.homeClubId === fixture.homeClubId &&
+          m.awayClubId === fixture.awayClubId &&
+          m.result !== null
+      )
+      if (match) weekMatches.push(match)
+    }
+    weekMap.set(round.number, weekMatches)
   }
-  if (weekNumber === 2) return 'SF'
-  if (weekNumber === 3) return 'PF'
-  return 'GF'
+
+  return weekMap
+}
+
+/**
+ * Resolve a TeamSource to a clubId.
+ */
+function resolveTeamSource(
+  source: TeamSource,
+  ladder: LadderEntry[],
+  weekResults: Map<number, Match[]>
+): string | null {
+  if (source.type === 'ladder') {
+    const rank = (source.rank ?? 1) - 1 // Convert 1-based to 0-based
+    if (rank >= 0 && rank < ladder.length) {
+      return ladder[rank].clubId
+    }
+    return null
+  }
+
+  // type === 'result'
+  const weekNum = source.weekRef ?? 0
+  const matchIdx = source.matchRef ?? 0
+  const weekMatches = weekResults.get(weekNum) ?? []
+
+  if (matchIdx >= weekMatches.length) return null
+
+  const match = weekMatches[matchIdx]
+  if (!match.result) return null
+
+  return source.outcome === 'loser' ? getLoser(match) : getWinner(match)
+}
+
+// ── Round-Robin standings ──────────────────────────────────────────────────
+
+/**
+ * For round-robin format: after all RR weeks, re-rank the qualifying teams
+ * by their win/loss record in the finals matches and return the updated ladder.
+ */
+function computeRoundRobinStandings(
+  ladder: LadderEntry[],
+  finalsMatches: Match[],
+  qualifyingTeams: number
+): LadderEntry[] {
+  const qualifiers = ladder.slice(0, qualifyingTeams).map((e) => e.clubId)
+
+  // Tally W/L for each qualifier in finals
+  const wins = new Map<string, number>()
+  const pointsFor = new Map<string, number>()
+  for (const cid of qualifiers) {
+    wins.set(cid, 0)
+    pointsFor.set(cid, 0)
+  }
+
+  for (const m of finalsMatches) {
+    if (!m.result || m.finalType === 'GF') continue
+    const winner = getWinner(m)
+    wins.set(winner, (wins.get(winner) ?? 0) + 1)
+    pointsFor.set(m.homeClubId, (pointsFor.get(m.homeClubId) ?? 0) + m.result.homeTotalScore)
+    pointsFor.set(m.awayClubId, (pointsFor.get(m.awayClubId) ?? 0) + m.result.awayTotalScore)
+  }
+
+  // Sort: most wins, then most points for, then original ladder position
+  const ranked = [...qualifiers].sort((a, b) => {
+    const wDiff = (wins.get(b) ?? 0) - (wins.get(a) ?? 0)
+    if (wDiff !== 0) return wDiff
+    const pDiff = (pointsFor.get(b) ?? 0) - (pointsFor.get(a) ?? 0)
+    if (pDiff !== 0) return pDiff
+    return qualifiers.indexOf(a) - qualifiers.indexOf(b)
+  })
+
+  // Build a new "ladder" with just the top qualifiers re-ranked
+  return ranked.map((cid) => {
+    const original = ladder.find((e) => e.clubId === cid)!
+    return { ...original }
+  })
 }
 
 // ── Exported API ─────────────────────────────────────────────────────────────
 
 /**
- * Generate a finals round for the given week number.
+ * Generate a finals round for the given week number using a data-driven format.
  *
- * @param weekNumber    1-4, corresponding to finals weeks
- * @param ladder        The end-of-home-and-away-season ladder (sorted)
- * @param previousResults  All finals matches played in previous weeks
- * @param clubs         Club records keyed by club id
+ * @param weekNumber     1-based finals week
+ * @param ladder         End-of-home-and-away ladder (sorted)
+ * @param previousResults All finals matches played in previous weeks
+ * @param clubs          Club records keyed by club id
+ * @param format         The finals format to use (defaults to AFL Top 8)
+ * @param finalsRoundsPlayed  Previous rounds (for fixture ordering)
  * @returns A Round with isFinals: true
  */
 export function generateFinalsRound(
   weekNumber: number,
   ladder: LadderEntry[],
   previousResults: Match[],
-  clubs: Record<string, Club>
+  clubs: Record<string, Club>,
+  format?: FinalsFormat,
+  finalsRoundsPlayed?: Round[],
+  finalsSettings?: FinalsSettings,
+  year?: number,
 ): Round {
-  if (weekNumber < 1 || weekNumber > 4) {
-    throw new Error(`Invalid finals week number: ${weekNumber}. Must be 1-4.`)
+  const fmt = format ?? getFinalsFormatById('afl-top-8')
+
+  const weekDef = fmt.weeks.find((w) => w.weekNumber === weekNumber)
+  if (!weekDef) {
+    throw new Error(`No week ${weekNumber} defined in finals format "${fmt.name}"`)
   }
 
-  let fixtures: Fixture[]
+  // Build results map organized by week
+  const weekResults = organizeByWeek(previousResults, finalsRoundsPlayed ?? [])
 
-  switch (weekNumber) {
-    case 1:
-      fixtures = generateWeek1(ladder, clubs)
-      break
-    case 2:
-      fixtures = generateWeek2(previousResults, ladder, clubs)
-      break
-    case 3:
-      fixtures = generateWeek3(previousResults, ladder, clubs)
-      break
-    case 4:
-      fixtures = generateWeek4(previousResults, ladder, clubs)
-      break
-    default:
-      throw new Error(`Unexpected week number: ${weekNumber}`)
+  // For round-robin: if this is the GF week, re-rank based on RR standings
+  let effectiveLadder = ladder
+  if (fmt.id === 'round-robin' && weekDef.matchups.some((m) => m.finalType === 'GF')) {
+    effectiveLadder = computeRoundRobinStandings(
+      ladder,
+      previousResults,
+      fmt.qualifyingTeams
+    )
+  }
+
+  const fixtures: Fixture[] = []
+
+  for (const matchup of weekDef.matchups) {
+    const homeClubId = resolveTeamSource(matchup.home, effectiveLadder, weekResults)
+    const awayClubId = resolveTeamSource(matchup.away, effectiveLadder, weekResults)
+
+    if (!homeClubId || !awayClubId) {
+      continue // Skip if we can't resolve both teams
+    }
+
+    // Order by ladder position so higher-ranked team gets home advantage
+    const [home, away] = orderByLadderPosition(homeClubId, awayClubId, ladder)
+    const isGF = matchup.finalType === 'GF'
+
+    const venue = isGF
+      ? resolveGrandFinalVenue(finalsSettings, home, clubs, year ?? new Date().getFullYear())
+      : getFinalsVenue(home, clubs, false, fmt.grandFinalVenue)
+
+    fixtures.push({
+      homeClubId: home,
+      awayClubId: away,
+      venue,
+    })
   }
 
   return {
     number: weekNumber,
-    name: getFinalsWeekName(weekNumber),
+    name: weekDef.label,
     fixtures,
     isBye: false,
+    byeClubIds: [],
     isFinals: true,
   }
 }
@@ -300,19 +281,10 @@ export function generateFinalsRound(
 /**
  * Get the display name for a finals week.
  */
-export function getFinalsWeekName(weekNumber: number): string {
-  switch (weekNumber) {
-    case 1:
-      return 'Finals Week 1'
-    case 2:
-      return 'Finals Week 2'
-    case 3:
-      return 'Finals Week 3'
-    case 4:
-      return 'Grand Final'
-    default:
-      return `Finals Week ${weekNumber}`
-  }
+export function getFinalsWeekName(weekNumber: number, format?: FinalsFormat): string {
+  const fmt = format ?? getFinalsFormatById('afl-top-8')
+  const weekDef = fmt.weeks.find((w) => w.weekNumber === weekNumber)
+  return weekDef?.label ?? `Finals Week ${weekNumber}`
 }
 
 /**
@@ -332,19 +304,31 @@ export function getPremier(finalsResults: Match[]): string | null {
   const grandFinal = finalsResults.find(
     (m) => m.isFinal && m.finalType === 'GF' && m.result !== null
   )
-
   if (!grandFinal) return null
-
   return getWinner(grandFinal)
 }
 
 /**
  * Get the finalType for a specific fixture within a finals round.
- * Useful when creating Match objects from generated fixtures.
+ * Uses the format definition to determine the type.
  */
 export function getFixtureFinalType(
   weekNumber: number,
-  fixtureIndex: number
+  fixtureIndex: number,
+  format?: FinalsFormat
 ): 'QF' | 'EF' | 'SF' | 'PF' | 'GF' {
-  return getFinalType(weekNumber, fixtureIndex)
+  const fmt = format ?? getFinalsFormatById('afl-top-8')
+  const weekDef = fmt.weeks.find((w) => w.weekNumber === weekNumber)
+  if (!weekDef || fixtureIndex >= weekDef.matchups.length) {
+    return 'GF' // Fallback
+  }
+  return weekDef.matchups[fixtureIndex].finalType
+}
+
+/**
+ * Get the total number of finals weeks for a given format.
+ */
+export function getFinalsWeekCount(format?: FinalsFormat): number {
+  const fmt = format ?? getFinalsFormatById('afl-top-8')
+  return fmt.weeks.length
 }

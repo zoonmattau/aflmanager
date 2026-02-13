@@ -1,5 +1,6 @@
 import type { SeededRNG } from '@/engine/core/rng'
 import type { Player } from '@/types/player'
+import { getInjuryFrequencyMultiplier } from '@/engine/core/difficultyPresets'
 
 /**
  * Represents an injury that occurred during a match.
@@ -112,8 +113,10 @@ export function rollMatchInjuries(
   players: Record<string, Player>,
   rng: SeededRNG,
   aggressionLevel: 'high' | 'medium' | 'low',
+  injuryFrequency?: 'low' | 'medium' | 'high',
 ): InjuryEvent[] {
   const injuries: InjuryEvent[] = []
+  const frequencyMultiplier = getInjuryFrequencyMultiplier(injuryFrequency ?? 'medium')
 
   for (const playerId of playerIds) {
     const player = players[playerId]
@@ -122,7 +125,7 @@ export function rollMatchInjuries(
     // Skip players who are already injured
     if (player.injury) continue
 
-    const chance = getInjuryChance(player, aggressionLevel)
+    const chance = getInjuryChance(player, aggressionLevel) * frequencyMultiplier
 
     if (rng.chance(chance)) {
       const { type, weeksOut } = rollInjuryType(rng)

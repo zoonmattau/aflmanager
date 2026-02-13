@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
 import type { StaffMember, StaffRole, StaffRatings } from '@/types/staff'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -14,13 +15,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import {
   Users,
   DollarSign,
@@ -124,43 +118,6 @@ function overallBadgeClass(ovr: number): string {
   if (ovr >= 50) return 'bg-yellow-500 text-black'
   if (ovr >= 30) return 'bg-orange-500 text-white'
   return 'bg-red-500 text-white'
-}
-
-/** Generate placeholder free agent candidates for a given role */
-function generatePlaceholderCandidates(role: StaffRole): StaffMember[] {
-  const firstNames = ['James', 'Michael', 'David', 'Robert', 'Chris', 'Daniel', 'Mark', 'Steven']
-  const lastNames = ['Thompson', 'Williams', 'Brown', 'Wilson', 'Taylor', 'Anderson', 'Clark', 'Hall']
-  const philosophies: StaffMember['philosophy'][] = ['attacking', 'defensive', 'balanced', 'development']
-
-  const candidates: StaffMember[] = []
-  const count = 3 + Math.floor(Math.random() * 3) // 3-5 candidates
-
-  for (let i = 0; i < count; i++) {
-    const ratings: StaffRatings = {
-      tactical: 25 + Math.floor(Math.random() * 60),
-      manManagement: 25 + Math.floor(Math.random() * 60),
-      development: 25 + Math.floor(Math.random() * 60),
-      gameDay: 25 + Math.floor(Math.random() * 60),
-      recruitment: 25 + Math.floor(Math.random() * 60),
-      fitness: 25 + Math.floor(Math.random() * 60),
-      discipline: 25 + Math.floor(Math.random() * 60),
-    }
-    const ovr = getOverallRating(ratings)
-    candidates.push({
-      id: `placeholder-${role}-${i}`,
-      firstName: firstNames[i % firstNames.length],
-      lastName: lastNames[(i + 3) % lastNames.length],
-      age: 35 + Math.floor(Math.random() * 20),
-      role,
-      clubId: '',
-      ratings,
-      contractYears: 0,
-      salary: Math.round((40 + ovr * 1.2) * 1000),
-      philosophy: philosophies[i % philosophies.length],
-    })
-  }
-
-  return candidates.sort((a, b) => getOverallRating(b.ratings) - getOverallRating(a.ratings))
 }
 
 // ---------------------------------------------------------------------------
@@ -358,25 +315,22 @@ function CoachingImpactCard({ clubStaff }: { clubStaff: StaffMember[] }) {
 // ---------------------------------------------------------------------------
 
 export function StaffPage() {
+  const navigate = useNavigate()
   const playerClubId = useGameStore((s) => s.playerClubId)
   const staff = useGameStore((s) => s.staff)
   const clubs = useGameStore((s) => s.clubs)
+  const fireStaffMember = useGameStore((s) => s.fireStaffMember)
 
   const club = clubs[playerClubId]
 
-  // Local state for staff management (store actions may not exist yet)
-  const [localStaff, setLocalStaff] = useState<Record<string, StaffMember>>(() => ({ ...staff }))
-
-  // Dialog state
+  // Fire confirmation dialog state
   const [fireTarget, setFireTarget] = useState<StaffMember | null>(null)
-  const [hireRole, setHireRole] = useState<StaffRole | null>(null)
-  const [hireContractYears, setHireContractYears] = useState<Record<string, number>>({})
 
   // ---------------------------------------------------------------------------
   // Derived data
   // ---------------------------------------------------------------------------
 
-  const allStaffList = useMemo(() => Object.values(localStaff), [localStaff])
+  const allStaffList = useMemo(() => Object.values(staff), [staff])
 
   const clubStaff = useMemo(
     () => allStaffList.filter((s) => s.clubId === playerClubId),
@@ -440,57 +394,21 @@ export function StaffPage() {
   }, [clubStaff])
 
   // ---------------------------------------------------------------------------
-  // Hire dialog candidates
-  // ---------------------------------------------------------------------------
-
-  const hireCandidates = useMemo(() => {
-    if (!hireRole) return []
-    // Find free agents matching the role
-    const freeAgents = allStaffList.filter(
-      (s) => s.clubId === '' && s.role === hireRole,
-    )
-    if (freeAgents.length > 0) {
-      return freeAgents.sort(
-        (a, b) => getOverallRating(b.ratings) - getOverallRating(a.ratings),
-      )
-    }
-    // If none in store, generate placeholders
-    return generatePlaceholderCandidates(hireRole)
-  }, [hireRole, allStaffList])
-
-  // ---------------------------------------------------------------------------
   // Handlers
   // ---------------------------------------------------------------------------
 
   const handleFireConfirm = useCallback(() => {
     if (!fireTarget) return
-    setLocalStaff((prev) => ({
-      ...prev,
-      [fireTarget.id]: { ...prev[fireTarget.id], clubId: '' },
-    }))
+    fireStaffMember(fireTarget.id)
     setFireTarget(null)
-  }, [fireTarget])
+  }, [fireTarget, fireStaffMember])
 
   const handleHire = useCallback(
-    (candidate: StaffMember) => {
-      const contractYrs = hireContractYears[candidate.id] ?? 2
-      setLocalStaff((prev) => ({
-        ...prev,
-        [candidate.id]: {
-          ...candidate,
-          clubId: playerClubId,
-          contractYears: contractYrs,
-        },
-      }))
-      setHireRole(null)
-      setHireContractYears({})
+    (role: StaffRole) => {
+      navigate(`/staff/hire?role=${role}`)
     },
-    [playerClubId, hireContractYears],
+    [navigate],
   )
-
-  const handleContractYearChange = useCallback((candidateId: string, years: string) => {
-    setHireContractYears((prev) => ({ ...prev, [candidateId]: Number(years) }))
-  }, [])
 
   // ---------------------------------------------------------------------------
   // Render
@@ -577,7 +495,7 @@ export function StaffPage() {
               slotLabel={pos.label}
               member={pos.member}
               onFire={setFireTarget}
-              onHire={setHireRole}
+              onHire={handleHire}
             />
           ))}
         </div>
@@ -639,88 +557,6 @@ export function StaffPage() {
               Confirm Termination
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* ------------------------------------------------------------------ */}
-      {/* Hire Staff Dialog                                                   */}
-      {/* ------------------------------------------------------------------ */}
-      <Dialog open={hireRole !== null} onOpenChange={(open) => { if (!open) { setHireRole(null); setHireContractYears({}) } }}>
-        <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>
-              Hire {hireRole ? ROLE_DISPLAY_NAMES[hireRole] : 'Coach'}
-            </DialogTitle>
-            <DialogDescription>
-              Available candidates for the {hireRole ? ROLE_DISPLAY_NAMES[hireRole] : ''} position
-            </DialogDescription>
-          </DialogHeader>
-          {hireCandidates.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-muted-foreground">
-                No candidates available for this position.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {hireCandidates.map((candidate) => {
-                const ovr = getOverallRating(candidate.ratings)
-                const contractYrs = hireContractYears[candidate.id] ?? 2
-
-                return (
-                  <div key={candidate.id} className="rounded-lg border p-4 space-y-3">
-                    {/* Candidate header */}
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <p className="font-semibold">
-                            {candidate.firstName} {candidate.lastName}
-                          </p>
-                          <div
-                            className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${overallBadgeClass(ovr)}`}
-                          >
-                            {ovr}
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                          <span>Age {candidate.age}</span>
-                          <span>{formatSalary(candidate.salary)}/yr</span>
-                          <PhilosophyBadge philosophy={candidate.philosophy} />
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <Select
-                          value={String(contractYrs)}
-                          onValueChange={(v) => handleContractYearChange(candidate.id, v)}
-                        >
-                          <SelectTrigger className="w-[80px] h-8 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="1">1 yr</SelectItem>
-                            <SelectItem value="2">2 yr</SelectItem>
-                            <SelectItem value="3">3 yr</SelectItem>
-                            <SelectItem value="4">4 yr</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Button size="sm" className="h-8 text-xs" onClick={() => handleHire(candidate)}>
-                          <UserPlus className="mr-1 h-3 w-3" />
-                          Hire
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* Candidate ratings */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
-                      {RATING_KEYS.map((key) => (
-                        <RatingBar key={key} label={RATING_LABELS[key]} value={candidate.ratings[key]} />
-                      ))}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
         </DialogContent>
       </Dialog>
     </div>

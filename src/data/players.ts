@@ -13,7 +13,7 @@ import type {
   PlayerContract,
   PlayerPersonality,
   PlayerPosition,
-  PositionGroup,
+  PlayerPositionType,
   HiddenAttributes,
 } from '@/types/player'
 import { FIRST_NAMES, LAST_NAMES } from './names'
@@ -24,8 +24,8 @@ import { FIRST_NAMES, LAST_NAMES } from './names'
 
 /** Role template that drives how a player slot is generated. */
 interface RoleTemplate {
-  primary: PositionGroup
-  secondary: PositionGroup[]
+  primary: PlayerPositionType
+  secondary: PlayerPositionType[]
   heightRange: [number, number]
   weightRange: [number, number]
   /** Attribute biases – keys are PlayerAttributes fields, values 0-1 weight. */
@@ -45,25 +45,39 @@ interface RoleTemplate {
 function buildSquadTemplates(): RoleTemplate[] {
   const templates: RoleTemplate[] = []
 
-  // ---- Defenders (7) ----
-  // Key defenders / full-backs
-  for (let i = 0; i < 3; i++) {
+  // ---- Back Pockets (2) ----
+  for (let i = 0; i < 2; i++) {
     templates.push({
-      primary: 'FB',
-      secondary: ['HB'],
-      heightRange: [188, 200],
-      weightRange: [88, 98],
+      primary: 'BP',
+      secondary: ['FB', 'HBF'],
+      heightRange: [183, 195],
+      weightRange: [84, 95],
       biases: {
-        intercept: 0.9, spoiling: 0.85, oneOnOne: 0.9, markingContested: 0.8,
-        markingOverhead: 0.85, positioning: 0.8, strength: 0.7,
+        intercept: 0.85, spoiling: 0.8, oneOnOne: 0.9, markingContested: 0.75,
+        positioning: 0.8, zonalAwareness: 0.8, speed: 0.7,
       },
     })
   }
-  // Half-backs / rebounding defenders
-  for (let i = 0; i < 4; i++) {
+
+  // ---- Full Backs (2) ----
+  for (let i = 0; i < 2; i++) {
     templates.push({
-      primary: 'HB',
-      secondary: ['FB', 'WING'],
+      primary: 'FB',
+      secondary: ['BP', 'CHB'],
+      heightRange: [190, 200],
+      weightRange: [90, 100],
+      biases: {
+        intercept: 0.9, spoiling: 0.85, oneOnOne: 0.9, markingContested: 0.85,
+        markingOverhead: 0.85, positioning: 0.8, strength: 0.8,
+      },
+    })
+  }
+
+  // ---- Half Back Flankers (3) ----
+  for (let i = 0; i < 3; i++) {
+    templates.push({
+      primary: 'HBF',
+      secondary: ['CHB', 'W', 'BP'],
       heightRange: [182, 195],
       weightRange: [82, 93],
       biases: {
@@ -75,12 +89,26 @@ function buildSquadTemplates(): RoleTemplate[] {
     })
   }
 
-  // ---- Midfielders (9) ----
-  // Inside midfielders
+  // ---- Centre Half Backs (2) ----
+  for (let i = 0; i < 2; i++) {
+    templates.push({
+      primary: 'CHB',
+      secondary: ['FB', 'HBF'],
+      heightRange: [190, 200],
+      weightRange: [90, 100],
+      biases: {
+        intercept: 0.85, markingContested: 0.85, markingOverhead: 0.8,
+        strength: 0.8, spoiling: 0.8, positioning: 0.8, oneOnOne: 0.85,
+        rebounding: 0.7, kickingDistance: 0.75,
+      },
+    })
+  }
+
+  // ---- Inside Midfielders (5) ----
   for (let i = 0; i < 5; i++) {
     templates.push({
-      primary: 'MID',
-      secondary: ['C'],
+      primary: 'IM',
+      secondary: ['OM'],
       heightRange: [182, 192],
       weightRange: [83, 93],
       biases: {
@@ -91,11 +119,12 @@ function buildSquadTemplates(): RoleTemplate[] {
       },
     })
   }
-  // Outside midfielders / centre-line
+
+  // ---- Outside Midfielders (4) ----
   for (let i = 0; i < 4; i++) {
     templates.push({
-      primary: 'C',
-      secondary: ['MID', 'WING'],
+      primary: 'OM',
+      secondary: ['IM', 'W'],
       heightRange: [180, 190],
       weightRange: [80, 90],
       biases: {
@@ -109,8 +138,8 @@ function buildSquadTemplates(): RoleTemplate[] {
   // ---- Wingers (3) ----
   for (let i = 0; i < 3; i++) {
     templates.push({
-      primary: 'WING',
-      secondary: ['C', 'HB'],
+      primary: 'W',
+      secondary: ['OM', 'HBF'],
       heightRange: [180, 190],
       weightRange: [78, 88],
       biases: {
@@ -121,42 +150,11 @@ function buildSquadTemplates(): RoleTemplate[] {
     })
   }
 
-  // ---- Forwards (7) ----
-  // Key forwards / full-forwards
-  for (let i = 0; i < 3; i++) {
-    templates.push({
-      primary: 'FF',
-      secondary: ['HF'],
-      heightRange: [190, 202],
-      weightRange: [92, 105],
-      biases: {
-        goalkicking: 0.9, markingContested: 0.85, markingOverhead: 0.85,
-        setShot: 0.85, insideForward: 0.8, strength: 0.8,
-        markingLeading: 0.8, positioning: 0.7,
-        leadingPatterns: 0.8, scoringInstinct: 0.85,
-      },
-    })
-  }
-  // Half-forwards / crumbing forwards
-  for (let i = 0; i < 4; i++) {
-    templates.push({
-      primary: 'HF',
-      secondary: ['FF', 'MID'],
-      heightRange: [178, 192],
-      weightRange: [80, 93],
-      biases: {
-        goalkicking: 0.8, speed: 0.8, agility: 0.8, groundBallGet: 0.75,
-        creativity: 0.75, pressure: 0.8, insideForward: 0.75,
-        markingLeading: 0.75, acceleration: 0.75, snap: 0.8,
-      },
-    })
-  }
-
   // ---- Rucks (3) ----
   for (let i = 0; i < 3; i++) {
     templates.push({
-      primary: 'FOLL',
-      secondary: ['FF'],
+      primary: 'RK',
+      secondary: ['FF', 'CHF'],
       heightRange: [198, 205],
       weightRange: [98, 108],
       biases: {
@@ -168,9 +166,70 @@ function buildSquadTemplates(): RoleTemplate[] {
     })
   }
 
-  // ---- Utilities (5) ----
-  for (let i = 0; i < 5; i++) {
-    const utilPositions: PositionGroup[] = ['HB', 'HF', 'MID', 'WING', 'C']
+  // ---- Half Forward Flankers (3) ----
+  for (let i = 0; i < 3; i++) {
+    templates.push({
+      primary: 'HFF',
+      secondary: ['CHF', 'OM'],
+      heightRange: [178, 192],
+      weightRange: [80, 93],
+      biases: {
+        goalkicking: 0.8, speed: 0.8, agility: 0.8, groundBallGet: 0.75,
+        creativity: 0.75, pressure: 0.8, insideForward: 0.75,
+        markingLeading: 0.75, acceleration: 0.75, snap: 0.8,
+      },
+    })
+  }
+
+  // ---- Centre Half Forwards (2) ----
+  for (let i = 0; i < 2; i++) {
+    templates.push({
+      primary: 'CHF',
+      secondary: ['FF', 'HFF'],
+      heightRange: [190, 200],
+      weightRange: [92, 102],
+      biases: {
+        goalkicking: 0.85, markingContested: 0.85, markingOverhead: 0.8,
+        strength: 0.8, insideForward: 0.8, positioning: 0.75,
+        leadingPatterns: 0.8, scoringInstinct: 0.8,
+      },
+    })
+  }
+
+  // ---- Forward Pockets (2) ----
+  for (let i = 0; i < 2; i++) {
+    templates.push({
+      primary: 'FP',
+      secondary: ['FF', 'HFF'],
+      heightRange: [175, 188],
+      weightRange: [76, 88],
+      biases: {
+        goalkicking: 0.85, speed: 0.85, agility: 0.85, snap: 0.85,
+        groundBallGet: 0.8, pressure: 0.8, insideForward: 0.8,
+        scoringInstinct: 0.85, acceleration: 0.8, creativity: 0.75,
+      },
+    })
+  }
+
+  // ---- Full Forwards (2) ----
+  for (let i = 0; i < 2; i++) {
+    templates.push({
+      primary: 'FF',
+      secondary: ['CHF', 'FP'],
+      heightRange: [190, 202],
+      weightRange: [92, 105],
+      biases: {
+        goalkicking: 0.9, markingContested: 0.85, markingOverhead: 0.85,
+        setShot: 0.85, insideForward: 0.8, strength: 0.8,
+        markingLeading: 0.8, positioning: 0.7,
+        leadingPatterns: 0.8, scoringInstinct: 0.85,
+      },
+    })
+  }
+
+  // ---- Utilities (4) ----
+  for (let i = 0; i < 4; i++) {
+    const utilPositions: PlayerPositionType[] = ['HBF', 'HFF', 'IM', 'W']
     const primary = utilPositions[i % utilPositions.length]
     templates.push({
       primary,
@@ -186,14 +245,14 @@ function buildSquadTemplates(): RoleTemplate[] {
 
   // ---- Rookies (5) ----
   for (let i = 0; i < 5; i++) {
-    const rookiePositions: PositionGroup[] = ['MID', 'HB', 'HF', 'FF', 'FOLL']
+    const rookiePositions: PlayerPositionType[] = ['IM', 'HBF', 'HFF', 'FF', 'RK']
     const primary = rookiePositions[i % rookiePositions.length]
-    const heightRange: [number, number] = primary === 'FOLL'
+    const heightRange: [number, number] = primary === 'RK'
       ? [196, 204]
       : primary === 'FF'
         ? [188, 200]
         : [178, 192]
-    const weightRange: [number, number] = primary === 'FOLL'
+    const weightRange: [number, number] = primary === 'RK'
       ? [94, 105]
       : primary === 'FF'
         ? [85, 98]
@@ -434,7 +493,7 @@ function generateContract(rng: SeededRNG, age: number, isRookie: boolean): Playe
 function generateCareerStats(
   rng: SeededRNG,
   age: number,
-  primary: PositionGroup,
+  primary: PlayerPositionType,
   isRookie: boolean,
 ): PlayerCareerStats {
   if (isRookie || age <= 18) {
@@ -449,10 +508,10 @@ function generateCareerStats(
   // Goals depend on position
   let goalsPerGame: number
   if (primary === 'FF') goalsPerGame = rng.nextFloat(1.2, 2.5)
-  else if (primary === 'HF') goalsPerGame = rng.nextFloat(0.5, 1.2)
-  else if (primary === 'FOLL') goalsPerGame = rng.nextFloat(0.3, 0.8)
-  else if (primary === 'MID' || primary === 'C') goalsPerGame = rng.nextFloat(0.2, 0.6)
-  else if (primary === 'WING') goalsPerGame = rng.nextFloat(0.15, 0.45)
+  else if (primary === 'FP' || primary === 'CHF' || primary === 'HFF') goalsPerGame = rng.nextFloat(0.5, 1.2)
+  else if (primary === 'RK') goalsPerGame = rng.nextFloat(0.3, 0.8)
+  else if (primary === 'IM' || primary === 'OM') goalsPerGame = rng.nextFloat(0.2, 0.6)
+  else if (primary === 'W') goalsPerGame = rng.nextFloat(0.15, 0.45)
   else goalsPerGame = rng.nextFloat(0.05, 0.25) // defenders
 
   const goals = Math.round(gamesPlayed * goalsPerGame)
@@ -460,13 +519,13 @@ function generateCareerStats(
 
   // Disposals per game
   let disposalsPerGame: number
-  if (primary === 'MID' || primary === 'C') disposalsPerGame = rng.nextFloat(20, 28)
-  else if (primary === 'WING') disposalsPerGame = rng.nextFloat(16, 24)
-  else if (primary === 'HB') disposalsPerGame = rng.nextFloat(15, 22)
-  else if (primary === 'HF') disposalsPerGame = rng.nextFloat(12, 18)
+  if (primary === 'IM' || primary === 'OM') disposalsPerGame = rng.nextFloat(20, 28)
+  else if (primary === 'W') disposalsPerGame = rng.nextFloat(16, 24)
+  else if (primary === 'HBF' || primary === 'CHB') disposalsPerGame = rng.nextFloat(15, 22)
+  else if (primary === 'HFF' || primary === 'CHF' || primary === 'FP') disposalsPerGame = rng.nextFloat(12, 18)
   else if (primary === 'FF') disposalsPerGame = rng.nextFloat(8, 14)
-  else if (primary === 'FB') disposalsPerGame = rng.nextFloat(10, 16)
-  else disposalsPerGame = rng.nextFloat(10, 18) // FOLL
+  else if (primary === 'FB' || primary === 'BP') disposalsPerGame = rng.nextFloat(10, 16)
+  else disposalsPerGame = rng.nextFloat(10, 18) // RK
 
   const disposals = Math.round(gamesPlayed * disposalsPerGame)
   const kickRatio = rng.nextFloat(0.5, 0.65)
@@ -479,16 +538,16 @@ function generateCareerStats(
   const tacklesPerGame = rng.nextFloat(2, 6)
   const tackles = Math.round(gamesPlayed * tacklesPerGame)
 
-  const hitoutsTotal = primary === 'FOLL'
+  const hitoutsTotal = primary === 'RK'
     ? Math.round(gamesPlayed * rng.nextFloat(20, 35))
     : Math.round(gamesPlayed * rng.nextFloat(0, 0.3))
 
   const contestedPerGame = rng.nextFloat(5, 12)
   const contestedPossessions = Math.round(gamesPlayed * contestedPerGame)
 
-  const clearancesPerGame = primary === 'MID' || primary === 'C'
+  const clearancesPerGame = primary === 'IM' || primary === 'OM'
     ? rng.nextFloat(3, 7)
-    : primary === 'FOLL'
+    : primary === 'RK'
       ? rng.nextFloat(2, 5)
       : rng.nextFloat(0.5, 2)
   const clearances = Math.round(gamesPlayed * clearancesPerGame)
@@ -496,10 +555,25 @@ function generateCareerStats(
   const insideFiftiesPerGame = rng.nextFloat(1, 5)
   const insideFifties = Math.round(gamesPlayed * insideFiftiesPerGame)
 
-  const rebound50sPerGame = (primary === 'FB' || primary === 'HB')
+  const rebound50sPerGame = (primary === 'FB' || primary === 'HBF' || primary === 'BP' || primary === 'CHB')
     ? rng.nextFloat(2, 5)
     : rng.nextFloat(0.2, 1.5)
   const rebound50s = Math.round(gamesPlayed * rebound50sPerGame)
+
+  // Extended stats (derived from base stats)
+  const contestedMarks = Math.round(marks * rng.nextFloat(0.15, 0.35))
+  const scoreInvolvements = goals + Math.round(gamesPlayed * rng.nextFloat(1, 4))
+  const metresGained = Math.round(gamesPlayed * rng.nextFloat(200, 500))
+  const turnovers = Math.round(disposals * rng.nextFloat(0.1, 0.2))
+  const intercepts = (primary === 'FB' || primary === 'HBF' || primary === 'BP' || primary === 'CHB')
+    ? Math.round(gamesPlayed * rng.nextFloat(3, 7))
+    : Math.round(gamesPlayed * rng.nextFloat(0.5, 2))
+  const onePercenters = Math.round(gamesPlayed * rng.nextFloat(1, 4))
+  const bounces = (primary === 'IM' || primary === 'OM' || primary === 'W')
+    ? Math.round(gamesPlayed * rng.nextFloat(0.5, 2))
+    : Math.round(gamesPlayed * rng.nextFloat(0, 0.5))
+  const clangers = Math.round(disposals * rng.nextFloat(0.05, 0.12))
+  const goalAssists = Math.round(gamesPlayed * rng.nextFloat(0.3, 1.5))
 
   return {
     gamesPlayed,
@@ -515,6 +589,15 @@ function generateCareerStats(
     clearances,
     insideFifties,
     rebound50s,
+    contestedMarks,
+    scoreInvolvements,
+    metresGained,
+    turnovers,
+    intercepts,
+    onePercenters,
+    bounces,
+    clangers,
+    goalAssists,
   }
 }
 
@@ -533,6 +616,15 @@ function emptyStats(): PlayerCareerStats {
     clearances: 0,
     insideFifties: 0,
     rebound50s: 0,
+    contestedMarks: 0,
+    scoreInvolvements: 0,
+    metresGained: 0,
+    turnovers: 0,
+    intercepts: 0,
+    onePercenters: 0,
+    bounces: 0,
+    clangers: 0,
+    goalAssists: 0,
   }
 }
 
@@ -541,10 +633,10 @@ function emptyStats(): PlayerCareerStats {
  */
 function generatePosition(
   rng: SeededRNG,
-  primary: PositionGroup,
-  secondary: PositionGroup[],
+  primary: PlayerPositionType,
+  secondary: PlayerPositionType[],
 ): PlayerPosition {
-  const ratings: Partial<Record<PositionGroup, number>> = {}
+  const ratings: Partial<Record<PlayerPositionType, number>> = {}
   ratings[primary] = rng.nextInt(75, 95)
   for (const sec of secondary) {
     ratings[sec] = rng.nextInt(50, 78)
@@ -665,6 +757,7 @@ export function generatePlayers(clubId: string, seed?: number): Player[] {
       form,
       injury: null,
       isRookie,
+      listStatus: 'senior',
       draftYear,
       draftPick,
       careerStats,

@@ -562,10 +562,10 @@ export function simulateRisingStar(
  * 6 defenders, 6 midfielders, 6 forwards, 2 rucks, 2 interchange = 22.
  */
 const ALL_AUSTRALIAN_SLOTS: { position: string; count: number; eligiblePrimary: string[] }[] = [
-  { position: 'Defender', count: 6, eligiblePrimary: ['FB', 'HB'] },
-  { position: 'Midfielder', count: 6, eligiblePrimary: ['C', 'MID', 'WING'] },
-  { position: 'Forward', count: 6, eligiblePrimary: ['HF', 'FF'] },
-  { position: 'Ruck', count: 2, eligiblePrimary: ['FOLL'] },
+  { position: 'Defender', count: 6, eligiblePrimary: ['BP', 'FB', 'HBF', 'CHB'] },
+  { position: 'Midfielder', count: 6, eligiblePrimary: ['IM', 'OM', 'W'] },
+  { position: 'Forward', count: 6, eligiblePrimary: ['HFF', 'CHF', 'FP', 'FF'] },
+  { position: 'Ruck', count: 2, eligiblePrimary: ['RK'] },
   { position: 'Interchange', count: 2, eligiblePrimary: [] }, // best available
 ]
 

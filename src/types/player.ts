@@ -1,19 +1,37 @@
-export type PositionGroup =
+/** What a player IS — 12 AFL positions */
+export type PlayerPositionType =
+  | 'BP'   // Back Pocket
   | 'FB'   // Full Back
-  | 'HB'   // Half Back
-  | 'C'    // Centre
-  | 'HF'   // Half Forward
+  | 'HBF'  // Half Back Flank
+  | 'CHB'  // Centre Half Back
+  | 'W'    // Wing
+  | 'IM'   // Inside Mid
+  | 'OM'   // Outside Mid
+  | 'RK'   // Ruckman
+  | 'HFF'  // Half Forward Flank
+  | 'CHF'  // Centre Half Forward
+  | 'FP'   // Forward Pocket
   | 'FF'   // Full Forward
-  | 'FOLL' // Follower (Ruck)
-  | 'INT'  // Interchange
-  | 'MID'  // Midfielder
-  | 'WING' // Wing
+
+/** Where they play on field — 18 on-field + up to 8 interchange slots */
+export type LineupSlot =
+  | 'LBP' | 'RBP' | 'FB'                 // Back line
+  | 'LHB' | 'RHB' | 'CHB'               // Half-back line
+  | 'LW' | 'RW' | 'C'                    // Centre line
+  | 'LHF' | 'RHF' | 'CHF'               // Half-forward line
+  | 'LFP' | 'RFP' | 'FF'                // Forward line
+  | 'RK' | 'RR' | 'ROV'                  // Followers
+  | 'I1' | 'I2' | 'I3' | 'I4'           // Interchange (standard)
+  | 'I5' | 'I6' | 'I7' | 'I8'           // Interchange (extended)
+
+/** @deprecated Use PlayerPositionType instead */
+export type PositionGroup = PlayerPositionType
 
 export interface PlayerPosition {
-  primary: PositionGroup
-  secondary: PositionGroup[]
-  /** Rating at each position group (0-100). Higher = more capable at that position */
-  ratings: Partial<Record<PositionGroup, number>>
+  primary: PlayerPositionType
+  secondary: PlayerPositionType[]
+  /** Rating at each position (0-100). Higher = more capable at that position */
+  ratings: Partial<Record<PlayerPositionType, number>>
 }
 
 export interface PlayerAttributes {
@@ -135,6 +153,16 @@ export interface PlayerCareerStats {
   clearances: number
   insideFifties: number
   rebound50s: number
+  // Extended stats
+  contestedMarks: number
+  scoreInvolvements: number
+  metresGained: number
+  turnovers: number
+  intercepts: number
+  onePercenters: number
+  bounces: number
+  clangers: number
+  goalAssists: number
 }
 
 export interface Player {
@@ -158,6 +186,7 @@ export interface Player {
   form: number                   // 1-100
   injury: PlayerInjury | null
   isRookie: boolean              // On rookie list?
+  listStatus: 'senior' | 'reserves' | 'injured-list'
   draftYear: number
   draftPick: number | null       // null for undrafted/rookie listed
   careerStats: PlayerCareerStats

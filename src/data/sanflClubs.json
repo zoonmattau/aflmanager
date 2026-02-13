@@ -1,0 +1,58 @@
+[
+  {
+    "id": "sanfl-centraldist",
+    "name": "Central District",
+    "abbreviation": "CD",
+    "colors": { "primary": "#003DA5", "secondary": "#CC2031" },
+    "homeGround": "My Money House Oval"
+  },
+  {
+    "id": "sanfl-glenelg",
+    "name": "Glenelg",
+    "abbreviation": "GLG",
+    "colors": { "primary": "#000000", "secondary": "#F2A900" },
+    "homeGround": "ACH Group Stadium"
+  },
+  {
+    "id": "sanfl-norwood",
+    "name": "Norwood",
+    "abbreviation": "NOR",
+    "colors": { "primary": "#CC2031", "secondary": "#003DA5" },
+    "homeGround": "Coopers Stadium"
+  },
+  {
+    "id": "sanfl-northadelaide",
+    "name": "North Adelaide",
+    "abbreviation": "NA",
+    "colors": { "primary": "#003DA5", "secondary": "#FFFFFF" },
+    "homeGround": "Prospect Oval"
+  },
+  {
+    "id": "sanfl-southadelaide",
+    "name": "South Adelaide",
+    "abbreviation": "SA",
+    "colors": { "primary": "#003DA5", "secondary": "#FFFFFF" },
+    "homeGround": "Flinders University Stadium"
+  },
+  {
+    "id": "sanfl-sturt",
+    "name": "Sturt",
+    "abbreviation": "STU",
+    "colors": { "primary": "#003DA5", "secondary": "#000000" },
+    "homeGround": "Unley Oval"
+  },
+  {
+    "id": "sanfl-westadelaide",
+    "name": "West Adelaide",
+    "abbreviation": "WA",
+    "colors": { "primary": "#000000", "secondary": "#CC2031" },
+    "homeGround": "Hisense Stadium"
+  },
+  {
+    "id": "sanfl-woodville",
+    "name": "Woodville-West Torrens",
+    "abbreviation": "WWT",
+    "colors": { "primary": "#CC2031", "secondary": "#003DA5" },
+    "homeGround": "Woodville Oval"
+  }
+]

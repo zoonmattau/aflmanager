@@ -1,6 +1,6 @@
 import { useMemo, useState, useCallback } from 'react'
 import { useGameStore } from '@/stores/gameStore'
-import type { Player, PositionGroup } from '@/types/player'
+import type { Player, PlayerPositionType } from '@/types/player'
 import type { StaffMember } from '@/types/staff'
 import type {
   TrainingFocus,
@@ -92,16 +92,19 @@ const INTENSITY_BADGE_COLORS: Record<TrainingIntensity, string> = {
   intense: 'bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30',
 }
 
-const POSITION_LABELS: Record<PositionGroup, string> = {
+const POSITION_LABELS: Record<PlayerPositionType, string> = {
+  BP: 'Back Pocket',
   FB: 'Full Back',
-  HB: 'Half Back',
-  C: 'Centre',
-  HF: 'Half Forward',
+  HBF: 'Half Back Flank',
+  CHB: 'Centre Half Back',
+  W: 'Wing',
+  IM: 'Inside Mid',
+  OM: 'Outside Mid',
+  RK: 'Ruckman',
+  HFF: 'Half Forward Flank',
+  CHF: 'Centre Half Forward',
+  FP: 'Forward Pocket',
   FF: 'Full Forward',
-  FOLL: 'Follower (Ruck)',
-  MID: 'Midfielder',
-  WING: 'Wing',
-  INT: 'Interchange',
 }
 
 // ---------------------------------------------------------------------------
@@ -743,21 +746,24 @@ function SquadFitnessOverview({ clubPlayers }: { clubPlayers: Player[] }) {
 // ---------------------------------------------------------------------------
 
 /** Map from primary position to sensible retraining targets */
-const RETRAIN_TARGETS: Record<PositionGroup, PositionGroup[]> = {
-  FB: ['HB', 'C'],
-  HB: ['FB', 'C', 'WING', 'MID'],
-  C: ['MID', 'WING', 'HB', 'HF'],
-  HF: ['FF', 'C', 'MID', 'WING'],
-  FF: ['HF', 'FOLL'],
-  FOLL: ['FF', 'HF'],
-  MID: ['C', 'WING', 'HB', 'HF'],
-  WING: ['MID', 'C', 'HB', 'HF'],
-  INT: ['MID', 'WING', 'HB', 'HF'],
+const RETRAIN_TARGETS: Record<PlayerPositionType, PlayerPositionType[]> = {
+  BP: ['FB', 'HBF'],
+  FB: ['BP', 'CHB'],
+  HBF: ['CHB', 'W', 'BP'],
+  CHB: ['FB', 'HBF'],
+  W: ['OM', 'HBF', 'HFF'],
+  IM: ['OM', 'HFF'],
+  OM: ['IM', 'W', 'HBF'],
+  RK: ['FF', 'CHF'],
+  HFF: ['CHF', 'OM', 'W'],
+  CHF: ['FF', 'HFF', 'RK'],
+  FP: ['FF', 'HFF'],
+  FF: ['CHF', 'FP'],
 }
 
 interface RetrainState {
   playerId: string
-  targetPosition: PositionGroup | null
+  targetPosition: PlayerPositionType | null
   status: 'idle' | 'in-progress'
 }
 
@@ -776,7 +782,7 @@ function PositionRetrainingTab({ clubPlayers }: { clubPlayers: Player[] }) {
   }, [clubPlayers])
 
   const handleSelectTarget = useCallback(
-    (playerId: string, position: PositionGroup) => {
+    (playerId: string, position: PlayerPositionType) => {
       setRetrainMap((prev) => ({
         ...prev,
         [playerId]: { playerId, targetPosition: position, status: 'idle' },
@@ -881,7 +887,7 @@ function PositionRetrainingTab({ clubPlayers }: { clubPlayers: Player[] }) {
                       value={state?.targetPosition ?? '__none__'}
                       onValueChange={(v) => {
                         if (v !== '__none__') {
-                          handleSelectTarget(player.id, v as PositionGroup)
+                          handleSelectTarget(player.id, v as PlayerPositionType)
                         }
                       }}
                     >

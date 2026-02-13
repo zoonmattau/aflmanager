@@ -1,4 +1,4 @@
-import type { Player } from '@/types/player'
+import type { Player, PlayerPositionType } from '@/types/player'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -124,4 +124,42 @@ export function getMoraleModifier(morale: number): number {
   if (morale >= 45) return 0.98
   if (morale >= 30) return 0.95
   return 0.90
+}
+
+// ---------------------------------------------------------------------------
+// Role dispute morale (out-of-position penalty)
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply morale penalties when a player is played out of position.
+ *
+ * - Primary position match: no effect
+ * - Secondary position match: -1 morale
+ * - No match: -3 to -5 based on temperament
+ *
+ * When disabled (enabled = false), this is a no-op.
+ */
+export function applyRoleDisputeMorale(
+  player: Player,
+  assignedPosition: PlayerPositionType,
+  enabled: boolean,
+): void {
+  if (!enabled) return
+
+  // Primary position match — no penalty
+  if (player.position.primary === assignedPosition) return
+
+  // Secondary position match — mild penalty
+  if (player.position.secondary.includes(assignedPosition)) {
+    player.morale -= 1
+    player.morale = clampMorale(player.morale)
+    return
+  }
+
+  // No match — significant penalty based on temperament
+  // Higher temperament = more tolerant, lower penalty
+  const temperamentFactor = player.personality.temperament
+  const penalty = temperamentFactor >= 70 ? 3 : temperamentFactor >= 40 ? 4 : 5
+  player.morale -= penalty
+  player.morale = clampMorale(player.morale)
 }

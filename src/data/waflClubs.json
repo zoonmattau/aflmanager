@@ -1,0 +1,65 @@
+[
+  {
+    "id": "wafl-claremont",
+    "name": "Claremont",
+    "abbreviation": "CLA",
+    "colors": { "primary": "#003DA5", "secondary": "#F2A900" },
+    "homeGround": "Revo Fitness Stadium"
+  },
+  {
+    "id": "wafl-eastfremantle",
+    "name": "East Fremantle",
+    "abbreviation": "EF",
+    "colors": { "primary": "#003DA5", "secondary": "#FFFFFF" },
+    "homeGround": "New Choice Homes Park"
+  },
+  {
+    "id": "wafl-eastperth",
+    "name": "East Perth",
+    "abbreviation": "EP",
+    "colors": { "primary": "#002B5C", "secondary": "#F2A900" },
+    "homeGround": "Leederville Oval"
+  },
+  {
+    "id": "wafl-peel",
+    "name": "Peel Thunder",
+    "abbreviation": "PEEL",
+    "colors": { "primary": "#003DA5", "secondary": "#F2A900" },
+    "homeGround": "David Grays Arena"
+  },
+  {
+    "id": "wafl-perth",
+    "name": "Perth",
+    "abbreviation": "PER",
+    "colors": { "primary": "#CC2031", "secondary": "#000000" },
+    "homeGround": "Mineral Resources Park"
+  },
+  {
+    "id": "wafl-southfremantle",
+    "name": "South Fremantle",
+    "abbreviation": "SF",
+    "colors": { "primary": "#FFFFFF", "secondary": "#003DA5" },
+    "homeGround": "Fremantle Community Bank Oval"
+  },
+  {
+    "id": "wafl-subiaco",
+    "name": "Subiaco",
+    "abbreviation": "SUB",
+    "colors": { "primary": "#CC2031", "secondary": "#000000" },
+    "homeGround": "Leederville Oval"
+  },
+  {
+    "id": "wafl-swandistricts",
+    "name": "Swan Districts",
+    "abbreviation": "SD",
+    "colors": { "primary": "#000000", "secondary": "#FFFFFF" },
+    "homeGround": "Steel Blue Oval"
+  },
+  {
+    "id": "wafl-westperth",
+    "name": "West Perth",
+    "abbreviation": "WP",
+    "colors": { "primary": "#CC2031", "secondary": "#003DA5" },
+    "homeGround": "Joondalup Arena"
+  }
+]

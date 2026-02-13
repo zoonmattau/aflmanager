@@ -8,9 +8,10 @@ import type {
   PlayerAttributes,
   HiddenAttributes,
   PlayerPersonality,
-  PositionGroup,
+  PlayerPositionType,
 } from '@/types/player'
 import { FIRST_NAMES, LAST_NAMES } from '@/data/names'
+import u18RegionsJson from '@/data/u18Regions.json'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -122,42 +123,51 @@ const REGION_WEIGHTS: WeightedEntry<ScoutingRegion>[] = [
   { value: 'TAS/NT', weight: 0.05 },
 ]
 
-const POSITION_WEIGHTS: WeightedEntry<PositionGroup>[] = [
-  { value: 'MID', weight: 0.22 },
-  { value: 'HB', weight: 0.16 },
-  { value: 'HF', weight: 0.12 },
-  { value: 'FB', weight: 0.10 },
-  { value: 'FF', weight: 0.10 },
-  { value: 'WING', weight: 0.10 },
-  { value: 'C', weight: 0.08 },
-  { value: 'FOLL', weight: 0.06 },
-  { value: 'INT', weight: 0.06 },
+const POSITION_WEIGHTS: WeightedEntry<PlayerPositionType>[] = [
+  { value: 'IM', weight: 0.16 },
+  { value: 'OM', weight: 0.10 },
+  { value: 'HBF', weight: 0.10 },
+  { value: 'HFF', weight: 0.08 },
+  { value: 'FB', weight: 0.07 },
+  { value: 'BP', weight: 0.06 },
+  { value: 'CHB', weight: 0.06 },
+  { value: 'FF', weight: 0.07 },
+  { value: 'FP', weight: 0.06 },
+  { value: 'CHF', weight: 0.06 },
+  { value: 'W', weight: 0.08 },
+  { value: 'RK', weight: 0.10 },
 ]
 
 /** Attribute keys that receive a bias boost for each primary position. */
-const POSITION_BIAS_KEYS: Record<PositionGroup, (keyof PlayerAttributes)[]> = {
+const POSITION_BIAS_KEYS: Record<PlayerPositionType, (keyof PlayerAttributes)[]> = {
+  BP: ['spoiling', 'oneOnOne', 'speed', 'zonalAwareness', 'intercept'],
   FB: ['intercept', 'spoiling', 'oneOnOne', 'markingContested', 'zonalAwareness'],
-  HB: ['rebounding', 'fieldKicking', 'intercept', 'kickingDistance', 'composure'],
-  C: ['endurance', 'clearance', 'contested', 'centreBounce', 'disposalDecision'],
-  HF: ['goalkicking', 'leadingPatterns', 'creativity', 'insideForward', 'markingLeading'],
+  HBF: ['rebounding', 'fieldKicking', 'intercept', 'kickingDistance', 'composure'],
+  CHB: ['intercept', 'markingContested', 'markingOverhead', 'strength', 'oneOnOne'],
+  W: ['speed', 'endurance', 'fieldKicking', 'kickingEfficiency', 'positioning'],
+  IM: ['contested', 'clearance', 'groundBallGet', 'endurance', 'tackling', 'hardness'],
+  OM: ['endurance', 'clearance', 'contested', 'centreBounce', 'disposalDecision'],
+  RK: ['hitouts', 'ruckCreative', 'followUp', 'leap', 'strength'],
+  HFF: ['goalkicking', 'leadingPatterns', 'creativity', 'insideForward', 'markingLeading'],
+  CHF: ['goalkicking', 'markingContested', 'strength', 'insideForward', 'scoringInstinct'],
+  FP: ['goalkicking', 'speed', 'agility', 'snap', 'pressure'],
   FF: ['goalkicking', 'scoringInstinct', 'insideForward', 'markingContested', 'snap'],
-  FOLL: ['hitouts', 'ruckCreative', 'followUp', 'leap', 'strength'],
-  MID: ['contested', 'clearance', 'groundBallGet', 'endurance', 'tackling', 'hardness'],
-  WING: ['speed', 'endurance', 'fieldKicking', 'kickingEfficiency', 'positioning'],
-  INT: ['endurance', 'tackling', 'hardness', 'workRate', 'speed'],
 }
 
 /** Secondary position affinities per primary position. */
-const SECONDARY_POSITION_MAP: Record<PositionGroup, PositionGroup[]> = {
-  FB: ['HB'],
-  HB: ['MID', 'WING', 'FB'],
-  C: ['MID', 'WING'],
-  HF: ['MID', 'FF', 'WING'],
-  FF: ['HF'],
-  FOLL: ['FF', 'HF'],
-  MID: ['WING', 'HF', 'C'],
-  WING: ['MID', 'HB', 'C'],
-  INT: ['MID', 'WING'],
+const SECONDARY_POSITION_MAP: Record<PlayerPositionType, PlayerPositionType[]> = {
+  BP: ['FB', 'HBF'],
+  FB: ['BP', 'CHB'],
+  HBF: ['CHB', 'W', 'BP'],
+  CHB: ['FB', 'HBF'],
+  W: ['OM', 'HBF', 'HFF'],
+  IM: ['OM', 'HFF'],
+  OM: ['IM', 'W'],
+  RK: ['FF', 'CHF'],
+  HFF: ['CHF', 'OM', 'W'],
+  CHF: ['FF', 'HFF'],
+  FP: ['FF', 'HFF'],
+  FF: ['CHF', 'FP'],
 }
 
 // ── Height / weight ranges per position ──────────────────────────────────────
@@ -169,16 +179,19 @@ interface PhysicalRange {
   weightMax: number
 }
 
-const POSITION_PHYSICALS: Record<PositionGroup, PhysicalRange> = {
+const POSITION_PHYSICALS: Record<PlayerPositionType, PhysicalRange> = {
+  BP: { heightMin: 180, heightMax: 193, weightMin: 82, weightMax: 95 },
   FB: { heightMin: 185, heightMax: 197, weightMin: 85, weightMax: 97 },
-  HB: { heightMin: 180, heightMax: 193, weightMin: 80, weightMax: 92 },
-  C: { heightMin: 178, heightMax: 190, weightMin: 78, weightMax: 90 },
-  HF: { heightMin: 182, heightMax: 195, weightMin: 82, weightMax: 95 },
+  HBF: { heightMin: 180, heightMax: 193, weightMin: 80, weightMax: 92 },
+  CHB: { heightMin: 188, heightMax: 198, weightMin: 88, weightMax: 98 },
+  W: { heightMin: 178, heightMax: 190, weightMin: 76, weightMax: 88 },
+  IM: { heightMin: 178, heightMax: 192, weightMin: 78, weightMax: 92 },
+  OM: { heightMin: 178, heightMax: 190, weightMin: 78, weightMax: 90 },
+  RK: { heightMin: 196, heightMax: 208, weightMin: 95, weightMax: 110 },
+  HFF: { heightMin: 180, heightMax: 193, weightMin: 80, weightMax: 93 },
+  CHF: { heightMin: 188, heightMax: 200, weightMin: 88, weightMax: 100 },
+  FP: { heightMin: 175, heightMax: 188, weightMin: 76, weightMax: 88 },
   FF: { heightMin: 185, heightMax: 200, weightMin: 86, weightMax: 100 },
-  FOLL: { heightMin: 196, heightMax: 208, weightMin: 95, weightMax: 110 },
-  MID: { heightMin: 178, heightMax: 192, weightMin: 78, weightMax: 92 },
-  WING: { heightMin: 178, heightMax: 190, weightMin: 76, weightMax: 88 },
-  INT: { heightMin: 178, heightMax: 192, weightMin: 78, weightMax: 92 },
 }
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -209,7 +222,7 @@ function pickWeighted<T>(entries: WeightedEntry<T>[], rng: SeededRNG): T {
  */
 function generateAttributes(
   tier: ProspectTier,
-  primaryPosition: PositionGroup,
+  primaryPosition: PlayerPositionType,
   rng: SeededRNG,
 ): PlayerAttributes {
   const config = TIER_CONFIG[tier]
@@ -292,9 +305,9 @@ function determinePathway(
 // ── Secondary positions ──────────────────────────────────────────────────────
 
 function pickSecondaryPositions(
-  primary: PositionGroup,
+  primary: PlayerPositionType,
   rng: SeededRNG,
-): PositionGroup[] {
+): PlayerPositionType[] {
   const candidates = SECONDARY_POSITION_MAP[primary]
   if (candidates.length === 0) return []
 
@@ -302,6 +315,41 @@ function pickSecondaryPositions(
   const count = rng.chance(0.4) ? 2 : 1
   const shuffled = rng.shuffle(candidates)
   return shuffled.slice(0, Math.min(count, shuffled.length))
+}
+
+// ── U18 region assignment ────────────────────────────────────────────────
+
+interface U18Region {
+  id: string
+  name: string
+  state: string
+}
+
+const U18_REGIONS = u18RegionsJson as U18Region[]
+
+function assignU18Club(
+  region: ScoutingRegion,
+  pathway: DraftProspect['pathway'],
+  rng: SeededRNG,
+): string | null {
+  // Only Coates Talent League prospects get a U18 club assignment
+  if (pathway !== 'Coates Talent League') return null
+
+  // Map scouting region to state codes used in u18Regions.json
+  const stateMap: Record<ScoutingRegion, string[]> = {
+    'VIC': ['VIC'],
+    'SA': ['VIC'],      // SA prospects in CTL play in VIC-based regions
+    'WA': ['VIC'],      // Same
+    'NSW/ACT': ['VIC'],
+    'QLD': ['VIC'],
+    'TAS/NT': ['TAS', 'VIC'],
+  }
+
+  const validStates = stateMap[region]
+  const candidates = U18_REGIONS.filter((r) => validStates.includes(r.state))
+  if (candidates.length === 0) return null
+
+  return rng.pick(candidates).id
 }
 
 // ── Single prospect generation ───────────────────────────────────────────────
@@ -334,8 +382,11 @@ function generateProspect(
   const jitter = rng.nextInt(-2, 2)
   const projectedPick = clamp(basePick + jitter, 1, DRAFT_CLASS_SIZE)
 
-  // ~5% chance of Father-Son / Academy link
+  // ~5% chance of Father-Son / Academy link (gated by ngaAcademy realism setting at call site)
   const linkedClubId = rng.chance(0.05) ? rng.pick(CLUB_IDS) : null
+
+  // Assign U18 talent league club based on region and pathway
+  const u18ClubId = assignU18Club(region, pathway, rng)
 
   const scoutingReports: Record<string, ScoutingReport> = {}
 
@@ -359,6 +410,7 @@ function generateProspect(
     tier,
     linkedClubId,
     pathway,
+    u18ClubId,
   }
 }
 
@@ -453,4 +505,50 @@ export function getProspectEstimatedOverall(
   }
 
   return Math.round((total / rangeKeys.length) * 10) / 10
+}
+
+/**
+ * Apply draft variance (busts and late bloomers) to a draft class.
+ *
+ * When enabled:
+ * - ~8% of elite/first-round prospects get potentialCeiling reduced by 15-25 (bust)
+ * - ~5% of late/rookie-list prospects get potentialCeiling boosted by 15-25 (bloom)
+ *
+ * When disabled, returns prospects unchanged.
+ */
+export function applyDraftVariance(
+  prospects: DraftProspect[],
+  rng: SeededRNG,
+  enabled: boolean,
+): DraftProspect[] {
+  if (!enabled) return prospects
+
+  return prospects.map((p) => {
+    const clone = {
+      ...p,
+      hiddenAttributes: { ...p.hiddenAttributes },
+    }
+
+    if ((p.tier === 'elite' || p.tier === 'first-round') && rng.chance(0.08)) {
+      // Bust: reduce potential ceiling
+      const reduction = rng.nextInt(15, 25)
+      clone.hiddenAttributes.potentialCeiling = Math.max(30, clone.hiddenAttributes.potentialCeiling - reduction)
+    } else if ((p.tier === 'late' || p.tier === 'rookie-list') && rng.chance(0.05)) {
+      // Late bloomer: boost potential ceiling
+      const boost = rng.nextInt(15, 25)
+      clone.hiddenAttributes.potentialCeiling = Math.min(99, clone.hiddenAttributes.potentialCeiling + boost)
+    }
+
+    return clone
+  })
+}
+
+/**
+ * Strip NGA/Academy linked club IDs from all prospects.
+ * Used when the ngaAcademy realism setting is disabled.
+ */
+export function stripLinkedClubs(prospects: DraftProspect[]): DraftProspect[] {
+  return prospects.map((p) =>
+    p.linkedClubId ? { ...p, linkedClubId: null } : p,
+  )
 }

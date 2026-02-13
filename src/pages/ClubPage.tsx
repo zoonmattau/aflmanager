@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useParams } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
 import type { ClubFacilities } from '@/types/club'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -16,6 +17,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import {
   DollarSign,
   Dumbbell,
   Building2,
@@ -30,7 +39,9 @@ import {
   Star,
   ShieldCheck,
   AlertTriangle,
+  Trophy,
 } from 'lucide-react'
+import { getDynastyStats } from '@/engine/history/historyEngine'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -137,11 +148,13 @@ function FacilityCard({
   level,
   balance,
   onUpgrade,
+  readOnly = false,
 }: {
   facilityKey: keyof ClubFacilities
   level: number
   balance: number
   onUpgrade: (facilityKey: keyof ClubFacilities, cost: number) => void
+  readOnly?: boolean
 }) {
   const meta = FACILITY_META[facilityKey]
   const Icon = meta.icon
@@ -181,29 +194,33 @@ function FacilityCard({
         </p>
 
         {/* Upgrade button */}
-        {isMaxLevel ? (
-          <Button variant="outline" size="sm" className="w-full text-xs" disabled>
-            Max Level Reached
-          </Button>
-        ) : (
-          <Button
-            variant="default"
-            size="sm"
-            className="w-full text-xs"
-            disabled={!canAfford}
-            onClick={() => {
-              if (upgradeCost !== null) onUpgrade(facilityKey, upgradeCost)
-            }}
-          >
-            <ArrowUpCircle className="mr-1 h-3 w-3" />
-            Upgrade to Lv{nextLevel} ({formatCurrency(upgradeCost!)})
-          </Button>
-        )}
+        {!readOnly && (
+          <>
+            {isMaxLevel ? (
+              <Button variant="outline" size="sm" className="w-full text-xs" disabled>
+                Max Level Reached
+              </Button>
+            ) : (
+              <Button
+                variant="default"
+                size="sm"
+                className="w-full text-xs"
+                disabled={!canAfford}
+                onClick={() => {
+                  if (upgradeCost !== null) onUpgrade(facilityKey, upgradeCost)
+                }}
+              >
+                <ArrowUpCircle className="mr-1 h-3 w-3" />
+                Upgrade to Lv{nextLevel} ({formatCurrency(upgradeCost!)})
+              </Button>
+            )}
 
-        {!isMaxLevel && !canAfford && upgradeCost !== null && (
-          <p className="text-[10px] text-destructive text-center">
-            Insufficient funds ({formatCurrency(upgradeCost)} required)
-          </p>
+            {!isMaxLevel && !canAfford && upgradeCost !== null && (
+              <p className="text-[10px] text-destructive text-center">
+                Insufficient funds ({formatCurrency(upgradeCost)} required)
+              </p>
+            )}
+          </>
         )}
       </CardContent>
     </Card>
@@ -215,14 +232,18 @@ function FacilityCard({
 // ---------------------------------------------------------------------------
 
 export function ClubPage() {
+  const { clubId: routeClubId } = useParams<{ clubId?: string }>()
   const playerClubId = useGameStore((s) => s.playerClubId)
   const clubs = useGameStore((s) => s.clubs)
   const players = useGameStore((s) => s.players)
   const staff = useGameStore((s) => s.staff)
   const settings = useGameStore((s) => s.settings)
   const ladder = useGameStore((s) => s.ladder)
+  const history = useGameStore((s) => s.history)
 
-  const club = clubs[playerClubId]
+  const clubId = routeClubId ?? playerClubId
+  const isOwnClub = clubId === playerClubId
+  const club = clubs[clubId]
 
   // -------------------------------------------------------------------------
   // Local state for facility upgrades (store action may handle this, but we
@@ -245,13 +266,13 @@ export function ClubPage() {
   // Derived: players and staff for this club
   // -------------------------------------------------------------------------
   const clubPlayers = useMemo(
-    () => Object.values(players).filter((p) => p.clubId === playerClubId),
-    [players, playerClubId],
+    () => Object.values(players).filter((p) => p.clubId === clubId),
+    [players, clubId],
   )
 
   const clubStaff = useMemo(
-    () => Object.values(staff).filter((s) => s.clubId === playerClubId),
-    [staff, playerClubId],
+    () => Object.values(staff).filter((s) => s.clubId === clubId),
+    [staff, clubId],
   )
 
   // -------------------------------------------------------------------------
@@ -312,9 +333,9 @@ export function ClubPage() {
   // Derived: Board Room
   // -------------------------------------------------------------------------
   const ladderPosition = useMemo(() => {
-    const idx = ladder.findIndex((e) => e.clubId === playerClubId)
+    const idx = ladder.findIndex((e) => e.clubId === clubId)
     return idx >= 0 ? idx + 1 : 18
-  }, [ladder, playerClubId])
+  }, [ladder, clubId])
 
   const boardExpectation = useMemo(() => {
     if (ladderPosition <= 4) return 'Finals appearance'
@@ -372,7 +393,7 @@ export function ClubPage() {
       [facilityKey]: Math.min(localFacilities[facilityKey] + 1, MAX_LEVEL),
     }
     const updatedBalance = localBalance - cost
-    store.updateClub(playerClubId, {
+    store.updateClub(clubId, {
       facilities: updatedFacilities,
       finances: {
         ...club.finances,
@@ -465,6 +486,7 @@ export function ClubPage() {
           <TabsTrigger value="facilities">Facilities</TabsTrigger>
           <TabsTrigger value="finances">Finances</TabsTrigger>
           <TabsTrigger value="boardroom">Board Room</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
 
         {/* ============================================================== */}
@@ -478,6 +500,12 @@ export function ClubPage() {
             </p>
           </div>
 
+          {!isOwnClub && (
+            <Badge variant="secondary" className="text-sm">
+              Viewing another club — upgrades disabled
+            </Badge>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {FACILITY_KEYS.map((key) => (
               <FacilityCard
@@ -486,6 +514,7 @@ export function ClubPage() {
                 level={localFacilities[key]}
                 balance={localBalance}
                 onUpgrade={handleUpgradeClick}
+                readOnly={!isOwnClub}
               />
             ))}
           </div>
@@ -646,7 +675,7 @@ export function ClubPage() {
         {/* Board Room Tab                                                  */}
         {/* ============================================================== */}
         <TabsContent value="boardroom" className="space-y-4">
-          {!settings.boardPressure && (
+          {!settings.realism.boardPressure && (
             <Badge variant="secondary" className="text-sm">
               Board pressure is disabled
             </Badge>
@@ -753,6 +782,108 @@ export function ClubPage() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* ============================================================== */}
+        {/* History Tab                                                     */}
+        {/* ============================================================== */}
+        <TabsContent value="history" className="space-y-4">
+          {history.seasons.length === 0 ? (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <Trophy className="mx-auto h-10 w-10 text-muted-foreground/30 mb-3" />
+                <p className="text-muted-foreground font-medium">No history yet</p>
+                <p className="text-sm text-muted-foreground/60 mt-1">
+                  Complete a season to see premiership history.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              {/* Dynasty Stats */}
+              {(() => {
+                const dynasty = getDynastyStats(history, clubId)
+                return (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Trophy className="h-4 w-4 text-yellow-500" />
+                        Club Dynasty
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        <div className="rounded-lg border p-3 text-center">
+                          <p className="text-2xl font-bold">{dynasty.totalPremierships}</p>
+                          <p className="text-xs text-muted-foreground">Premierships</p>
+                        </div>
+                        <div className="rounded-lg border p-3 text-center">
+                          <p className="text-2xl font-bold">{dynasty.consecutivePremierships}</p>
+                          <p className="text-xs text-muted-foreground">Current Streak</p>
+                        </div>
+                        <div className="rounded-lg border p-3 text-center">
+                          <p className="text-2xl font-bold">{dynasty.maxConsecutivePremierships}</p>
+                          <p className="text-xs text-muted-foreground">Best Streak</p>
+                        </div>
+                        <div className="rounded-lg border p-3 text-center">
+                          <p className="text-2xl font-bold">{dynasty.topFourAppearances}</p>
+                          <p className="text-xs text-muted-foreground">Top 4 Finishes</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
+              })()}
+
+              {/* Premiership List */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Premiership History</CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Year</TableHead>
+                        <TableHead>Premier</TableHead>
+                        <TableHead>Runner-Up</TableHead>
+                        <TableHead className="text-right">GF Score</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {[...history.seasons].reverse().map((season) => {
+                        const isUserPremier = season.premierClubId === clubId
+                        const isUserRunnerUp = season.runnerUpClubId === clubId
+                        return (
+                          <TableRow
+                            key={season.year}
+                            className={isUserPremier ? 'bg-yellow-500/10' : isUserRunnerUp ? 'bg-accent' : ''}
+                          >
+                            <TableCell className="font-mono">{season.year}</TableCell>
+                            <TableCell className="font-medium">
+                              {clubs[season.premierClubId]?.name ?? season.premierClubId}
+                              {isUserPremier && (
+                                <Badge variant="secondary" className="ml-2 text-xs">You</Badge>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {clubs[season.runnerUpClubId]?.name ?? season.runnerUpClubId}
+                              {isUserRunnerUp && (
+                                <Badge variant="secondary" className="ml-2 text-xs">You</Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right font-mono">
+                              {season.grandFinalScore.home} - {season.grandFinalScore.away}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </>
+          )}
         </TabsContent>
       </Tabs>
 

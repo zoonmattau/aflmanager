@@ -29,10 +29,24 @@ export interface DraftPick {
   pickNumber?: number      // Assigned during draft order
 }
 
+export interface RuckNomination {
+  primaryRuckId: string | null
+  backupRuckId: string | null
+  aroundTheGround: boolean
+}
+
 export interface ClubGameplan {
   offensiveStyle: 'attacking' | 'balanced' | 'defensive'
   tempo: 'fast' | 'medium' | 'slow'
   aggression: 'high' | 'medium' | 'low'
+  kickInTactic: 'play-on-short' | 'play-on-long' | 'set-up-short' | 'set-up-long'
+  centreTactic: 'spread' | 'cluster' | 'balanced'
+  stoppageTactic: 'spread' | 'cluster' | 'balanced'
+  defensiveLine: 'press' | 'hold' | 'run' | 'zone'
+  midfieldLine: 'press' | 'hold' | 'run' | 'zone'
+  forwardLine: 'press' | 'hold' | 'run' | 'zone'
+  ruckNomination: RuckNomination
+  rotations: 'low' | 'medium' | 'high'
 }
 
 export interface Club {
@@ -42,6 +56,9 @@ export interface Club {
   abbreviation: string      // e.g. "RICH"
   mascot: string            // e.g. "Tigers"
   homeGround: string        // e.g. "MCG"
+  established: number       // founding year
+  premierships: number      // VFL/AFL premiership count
+  tier: 'large' | 'medium' | 'small'  // for scheduling priority
   colors: ClubColors
   facilities: ClubFacilities
   finances: ClubFinances

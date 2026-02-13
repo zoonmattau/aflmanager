@@ -6,6 +6,9 @@
     "abbreviation": "ADEL",
     "mascot": "Crows",
     "homeGround": "Adelaide Oval",
+    "established": 1990,
+    "premierships": 2,
+    "tier": "medium",
     "colors": {
       "primary": "#002B5C",
       "secondary": "#E21937",
@@ -30,7 +33,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -46,6 +61,9 @@
     "abbreviation": "BRL",
     "mascot": "Lions",
     "homeGround": "The Gabba",
+    "established": 1996,
+    "premierships": 4,
+    "tier": "medium",
     "colors": {
       "primary": "#A30046",
       "secondary": "#0054A4",
@@ -70,7 +88,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -86,6 +116,9 @@
     "abbreviation": "CARL",
     "mascot": "Blues",
     "homeGround": "Marvel Stadium",
+    "established": 1864,
+    "premierships": 16,
+    "tier": "large",
     "colors": {
       "primary": "#002B5C",
       "secondary": "#FFFFFF"
@@ -109,7 +142,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -125,6 +170,9 @@
     "abbreviation": "COLL",
     "mascot": "Magpies",
     "homeGround": "MCG",
+    "established": 1892,
+    "premierships": 16,
+    "tier": "large",
     "colors": {
       "primary": "#000000",
       "secondary": "#FFFFFF"
@@ -148,7 +196,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -164,6 +224,9 @@
     "abbreviation": "ESS",
     "mascot": "Bombers",
     "homeGround": "Marvel Stadium",
+    "established": 1872,
+    "premierships": 16,
+    "tier": "large",
     "colors": {
       "primary": "#CC2031",
       "secondary": "#000000"
@@ -187,7 +250,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -203,6 +278,9 @@
     "abbreviation": "FRE",
     "mascot": "Dockers",
     "homeGround": "Optus Stadium",
+    "established": 1994,
+    "premierships": 0,
+    "tier": "medium",
     "colors": {
       "primary": "#2A0D45",
       "secondary": "#FFFFFF",
@@ -227,7 +305,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -243,6 +333,9 @@
     "abbreviation": "GEEL",
     "mascot": "Cats",
     "homeGround": "GMHBA Stadium",
+    "established": 1859,
+    "premierships": 10,
+    "tier": "large",
     "colors": {
       "primary": "#001F3D",
       "secondary": "#FFFFFF"
@@ -266,7 +359,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -282,6 +387,9 @@
     "abbreviation": "GCS",
     "mascot": "Suns",
     "homeGround": "People First Stadium",
+    "established": 2009,
+    "premierships": 0,
+    "tier": "small",
     "colors": {
       "primary": "#CE0E2D",
       "secondary": "#F4AA00",
@@ -306,7 +414,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -322,6 +442,9 @@
     "abbreviation": "GWS",
     "mascot": "Giants",
     "homeGround": "Engie Stadium",
+    "established": 2012,
+    "premierships": 0,
+    "tier": "small",
     "colors": {
       "primary": "#F47920",
       "secondary": "#4A4F55",
@@ -346,7 +469,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -362,6 +497,9 @@
     "abbreviation": "HAW",
     "mascot": "Hawks",
     "homeGround": "MCG",
+    "established": 1902,
+    "premierships": 13,
+    "tier": "large",
     "colors": {
       "primary": "#4D2004",
       "secondary": "#FBBF15",
@@ -386,7 +524,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -402,6 +552,9 @@
     "abbreviation": "MELB",
     "mascot": "Demons",
     "homeGround": "MCG",
+    "established": 1858,
+    "premierships": 13,
+    "tier": "large",
     "colors": {
       "primary": "#002D72",
       "secondary": "#CC2031"
@@ -425,7 +578,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -441,6 +606,9 @@
     "abbreviation": "NMFC",
     "mascot": "Kangaroos",
     "homeGround": "Marvel Stadium",
+    "established": 1869,
+    "premierships": 4,
+    "tier": "medium",
     "colors": {
       "primary": "#003C71",
       "secondary": "#FFFFFF",
@@ -465,7 +633,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -481,6 +661,9 @@
     "abbreviation": "PORT",
     "mascot": "Power",
     "homeGround": "Adelaide Oval",
+    "established": 1996,
+    "premierships": 1,
+    "tier": "medium",
     "colors": {
       "primary": "#008AAB",
       "secondary": "#000000",
@@ -505,7 +688,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -521,6 +716,9 @@
     "abbreviation": "RICH",
     "mascot": "Tigers",
     "homeGround": "MCG",
+    "established": 1885,
+    "premierships": 13,
+    "tier": "large",
     "colors": {
       "primary": "#000000",
       "secondary": "#FED102"
@@ -544,7 +742,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -560,6 +770,9 @@
     "abbreviation": "STK",
     "mascot": "Saints",
     "homeGround": "Marvel Stadium",
+    "established": 1873,
+    "premierships": 1,
+    "tier": "medium",
     "colors": {
       "primary": "#ED0F05",
       "secondary": "#FFFFFF",
@@ -584,7 +797,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -600,6 +825,9 @@
     "abbreviation": "SYD",
     "mascot": "Swans",
     "homeGround": "SCG",
+    "established": 1874,
+    "premierships": 5,
+    "tier": "large",
     "colors": {
       "primary": "#ED171F",
       "secondary": "#FFFFFF"
@@ -623,7 +851,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -639,6 +879,9 @@
     "abbreviation": "WCE",
     "mascot": "Eagles",
     "homeGround": "Optus Stadium",
+    "established": 1986,
+    "premierships": 4,
+    "tier": "medium",
     "colors": {
       "primary": "#002B5C",
       "secondary": "#F2A900"
@@ -662,7 +905,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",
@@ -678,6 +933,9 @@
     "abbreviation": "WBD",
     "mascot": "Bulldogs",
     "homeGround": "Marvel Stadium",
+    "established": 1877,
+    "premierships": 3,
+    "tier": "medium",
     "colors": {
       "primary": "#003DA5",
       "secondary": "#CC2031",
@@ -702,7 +960,19 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium"
+      "aggression": "medium",
+      "kickInTactic": "set-up-short",
+      "centreTactic": "balanced",
+      "stoppageTactic": "balanced",
+      "defensiveLine": "zone",
+      "midfieldLine": "run",
+      "forwardLine": "press",
+      "ruckNomination": {
+        "primaryRuckId": null,
+        "backupRuckId": null,
+        "aroundTheGround": false
+      },
+      "rotations": "medium"
     },
     "aiPersonality": {
       "competitiveWindow": "balanced",

@@ -1,10 +1,12 @@
 import type { Player, PlayerCareerStats, PlayerAttributes } from '@/types/player'
 import type { Club } from '@/types/club'
-import type { CompletedTrade, NewsItem } from '@/types/game'
+import type { CompletedTrade, GameSettings, NewsItem } from '@/types/game'
 import type { Season, LadderEntry } from '@/types/season'
 import type { DraftProspect, DraftPick as DraftEnginePick } from '@/types/draft'
 import type { StaffMember } from '@/types/staff'
 import type { SeededRNG } from '@/engine/core/rng'
+import type { GameHistory } from '@/types/history'
+import { recordDraftPick } from '@/engine/history/historyEngine'
 
 import {
   processEndOfSeasonContracts,
@@ -15,14 +17,20 @@ import {
   convertProspectToPlayer,
 } from '@/engine/draft/draftEngine'
 import { generateFixture, createInitialLadder } from '@/engine/season/fixtureGenerator'
+import { validateFixture } from '@/engine/season/fixtureValidator'
 import { calculatePreseasonTraining } from '@/engine/training/trainingEngine'
 import { developPlayer, agePlayer, shouldRetire } from '@/engine/players/development'
 import { calculatePlayerValue } from '@/engine/contracts/negotiation'
 import {
   MINIMUM_SALARY,
-  SENIOR_LIST_SIZE,
   DEFAULT_SALARY_CAP,
 } from '@/engine/core/constants'
+import {
+  resolveListConstraints,
+  validateClubList,
+  canAddToSeniorList,
+  mustDelist as mustDelistCount,
+} from '@/engine/rules/listRules'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,7 +61,7 @@ export interface OffseasonState {
 // ---------------------------------------------------------------------------
 
 /** The ordered progression of offseason phases. */
-const PHASE_ORDER: OffseasonPhase[] = [
+export const PHASE_ORDER: OffseasonPhase[] = [
   'season-end',
   'retirements',
   'delistings',
@@ -65,9 +73,6 @@ const PHASE_ORDER: OffseasonPhase[] = [
   'practice-matches',
   'ready',
 ]
-
-/** Maximum roster size before a club must delist players. */
-const MAX_ROSTER_SIZE = 44
 
 /** Preseason training duration in weeks. */
 const PRESEASON_WEEKS = 8
@@ -107,6 +112,15 @@ function emptyStats(): PlayerCareerStats {
     clearances: 0,
     insideFifties: 0,
     rebound50s: 0,
+    contestedMarks: 0,
+    scoreInvolvements: 0,
+    metresGained: 0,
+    turnovers: 0,
+    intercepts: 0,
+    onePercenters: 0,
+    bounces: 0,
+    clangers: 0,
+    goalAssists: 0,
   }
 }
 
@@ -126,6 +140,15 @@ function mergeStats(career: PlayerCareerStats, season: PlayerCareerStats): Playe
     clearances: career.clearances + season.clearances,
     insideFifties: career.insideFifties + season.insideFifties,
     rebound50s: career.rebound50s + season.rebound50s,
+    contestedMarks: career.contestedMarks + season.contestedMarks,
+    scoreInvolvements: career.scoreInvolvements + season.scoreInvolvements,
+    metresGained: career.metresGained + season.metresGained,
+    turnovers: career.turnovers + season.turnovers,
+    intercepts: career.intercepts + season.intercepts,
+    onePercenters: career.onePercenters + season.onePercenters,
+    bounces: career.bounces + season.bounces,
+    clangers: career.clangers + season.clangers,
+    goalAssists: career.goalAssists + season.goalAssists,
   }
 }
 
@@ -220,6 +243,37 @@ export function initOffseason(): OffseasonState {
 }
 
 // ---------------------------------------------------------------------------
+// 1b. canAdvancePhase
+// ---------------------------------------------------------------------------
+
+export interface PhaseAdvanceResult {
+  allowed: boolean
+  reason: string | null
+}
+
+/**
+ * Check whether the offseason can advance past the current phase.
+ * Returns `{ allowed: false, reason }` when validation fails.
+ */
+export function canAdvancePhase(
+  offseasonState: OffseasonState,
+  players: Record<string, Player>,
+  playerClubId: string,
+  settings: GameSettings,
+): PhaseAdvanceResult {
+  if (offseasonState.currentPhase === 'delistings') {
+    const constraints = resolveListConstraints(settings)
+    const validation = validateClubList(players, playerClubId, constraints)
+    if (!validation.valid) {
+      const reason = validation.errors.map((e) => e.message).join(' ')
+      return { allowed: false, reason }
+    }
+  }
+
+  return { allowed: true, reason: null }
+}
+
+// ---------------------------------------------------------------------------
 // 2. processSeasonEnd
 // ---------------------------------------------------------------------------
 
@@ -238,6 +292,7 @@ export function processSeasonEnd(
   players: Record<string, Player>,
   currentYear: number,
   rng: SeededRNG,
+  developmentSpeedMultiplier?: number,
 ): {
   updatedPlayers: Record<string, Player>
   retiredIds: string[]
@@ -282,7 +337,7 @@ export function processSeasonEnd(
     agePlayer(player)
 
     // Run development (growth / peak fluctuation / decline)
-    developPlayer(player, rng)
+    developPlayer(player, rng, developmentSpeedMultiplier)
 
     // Check for retirement
     const overall = getOverall(player)
@@ -358,7 +413,7 @@ export function processRetirements(
 // ---------------------------------------------------------------------------
 
 /**
- * For each AI club, delist players to bring the roster down to MAX_ROSTER_SIZE.
+ * For each AI club, delist players to bring the roster within list constraints.
  * Also delist players who are very low-rated and old (overall < 35 and age > 29).
  *
  * Uses the existing `delistPlayer` function to clear contracts and club assignments.
@@ -369,6 +424,8 @@ export function processAIDelistings(
   clubs: Record<string, Club>,
   rng: SeededRNG,
   playerClubId?: string,
+  settings?: GameSettings,
+  currentYear?: number,
 ): {
   delistedIds: string[]
   news: NewsItem[]
@@ -407,7 +464,7 @@ export function processAIDelistings(
               'general',
               [club.id],
               [player.id],
-              offseasonDate(new Date().getFullYear(), 10, 15),
+              offseasonDate(currentYear ?? new Date().getFullYear(), 10, 15),
               rng,
             ),
           )
@@ -415,17 +472,19 @@ export function processAIDelistings(
       }
     }
 
-    // Phase 2: Trim roster to MAX_ROSTER_SIZE
-    const currentRoster = getClubPlayers(players, club.id)
-    if (currentRoster.length > MAX_ROSTER_SIZE) {
+    // Phase 2: Trim roster to max total list size
+    const constraints = settings
+      ? resolveListConstraints(settings)
+      : { maxTotal: 44, maxSenior: 38, maxRookie: 6, minSenior: 0, minRookie: 0, minDraftSelections: 1 }
+    const excessCount = mustDelistCount(players, club.id, constraints)
+    if (excessCount > 0) {
+      const currentRoster = getClubPlayers(players, club.id)
       // Re-score remaining roster
       const remaining = currentRoster.map((p) => ({
         player: p,
         score: getOverall(p) - (p.age > 29 ? (p.age - 29) * 3 : 0),
       }))
       remaining.sort((a, b) => a.score - b.score)
-
-      const excessCount = currentRoster.length - MAX_ROSTER_SIZE
       for (let i = 0; i < excessCount && i < remaining.length; i++) {
         const { player } = remaining[i]
         if (delistedIds.includes(player.id)) continue
@@ -442,7 +501,7 @@ export function processAIDelistings(
             'general',
             [club.id],
             [player.id],
-            offseasonDate(new Date().getFullYear(), 10, 15),
+            offseasonDate(currentYear ?? new Date().getFullYear(), 10, 15),
             rng,
           ),
         )
@@ -473,6 +532,7 @@ export function processAITradePeriod(
   _tradeHistory: CompletedTrade[],
   rng: SeededRNG,
   playerClubId?: string,
+  currentYear?: number,
 ): {
   updatedPlayers: Record<string, Player>
   trades: CompletedTrade[]
@@ -541,7 +601,7 @@ export function processAITradePeriod(
 
     const trade: CompletedTrade = {
       id: generateId('trade', rng),
-      date: offseasonDate(new Date().getFullYear(), 10, 20),
+      date: offseasonDate(currentYear ?? new Date().getFullYear(), 10, 20),
       clubA: clubAId,
       clubB: clubBId,
       playersToA: [playerFromB.id],
@@ -565,7 +625,7 @@ export function processAITradePeriod(
         'trade',
         [clubAId, clubBId],
         [playerFromA.id, playerFromB.id],
-        offseasonDate(new Date().getFullYear(), 10, 20),
+        offseasonDate(currentYear ?? new Date().getFullYear(), 10, 20),
         rng,
       ),
     )
@@ -646,6 +706,8 @@ export function processAIFreeAgency(
   clubs: Record<string, Club>,
   rng: SeededRNG,
   playerClubId?: string,
+  settings?: GameSettings,
+  currentYear?: number,
 ): {
   updatedPlayers: Record<string, Player>
   signings: { playerId: string; newClubId: string }[]
@@ -695,8 +757,10 @@ export function processAIFreeAgency(
       if (availableCap < MINIMUM_SALARY) continue
 
       // Check list space
-      const seniorCount = clubRoster.filter((p) => !p.isRookie).length
-      if (seniorCount >= SENIOR_LIST_SIZE) continue
+      const faConstraints = settings
+        ? resolveListConstraints(settings)
+        : { maxTotal: 44, maxSenior: 38, maxRookie: 6, minSenior: 0, minRookie: 0, minDraftSelections: 1 }
+      if (!canAddToSeniorList(updatedPlayers, club.id, faConstraints)) continue
 
       // Evaluate interest based on positional need
       const posCounts = getPositionalCounts(updatedPlayers, club.id)
@@ -777,7 +841,7 @@ export function processAIFreeAgency(
         'contract',
         [winningBid.clubId],
         [freeAgent.id],
-        offseasonDate(new Date().getFullYear(), 11, 1),
+        offseasonDate(currentYear ?? new Date().getFullYear(), 11, 1),
         rng,
       ),
     )
@@ -807,10 +871,12 @@ export function processAIDraft(
   rng: SeededRNG,
   currentYear: number,
   playerClubId?: string,
+  history?: GameHistory,
 ): {
   updatedPlayers: Record<string, Player>
   draftedPlayerIds: string[]
   news: NewsItem[]
+  updatedHistory: GameHistory
 } {
   // Clone players
   const updatedPlayers: Record<string, Player> = {}
@@ -820,6 +886,7 @@ export function processAIDraft(
 
   const draftedPlayerIds: string[] = []
   const newsItems: NewsItem[] = []
+  let currentHistory: GameHistory = history ?? { seasons: [], draftHistory: [] }
 
   // Track which prospects have been drafted
   const draftedProspectIds = new Set<string>()
@@ -865,6 +932,17 @@ export function processAIDraft(
     updatedPlayers[newPlayer.id] = newPlayer
     draftedPlayerIds.push(newPlayer.id)
 
+    // Record draft pick in history
+    currentHistory = recordDraftPick(currentHistory, {
+      year: currentYear,
+      pickNumber: pick.pickNumber,
+      round: pick.round,
+      clubId: pick.clubId,
+      playerId: newPlayer.id,
+      playerName: `${newPlayer.firstName} ${newPlayer.lastName}`,
+      position: newPlayer.position.primary,
+    })
+
     // Generate draft pick news
     const fullName = `${newPlayer.firstName} ${newPlayer.lastName}`
     const clubName = club.name
@@ -886,7 +964,7 @@ export function processAIDraft(
     )
   }
 
-  return { updatedPlayers, draftedPlayerIds, news: newsItems }
+  return { updatedPlayers, draftedPlayerIds, news: newsItems, updatedHistory: currentHistory }
 }
 
 // ---------------------------------------------------------------------------
@@ -988,7 +1066,7 @@ export function processPreseason(
 /**
  * Initialize a new season:
  * - Increment the year
- * - Generate a new fixture using generateFixture
+ * - Generate a new fixture using generateFixture (with settings)
  * - Create a fresh ladder using createInitialLadder
  *
  * Returns the new season data, ladder, and the incremented year.
@@ -997,6 +1075,8 @@ export function startNewSeason(
   clubs: Record<string, Club>,
   currentYear: number,
   rngSeed: number,
+  playerClubId?: string,
+  settings?: GameSettings,
 ): {
   season: Season
   ladder: LadderEntry[]
@@ -1004,10 +1084,21 @@ export function startNewSeason(
 } {
   const newYear = currentYear + 1
 
-  // Generate fixture (generateFixture creates its own SeededRNG from the seed)
-  const season = generateFixture(clubs, rngSeed)
+  // Generate fixture using settings-driven options
+  const season = generateFixture({
+    clubs,
+    seed: rngSeed,
+    playerClubId,
+    settings,
+  })
   // Override the year to the new year
   season.year = newYear
+
+  // Validate fixture (warn-and-proceed on failure)
+  const fixtureErrors = validateFixture(season.rounds, Object.keys(clubs))
+  if (fixtureErrors.length > 0) {
+    console.warn('[startNewSeason] Fixture validation errors:', fixtureErrors)
+  }
 
   // Create fresh ladder
   const clubIds = Object.keys(clubs)

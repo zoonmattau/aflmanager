@@ -1,5 +1,5 @@
 import type { SeededRNG } from '@/engine/core/rng'
-import type { Player, PlayerAttributes, PositionGroup } from '@/types/player'
+import type { Player, PlayerAttributes, PlayerPositionType } from '@/types/player'
 import type { StaffMember, StaffRole } from '@/types/staff'
 import type { ClubFacilities } from '@/types/club'
 import { MIN_ATTRIBUTE, MAX_ATTRIBUTE } from '@/engine/core/constants'
@@ -37,7 +37,7 @@ export interface TrainingWeek {
 
 export interface PositionRetrainProgress {
   playerId: string
-  targetPosition: PositionGroup
+  targetPosition: PlayerPositionType
   progress: number // 0-100, once 100 the player gains the position
   startedWeek: number
 }
@@ -52,7 +52,7 @@ export interface TrainingResult {
 
 // ── Attribute Mappings by Focus ─────────────────────────────────────────────
 
-const FOCUS_ATTRIBUTES: Record<TrainingFocus, (keyof PlayerAttributes)[]> = {
+export const FOCUS_ATTRIBUTES: Record<TrainingFocus, (keyof PlayerAttributes)[]> = {
   kicking: ['kickingEfficiency', 'kickingDistance', 'setShot', 'dropPunt', 'snap'],
   handball: ['handballEfficiency', 'handballDistance', 'handballReceive'],
   marking: ['markingOverhead', 'markingLeading', 'markingContested', 'markingUncontested'],
@@ -403,7 +403,7 @@ export function applyTrainingResults(
  */
 export function startPositionRetrain(
   playerId: string,
-  targetPosition: PositionGroup,
+  targetPosition: PlayerPositionType,
   currentWeek: number = 0,
 ): PositionRetrainProgress {
   return {

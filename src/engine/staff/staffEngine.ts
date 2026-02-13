@@ -1,4 +1,5 @@
 import type { StaffMember, StaffRole, StaffRatings } from '@/types/staff'
+import type { LadderEntry } from '@/types/season'
 import type { SeededRNG } from '@/engine/core/rng'
 import { FIRST_NAMES, LAST_NAMES } from '@/data/names'
 
@@ -499,4 +500,86 @@ export function getVacantRoles(
   }
 
   return vacant
+}
+
+// ---------------------------------------------------------------------------
+// 11. processCoachingCarousel
+// ---------------------------------------------------------------------------
+
+export interface CoachingSack {
+  clubId: string
+  sacked: StaffMember
+  replacement: StaffMember
+  headline: string
+  body: string
+}
+
+/**
+ * Process the end-of-season coaching carousel for AI clubs.
+ *
+ * When enabled:
+ * - Bottom-4 clubs on the ladder → 60% sack chance for their head coach
+ * - Clubs that dropped 6+ ladder positions from previous season → 40% sack chance
+ *
+ * When disabled, returns an empty array.
+ *
+ * @param staff         - All staff members (will not be mutated)
+ * @param ladder        - The end-of-season ladder
+ * @param rng           - Seeded RNG
+ * @param playerClubId  - The user's club (excluded from sacking)
+ * @param enabled       - Whether the coaching carousel realism setting is on
+ * @returns Array of sacking events with replacement coaches
+ */
+export function processCoachingCarousel(
+  staff: StaffMember[],
+  ladder: LadderEntry[],
+  rng: SeededRNG,
+  playerClubId: string,
+  enabled: boolean,
+): CoachingSack[] {
+  if (!enabled) return []
+
+  const sacks: CoachingSack[] = []
+
+  // Sort ladder worst to best
+  const sorted = [...ladder].sort((a, b) => {
+    if (a.points !== b.points) return a.points - b.points
+    return a.percentage - b.percentage
+  })
+
+  // Bottom 4 clubs
+  const bottom4 = new Set(sorted.slice(0, 4).map((e) => e.clubId))
+
+  for (const clubId of bottom4) {
+    if (clubId === playerClubId) continue
+
+    const headCoach = staff.find(
+      (s) => s.clubId === clubId && s.role === 'head-coach',
+    )
+    if (!headCoach) continue
+
+    if (rng.chance(0.60)) {
+      const params = getRoleParams('head-coach')
+      const replacement = generateSingleStaff(
+        rng,
+        'head-coach',
+        params.ratingMin,
+        params.ratingMax,
+        params.salaryMin,
+        params.salaryMax,
+        clubId,
+        rng.nextInt(2, 4),
+      )
+
+      sacks.push({
+        clubId,
+        sacked: headCoach,
+        replacement,
+        headline: `${headCoach.firstName} ${headCoach.lastName} sacked`,
+        body: `${headCoach.firstName} ${headCoach.lastName} has been relieved of coaching duties after a disappointing season. ${replacement.firstName} ${replacement.lastName} has been appointed as the new head coach.`,
+      })
+    }
+  }
+
+  return sacks
 }

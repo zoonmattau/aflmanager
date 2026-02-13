@@ -21,6 +21,16 @@ export interface MatchPlayerStats {
   rebound50s: number
   freesFor: number
   freesAgainst: number
+  // Extended stats
+  contestedMarks: number
+  scoreInvolvements: number
+  metresGained: number
+  turnovers: number
+  intercepts: number
+  onePercenters: number
+  bounces: number
+  clangers: number
+  goalAssists: number
 }
 
 export interface MatchKeyEvent {

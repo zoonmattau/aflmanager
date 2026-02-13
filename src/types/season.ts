@@ -1,7 +1,21 @@
+export type MatchDay =
+  | 'Thursday'
+  | 'Friday'
+  | 'Saturday-Early'
+  | 'Saturday-Twilight'
+  | 'Saturday-Night'
+  | 'Sunday-Early'
+  | 'Sunday-Twilight'
+  | 'Monday'
+
 export interface Fixture {
   homeClubId: string
   awayClubId: string
   venue: string
+  matchDay?: MatchDay
+  scheduledTime?: string  // e.g. "7:25pm"
+  isBlockbuster?: boolean
+  blockbusterName?: string   // e.g. "ANZAC Day"
 }
 
 export interface Round {
@@ -9,6 +23,7 @@ export interface Round {
   name: string           // "Round 1", "Qualifying Final", etc.
   fixtures: Fixture[]
   isBye: boolean
+  byeClubIds: string[]   // clubs resting this round (empty for non-bye rounds)
   isFinals: boolean
 }
 

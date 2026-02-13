@@ -1,0 +1,110 @@
+[
+  {
+    "id": "u18-sandringham",
+    "name": "Sandringham Dragons",
+    "state": "VIC",
+    "colors": {
+      "primary": "#FF0000",
+      "secondary": "#000000"
+    }
+  },
+  {
+    "id": "u18-oakleigh",
+    "name": "Oakleigh Chargers",
+    "state": "VIC",
+    "colors": {
+      "primary": "#003399",
+      "secondary": "#FFD700"
+    }
+  },
+  {
+    "id": "u18-eastern",
+    "name": "Eastern Ranges",
+    "state": "VIC",
+    "colors": {
+      "primary": "#002D72",
+      "secondary": "#FFFFFF"
+    }
+  },
+  {
+    "id": "u18-northern",
+    "name": "Northern Knights",
+    "state": "VIC",
+    "colors": {
+      "primary": "#000000",
+      "secondary": "#CC0000"
+    }
+  },
+  {
+    "id": "u18-western",
+    "name": "Western Jets",
+    "state": "VIC",
+    "colors": {
+      "primary": "#003DA5",
+      "secondary": "#FFFFFF"
+    }
+  },
+  {
+    "id": "u18-calder",
+    "name": "Calder Cannons",
+    "state": "VIC",
+    "colors": {
+      "primary": "#002B5C",
+      "secondary": "#FFD700"
+    }
+  },
+  {
+    "id": "u18-murray",
+    "name": "Murray Bushrangers",
+    "state": "VIC",
+    "colors": {
+      "primary": "#003C14",
+      "secondary": "#FFD700"
+    }
+  },
+  {
+    "id": "u18-bendigo",
+    "name": "Bendigo Pioneers",
+    "state": "VIC",
+    "colors": {
+      "primary": "#CC0000",
+      "secondary": "#003399"
+    }
+  },
+  {
+    "id": "u18-gippsland",
+    "name": "Gippsland Power",
+    "state": "VIC",
+    "colors": {
+      "primary": "#000000",
+      "secondary": "#FFFFFF"
+    }
+  },
+  {
+    "id": "u18-dandenong",
+    "name": "Dandenong Stingrays",
+    "state": "VIC",
+    "colors": {
+      "primary": "#FFD700",
+      "secondary": "#003399"
+    }
+  },
+  {
+    "id": "u18-gwvrebels",
+    "name": "GWV Rebels",
+    "state": "VIC",
+    "colors": {
+      "primary": "#CC0000",
+      "secondary": "#000000"
+    }
+  },
+  {
+    "id": "u18-tasmania",
+    "name": "Tasmania Devils",
+    "state": "TAS",
+    "colors": {
+      "primary": "#003C14",
+      "secondary": "#FFD700"
+    }
+  }
+]

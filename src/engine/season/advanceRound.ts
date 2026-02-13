@@ -1,5 +1,5 @@
 import { simulateMatch } from '@/engine/match/simulateMatch'
-import { REGULAR_SEASON_ROUNDS } from '@/engine/core/constants'
+import type { MatchRulesSettings } from '@/types/game'
 import type { Match } from '@/types/match'
 import type { Round } from '@/types/season'
 import type { Player } from '@/types/player'
@@ -12,6 +12,7 @@ interface SimRoundInput {
   clubs: Record<string, Club>
   rngSeed: number
   playerClubId: string
+  matchRules?: MatchRulesSettings
 }
 
 export interface SimRoundResult {
@@ -36,6 +37,7 @@ export function simulateRound(input: SimRoundInput): SimRoundResult {
       clubs,
       seed: rngSeed + roundIndex * 100 + i,
       isFinal: round.isFinals,
+      matchRules: input.matchRules,
     })
   })
 
@@ -48,9 +50,10 @@ export function simulateRound(input: SimRoundInput): SimRoundResult {
 
 /**
  * Check if the regular season is complete.
+ * Uses the total number of rounds in the season (settings-driven).
  */
-export function isRegularSeasonComplete(currentRound: number): boolean {
-  return currentRound >= REGULAR_SEASON_ROUNDS
+export function isRegularSeasonComplete(currentRound: number, totalRounds: number): boolean {
+  return currentRound >= totalRounds
 }
 
 /**

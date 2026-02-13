@@ -7,13 +7,23 @@ import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
 import {
-  initOffseason,
   getOffseasonPhaseLabel,
-  advanceOffseasonPhase,
+  PHASE_ORDER,
 } from '@/engine/season/offseasonFlow'
+import {
+  generatePreseasonFixtures,
+  simulatePreseasonMatch,
+  simulateIntraClubMatch,
+} from '@/engine/season/preseasonMatches'
+import type { PreseasonMatchResult } from '@/engine/season/preseasonMatches'
+import { SeededRNG } from '@/engine/core/rng'
 import type { OffseasonPhase, OffseasonState } from '@/engine/season/offseasonFlow'
 import type { Player } from '@/types/player'
 import type { NewsItem } from '@/types/game'
+import { buildOffseasonSummary } from '@/engine/history/summaryEngine'
+import type { TradeGradeLetter } from '@/engine/history/summaryEngine'
+import { resolveListConstraints, validateClubList, mustDelist } from '@/engine/rules/listRules'
+import { AlertTriangle as AlertTriangleIcon } from 'lucide-react'
 import {
   CheckCircle2,
   Circle,
@@ -37,18 +47,7 @@ import {
 // Constants
 // ---------------------------------------------------------------------------
 
-const ALL_PHASES: OffseasonPhase[] = [
-  'season-end',
-  'retirements',
-  'delistings',
-  'trade-period',
-  'free-agency',
-  'national-draft',
-  'rookie-draft',
-  'preseason',
-  'practice-matches',
-  'ready',
-]
+const ALL_PHASES = PHASE_ORDER
 
 const PHASE_ICONS: Record<OffseasonPhase, React.ReactNode> = {
   'season-end': <Trophy className="h-4 w-4" />,
@@ -361,11 +360,13 @@ function DelistingsPanel({
   players,
   delistedPlayerIds,
   onDelist,
+  settings,
 }: {
   playerClubId: string
   players: Record<string, Player>
   delistedPlayerIds: string[]
   onDelist: (playerId: string) => void
+  settings: import('@/types/game').GameSettings
 }) {
   const delistedSet = useMemo(() => new Set(delistedPlayerIds), [delistedPlayerIds])
 
@@ -387,8 +388,28 @@ function DelistingsPanel({
     [delistedPlayerIds, players],
   )
 
+  const constraints = useMemo(() => resolveListConstraints(settings), [settings])
+  const excess = useMemo(() => mustDelist(players, playerClubId, constraints), [players, playerClubId, constraints])
+
   return (
     <div className="space-y-4">
+      {/* Validation banner */}
+      {excess > 0 ? (
+        <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3">
+          <AlertTriangleIcon className="h-4 w-4 text-red-400 flex-shrink-0" />
+          <p className="text-sm font-medium text-red-400">
+            You must delist {excess} more player{excess !== 1 ? 's' : ''} to meet the {constraints.maxTotal}-player roster limit.
+          </p>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 rounded-lg border border-green-500/30 bg-green-500/10 p-3">
+          <CheckCircle2 className="h-4 w-4 text-green-400 flex-shrink-0" />
+          <p className="text-sm font-medium text-green-400">
+            Your roster meets all list requirements.
+          </p>
+        </div>
+      )}
+
       {delistedPlayers.length > 0 && (
         <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
           <p className="text-xs font-medium text-red-400 uppercase tracking-wide mb-2">
@@ -683,46 +704,287 @@ function PreseasonPanel() {
   )
 }
 
-function PracticeMatchesPanel() {
+function PracticeMatchesPanel({
+  playerClubId,
+  players,
+  clubs,
+}: {
+  playerClubId: string
+  players: Record<string, Player>
+  clubs: Record<string, { homeGround: string; fullName: string; abbreviation: string; colors: { primary: string } }>
+}) {
+  const [results, setResults] = useState<PreseasonMatchResult[]>([])
+  const [simSeed] = useState(() => Date.now())
+
+  const handleFriendly = () => {
+    const rng = new SeededRNG(simSeed + results.length * 113)
+    const fixtures = generatePreseasonFixtures(clubs as Record<string, import('@/types/club').Club>, playerClubId, 1, simSeed + results.length)
+    if (fixtures.length > 0) {
+      const f = fixtures[0]
+      const result = simulatePreseasonMatch(f.homeClubId, f.awayClubId, f.venue, players, rng)
+      setResults((prev) => [...prev, result])
+    }
+  }
+
+  const handleIntraClub = () => {
+    const rng = new SeededRNG(simSeed + results.length * 997)
+    const result = simulateIntraClubMatch(playerClubId, players, clubs as Record<string, import('@/types/club').Club>, rng)
+    setResults((prev) => [...prev, result])
+  }
+
   return (
     <div className="space-y-4">
       <p className="text-muted-foreground">
-        Practice matches have been played. Your squad has had a good hit-out before the season begins.
+        Schedule practice matches to prepare your squad for the season.
       </p>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div className="rounded-lg border border-border/50 bg-muted/30 p-4">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide">Match Results</p>
-          <p className="text-lg font-bold mt-1">3 Matches Played</p>
-          <p className="text-xs text-muted-foreground">Intra-club and practice games</p>
-        </div>
-        <div className="rounded-lg border border-border/50 bg-muted/30 p-4">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide">Squad Readiness</p>
-          <p className="text-lg font-bold mt-1 text-green-400">Good</p>
-          <p className="text-xs text-muted-foreground">All systems go</p>
-        </div>
+      <div className="flex gap-3">
+        <Button variant="default" onClick={handleFriendly} disabled={results.length >= 4}>
+          <Swords className="mr-1.5 h-4 w-4" />
+          Schedule Friendly
+        </Button>
+        <Button variant="outline" onClick={handleIntraClub} disabled={results.length >= 4}>
+          <Users className="mr-1.5 h-4 w-4" />
+          Intra-Club Match
+        </Button>
       </div>
+
+      {results.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            Results ({results.length})
+          </p>
+          {results.map((r, i) => {
+            const homeClub = clubs[r.homeClubId]
+            const awayClub = r.isIntraClub ? null : clubs[r.awayClubId]
+            return (
+              <div key={i} className="flex items-center justify-between rounded border border-border/50 bg-muted/30 p-3">
+                <div className="flex items-center gap-2">
+                  <div
+                    className="h-4 w-4 rounded-full"
+                    style={{ backgroundColor: homeClub?.colors.primary ?? '#666' }}
+                  />
+                  <span className="text-sm font-medium">
+                    {r.isIntraClub ? 'Team A' : (homeClub?.abbreviation ?? r.homeClubId)}
+                  </span>
+                </div>
+                <div className="text-center">
+                  <span className="text-sm font-bold font-mono">
+                    {r.homeScore.goals}.{r.homeScore.behinds} ({r.homeScore.total}) - {r.awayScore.goals}.{r.awayScore.behinds} ({r.awayScore.total})
+                  </span>
+                  <p className="text-[10px] text-muted-foreground">{r.venue}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">
+                    {r.isIntraClub ? 'Team B' : (awayClub?.abbreviation ?? r.awayClubId)}
+                  </span>
+                  {!r.isIntraClub && (
+                    <div
+                      className="h-4 w-4 rounded-full"
+                      style={{ backgroundColor: awayClub?.colors.primary ?? '#666' }}
+                    />
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {results.length === 0 && (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-lg border border-border/50 bg-muted/30 p-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">Matches Played</p>
+            <p className="text-lg font-bold mt-1">0</p>
+            <p className="text-xs text-muted-foreground">Schedule some matches above</p>
+          </div>
+          <div className="rounded-lg border border-border/50 bg-muted/30 p-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide">Max Matches</p>
+            <p className="text-lg font-bold mt-1">4</p>
+            <p className="text-xs text-muted-foreground">Friendlies + intra-club</p>
+          </div>
+        </div>
+      )}
     </div>
+  )
+}
+
+function gradeColor(grade: TradeGradeLetter): string {
+  if (grade.startsWith('A')) return 'bg-green-600 text-white'
+  if (grade.startsWith('B')) return 'bg-yellow-500 text-black'
+  if (grade === 'C') return 'bg-yellow-600 text-white'
+  return 'bg-red-500 text-white'
+}
+
+function SeasonReviewPanel({
+  year,
+}: {
+  year: number
+}) {
+  const history = useGameStore((s) => s.history)
+  const tradeHistory = useGameStore((s) => s.tradeHistory)
+  const players = useGameStore((s) => s.players)
+  const clubs = useGameStore((s) => s.clubs)
+  const [expanded, setExpanded] = useState(true)
+
+  const summary = useMemo(
+    () => buildOffseasonSummary(year, history, tradeHistory, players, clubs),
+    [year, history, tradeHistory, players, clubs],
+  )
+
+  if (!summary.premierClubId && summary.draftPicks.length === 0) return null
+
+  return (
+    <Card className="border-primary/30">
+      <CardHeader
+        className="cursor-pointer"
+        onClick={() => setExpanded((e) => !e)}
+      >
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <Trophy className="h-4 w-4 text-yellow-500" />
+            Season {year} Review
+          </CardTitle>
+          <Badge variant="outline" className="text-xs">
+            {expanded ? 'Collapse' : 'Expand'}
+          </Badge>
+        </div>
+      </CardHeader>
+      {expanded && (
+        <CardContent className="space-y-4">
+          {/* Premier */}
+          {summary.premierClubId && (
+            <div className="flex items-center gap-3 rounded-lg border border-yellow-500/40 bg-yellow-500/5 p-3">
+              <Trophy className="h-6 w-6 text-yellow-500 flex-shrink-0" />
+              <div>
+                <p className="font-bold">{summary.premierClubName}</p>
+                {summary.grandFinalScore && (
+                  <p className="text-sm text-muted-foreground">
+                    Grand Final: {summary.grandFinalScore.home} - {summary.grandFinalScore.away}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Retirements */}
+          {summary.retirements.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                Retirements ({summary.retirements.length})
+              </p>
+              <div className="space-y-1">
+                {summary.retirements.slice(0, 5).map((r) => (
+                  <div key={r.playerId} className="flex justify-between text-sm">
+                    <span>{r.playerName}</span>
+                    <span className="text-muted-foreground font-mono">
+                      {r.careerGames} gms, {r.careerGoals} gls
+                    </span>
+                  </div>
+                ))}
+                {summary.retirements.length > 5 && (
+                  <p className="text-xs text-muted-foreground">
+                    +{summary.retirements.length - 5} more
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Key Trades */}
+          {summary.trades.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                Key Trades ({summary.trades.length})
+              </p>
+              <div className="space-y-2">
+                {summary.trades.slice(0, 5).map((trade) => (
+                  <div key={trade.id} className="flex items-center justify-between rounded border p-2 text-sm">
+                    <span>
+                      {clubs[trade.clubA]?.abbreviation ?? trade.clubA}{' '}
+                      &harr;{' '}
+                      {clubs[trade.clubB]?.abbreviation ?? trade.clubB}
+                    </span>
+                    {trade.grade && (
+                      <div className="flex gap-1">
+                        <Badge className={gradeColor(trade.grade.clubAGrade)}>
+                          {trade.grade.clubAGrade}
+                        </Badge>
+                        <Badge className={gradeColor(trade.grade.clubBGrade)}>
+                          {trade.grade.clubBGrade}
+                        </Badge>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Draft Picks */}
+          {summary.draftPicks.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                Draft Picks ({summary.draftPicks.length})
+              </p>
+              <div className="space-y-1">
+                {summary.draftPicks.slice(0, 8).map((pick) => (
+                  <div key={`${pick.year}-${pick.pickNumber}`} className="flex justify-between text-sm">
+                    <span className="font-mono text-muted-foreground">#{pick.pickNumber}</span>
+                    <span>{pick.playerName}</span>
+                    <Badge variant="outline" className="text-xs">{pick.position}</Badge>
+                    <span className="text-muted-foreground">
+                      {clubs[pick.clubId]?.abbreviation ?? pick.clubId}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Draft Steals */}
+          {summary.draftSteals.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                Draft Steals
+              </p>
+              <div className="space-y-1">
+                {summary.draftSteals.slice(0, 5).map((steal) => (
+                  <div key={steal.playerId} className="flex justify-between text-sm">
+                    <span>{steal.playerName} (Pick #{steal.pickNumber})</span>
+                    <span className="font-mono text-green-500">OVR {steal.currentOverall}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      )}
+    </Card>
   )
 }
 
 function ReadyPanel({ year }: { year: number }) {
   return (
-    <div className="flex flex-col items-center justify-center py-8 space-y-6 text-center">
-      <div className="relative">
-        <Rocket className="h-16 w-16 text-primary" />
-        <span className="absolute -top-1 -right-1 h-5 w-5 animate-ping rounded-full bg-green-500/40" />
-        <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-green-500" />
-      </div>
+    <div className="space-y-6">
+      <SeasonReviewPanel year={year} />
 
-      <div>
-        <h2 className="text-2xl font-bold">
-          Ready for Season {year + 1}!
-        </h2>
-        <p className="text-muted-foreground mt-2 max-w-md">
-          The offseason is complete. Your squad is assembled, contracts are signed,
-          and the fixture awaits. Time to compete.
-        </p>
+      <div className="flex flex-col items-center justify-center py-8 space-y-6 text-center">
+        <div className="relative">
+          <Rocket className="h-16 w-16 text-primary" />
+          <span className="absolute -top-1 -right-1 h-5 w-5 animate-ping rounded-full bg-green-500/40" />
+          <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-green-500" />
+        </div>
+
+        <div>
+          <h2 className="text-2xl font-bold">
+            Ready for Season {year + 1}!
+          </h2>
+          <p className="text-muted-foreground mt-2 max-w-md">
+            The offseason is complete. Your squad is assembled, contracts are signed,
+            and the fixture awaits. Time to compete.
+          </p>
+        </div>
       </div>
     </div>
   )
@@ -742,6 +1004,9 @@ function CurrentPhasePanel({
   onAdvance,
   onDelist,
   onStartSeason,
+  advanceError,
+  canAdvance,
+  settings,
 }: {
   offseasonState: OffseasonState
   year: number
@@ -751,6 +1016,7 @@ function CurrentPhasePanel({
     fullName: string
     abbreviation: string
     name: string
+    homeGround: string
     colors: { primary: string }
     draftPicks: { year: number; round: number; originalClubId: string; currentClubId: string; pickNumber?: number }[]
   }>
@@ -758,6 +1024,9 @@ function CurrentPhasePanel({
   onAdvance: () => void
   onDelist: (playerId: string) => void
   onStartSeason: () => void
+  advanceError: string | null
+  canAdvance: boolean
+  settings: import('@/types/game').GameSettings
 }) {
   const { currentPhase } = offseasonState
   const isReady = currentPhase === 'ready'
@@ -803,6 +1072,7 @@ function CurrentPhasePanel({
             players={players}
             delistedPlayerIds={offseasonState.delistedPlayerIds}
             onDelist={onDelist}
+            settings={settings}
           />
         )}
         {currentPhase === 'trade-period' && <TradePeriodPanel />}
@@ -816,8 +1086,22 @@ function CurrentPhasePanel({
           <DraftPanel draftType="rookie" playerClubId={playerClubId} clubs={clubs} />
         )}
         {currentPhase === 'preseason' && <PreseasonPanel />}
-        {currentPhase === 'practice-matches' && <PracticeMatchesPanel />}
+        {currentPhase === 'practice-matches' && (
+          <PracticeMatchesPanel
+            playerClubId={playerClubId}
+            players={players}
+            clubs={clubs}
+          />
+        )}
         {currentPhase === 'ready' && <ReadyPanel year={year} />}
+
+        {/* Error display */}
+        {advanceError && (
+          <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3">
+            <AlertTriangleIcon className="h-4 w-4 text-red-400 flex-shrink-0" />
+            <p className="text-sm text-red-400">{advanceError}</p>
+          </div>
+        )}
 
         {/* Advance / Start Season button */}
         <div className="flex items-center justify-end pt-2 border-t border-border/50">
@@ -827,7 +1111,7 @@ function CurrentPhasePanel({
               Start Season {year + 1}
             </Button>
           ) : (
-            <Button onClick={onAdvance} className="gap-2">
+            <Button onClick={onAdvance} disabled={!canAdvance} className="gap-2">
               Advance Phase
               <ChevronRight className="h-4 w-4" />
             </Button>
@@ -852,33 +1136,58 @@ export function OffseasonPage() {
   const newsLog = useGameStore((s) => s.newsLog)
   const currentYear = useGameStore((s) => s.currentYear)
   const ladder = useGameStore((s) => s.ladder)
-  const setPhase = useGameStore((s) => s.setPhase)
+  const settings = useGameStore((s) => s.settings)
+  const offseasonState = useGameStore((s) => s.offseasonState)
+  const advancePhase = useGameStore((s) => s.advanceOffseasonPhase)
+  const delistPlayer = useGameStore((s) => s.delistPlayerOffseason)
+  const startNewSeasonAction = useGameStore((s) => s.startNewSeasonAction)
 
-  // Local offseason state
-  const [offseasonState, setOffseasonState] = useState<OffseasonState>(() =>
-    initOffseason(),
-  )
+  // Validation error state
+  const [advanceError, setAdvanceError] = useState<string | null>(null)
+
+  // Compute canAdvance for delistings phase
+  const canAdvance = useMemo(() => {
+    if (!offseasonState) return false
+    if (offseasonState.currentPhase === 'delistings') {
+      const constraints = resolveListConstraints(settings)
+      const validation = validateClubList(players, playerClubId, constraints)
+      return validation.valid
+    }
+    return true
+  }, [offseasonState, players, playerClubId, settings])
 
   // Handlers
   const handleAdvancePhase = useCallback(() => {
-    setOffseasonState((prev) => advanceOffseasonPhase(prev))
-  }, [])
+    const result = advancePhase()
+    if (!result.success) {
+      setAdvanceError(result.error)
+    } else {
+      setAdvanceError(null)
+    }
+  }, [advancePhase])
 
   const handleDelist = useCallback((playerId: string) => {
-    setOffseasonState((prev) => ({
-      ...prev,
-      delistedPlayerIds: [...prev.delistedPlayerIds, playerId],
-    }))
-  }, [])
+    delistPlayer(playerId)
+    setAdvanceError(null)
+  }, [delistPlayer])
 
   const handleStartSeason = useCallback(() => {
-    // Transition back to regular-season phase for the next year
-    setPhase('regular-season')
+    startNewSeasonAction()
     navigate('/')
-  }, [setPhase, navigate])
+  }, [startNewSeasonAction, navigate])
 
   // Club info for header
   const club = clubs[playerClubId]
+
+  // Null guard: no offseason in progress
+  if (!offseasonState) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 space-y-4">
+        <p className="text-lg text-muted-foreground">No offseason in progress.</p>
+        <Button onClick={() => navigate('/')}>Return to Dashboard</Button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -918,6 +1227,9 @@ export function OffseasonPage() {
             onAdvance={handleAdvancePhase}
             onDelist={handleDelist}
             onStartSeason={handleStartSeason}
+            advanceError={advanceError}
+            canAdvance={canAdvance}
+            settings={settings}
           />
         </div>
 

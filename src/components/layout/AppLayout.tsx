@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Sidebar } from './Sidebar'
 import { TopBar } from './TopBar'
+import { SubNav } from './SubNav'
 
 export function AppLayout({ children }: { children: ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -13,6 +14,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
       />
       <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar />
+        <SubNav />
         <main className="flex-1 overflow-auto p-6">
           {children}
         </main>

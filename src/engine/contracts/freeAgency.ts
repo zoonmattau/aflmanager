@@ -1,6 +1,7 @@
 import type { Player } from '@/types/player'
 import type { Club } from '@/types/club'
 import type { SeededRNG } from '@/engine/core/rng'
+import type { ListConstraints } from '@/engine/rules/listRules'
 import { calculatePlayerValue } from '@/engine/contracts/negotiation'
 import { MINIMUM_SALARY, SENIOR_LIST_SIZE } from '@/engine/core/constants'
 
@@ -179,6 +180,7 @@ export function generateFreeAgentInterest(
   clubs: Record<string, Club>,
   players: Record<string, Player>,
   rng: SeededRNG,
+  options?: { softCapEnabled?: boolean; constraints?: ListConstraints },
 ): string[] {
   const interested: string[] = []
   const { player, demandedAav } = freeAgent
@@ -189,13 +191,17 @@ export function generateFreeAgentInterest(
     if (club.id === player.clubId) continue
 
     // --- Cap space check ---
-    const availableCap = club.finances.salaryCap - club.finances.currentSpend
+    const effectiveCap = options?.softCapEnabled
+      ? club.finances.salaryCap * 1.10
+      : club.finances.salaryCap
+    const availableCap = effectiveCap - club.finances.currentSpend
     if (availableCap < demandedAav) continue
 
     // --- List space check ---
+    const maxSenior = options?.constraints?.maxSenior ?? SENIOR_LIST_SIZE
     const clubPlayers = getClubPlayers(players, club.id)
     const seniorCount = clubPlayers.filter((p) => !p.isRookie).length
-    if (seniorCount >= SENIOR_LIST_SIZE) continue
+    if (seniorCount >= maxSenior) continue
 
     // --- Competitive window alignment ---
     let windowScore = 0 // higher = more interested
@@ -315,13 +321,15 @@ export function canDelist(
 /**
  * Check if a club has room on the senior list to upgrade a rookie.
  *
- * Returns `true` when the club's current senior list count is below
- * `SENIOR_LIST_SIZE`.
+ * When `constraints` is provided, checks against the user-configured
+ * maxSenior value. Otherwise falls back to the hard-coded SENIOR_LIST_SIZE.
  */
 export function canUpgradeRookie(
   players: Record<string, Player>,
   clubId: string,
+  constraints?: ListConstraints,
 ): boolean {
   const { senior } = getListCounts(players, clubId)
-  return senior < SENIOR_LIST_SIZE
+  const max = constraints?.maxSenior ?? SENIOR_LIST_SIZE
+  return senior < max
 }

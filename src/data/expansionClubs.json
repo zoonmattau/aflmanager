@@ -1,0 +1,62 @@
+[
+  {
+    "id": "tasmania",
+    "name": "Tasmania",
+    "fullName": "Tasmania Devils",
+    "abbreviation": "TAS",
+    "mascot": "Devils",
+    "homeGround": "UTAS Stadium",
+    "colors": { "primary": "#006847", "secondary": "#FFD700" },
+    "suggestedEntryYear": 2028
+  },
+  {
+    "id": "nt-thunder",
+    "name": "NT Thunder",
+    "fullName": "Northern Territory Thunder",
+    "abbreviation": "NTT",
+    "mascot": "Thunder",
+    "homeGround": "TIO Stadium",
+    "colors": { "primary": "#C8102E", "secondary": "#000000" },
+    "suggestedEntryYear": 2030
+  },
+  {
+    "id": "nz-kiwis",
+    "name": "New Zealand",
+    "fullName": "New Zealand Kiwis",
+    "abbreviation": "NZK",
+    "mascot": "Kiwis",
+    "homeGround": "Eden Park",
+    "colors": { "primary": "#000000", "secondary": "#FFFFFF", "tertiary": "#C8102E" },
+    "suggestedEntryYear": 2032
+  },
+  {
+    "id": "canberra",
+    "name": "Canberra",
+    "fullName": "Canberra Giants",
+    "abbreviation": "CBR",
+    "mascot": "Giants",
+    "homeGround": "Manuka Oval",
+    "colors": { "primary": "#4B0082", "secondary": "#FFD700" },
+    "suggestedEntryYear": 2029
+  },
+  {
+    "id": "south-east-qld",
+    "name": "South East Queensland",
+    "fullName": "SEQ Sharks",
+    "abbreviation": "SEQ",
+    "mascot": "Sharks",
+    "homeGround": "Carrara Stadium",
+    "colors": { "primary": "#0072CE", "secondary": "#FFB81C" },
+    "suggestedEntryYear": 2031
+  },
+  {
+    "id": "west-sydney",
+    "name": "West Sydney",
+    "fullName": "Western Sydney Wanderers",
+    "abbreviation": "WSW",
+    "mascot": "Wanderers",
+    "homeGround": "Sydney Showground",
+    "colors": { "primary": "#E31837", "secondary": "#1A1A1A" },
+    "suggestedEntryYear": 2031
+  }
+]

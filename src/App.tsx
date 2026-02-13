@@ -15,10 +15,17 @@ import { ContractsPage } from '@/pages/ContractsPage'
 import { DraftPage } from '@/pages/DraftPage'
 import { ScoutingPage } from '@/pages/ScoutingPage'
 import { StaffPage } from '@/pages/StaffPage'
+import { StaffHiringPage } from '@/pages/StaffHiringPage'
 import { TradePage } from '@/pages/TradePage'
 import { ClubPage } from '@/pages/ClubPage'
 import { TrainingPage } from '@/pages/TrainingPage'
 import { OffseasonPage } from '@/pages/OffseasonPage'
+import { ExpansionPage } from '@/pages/ExpansionPage'
+import { InboxPage } from '@/pages/InboxPage'
+import { LeaguePage } from '@/pages/LeaguePage'
+import { CalendarPage } from '@/pages/CalendarPage'
+import { ReservesPage } from '@/pages/ReservesPage'
+import { StateLeaguePage } from '@/pages/StateLeaguePage'
 import { useGameStore } from '@/stores/gameStore'
 
 export default function App() {
@@ -36,6 +43,7 @@ export default function App() {
             <AppLayout>
               <Routes>
                 <Route path="/" element={<DashboardPage />} />
+                <Route path="/inbox" element={<InboxPage />} />
                 <Route path="/squad" element={<SquadPage />} />
                 <Route path="/match" element={<MatchDayPage />} />
                 <Route path="/ladder" element={<LadderPage />} />
@@ -47,10 +55,18 @@ export default function App() {
                 <Route path="/draft" element={<DraftPage />} />
                 <Route path="/scouting" element={<ScoutingPage />} />
                 <Route path="/staff" element={<StaffPage />} />
+                <Route path="/staff/hire" element={<StaffHiringPage />} />
                 <Route path="/trades" element={<TradePage />} />
                 <Route path="/club" element={<ClubPage />} />
+                <Route path="/club/:clubId" element={<ClubPage />} />
+                <Route path="/squad/:clubId" element={<SquadPage />} />
+                <Route path="/league" element={<LeaguePage />} />
+                <Route path="/calendar" element={<CalendarPage />} />
+                <Route path="/reserves" element={<ReservesPage />} />
+                <Route path="/state-leagues" element={<StateLeaguePage />} />
                 <Route path="/training" element={<TrainingPage />} />
                 <Route path="/offseason" element={<OffseasonPage />} />
+                <Route path="/expansion" element={<ExpansionPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </AppLayout>

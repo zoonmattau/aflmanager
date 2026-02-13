@@ -1,0 +1,58 @@
+[
+  {
+    "id": "darwin-buffaloes",
+    "name": "Darwin Buffaloes",
+    "abbreviation": "DBUF",
+    "colors": { "primary": "#FF0000", "secondary": "#000000" },
+    "homeGround": "Gardens Oval"
+  },
+  {
+    "id": "nightcliff",
+    "name": "Nightcliff",
+    "abbreviation": "NCLF",
+    "colors": { "primary": "#800080", "secondary": "#FFD700" },
+    "homeGround": "Nightcliff Oval"
+  },
+  {
+    "id": "palmerston",
+    "name": "Palmerston",
+    "abbreviation": "PALM",
+    "colors": { "primary": "#008000", "secondary": "#FFFFFF" },
+    "homeGround": "Cazalys Arena"
+  },
+  {
+    "id": "st-marys",
+    "name": "St Mary's",
+    "abbreviation": "STMA",
+    "colors": { "primary": "#003DA5", "secondary": "#FF0000" },
+    "homeGround": "TIO Stadium"
+  },
+  {
+    "id": "southern-districts",
+    "name": "Southern Districts",
+    "abbreviation": "SDIS",
+    "colors": { "primary": "#A30046", "secondary": "#FFD700" },
+    "homeGround": "Norbuilt Oval"
+  },
+  {
+    "id": "tiwi-bombers",
+    "name": "Tiwi Bombers",
+    "abbreviation": "TIWI",
+    "colors": { "primary": "#CC2031", "secondary": "#000000" },
+    "homeGround": "TIO Stadium"
+  },
+  {
+    "id": "wanderers",
+    "name": "Wanderers",
+    "abbreviation": "WAND",
+    "colors": { "primary": "#002B5C", "secondary": "#FFFFFF" },
+    "homeGround": "Gardens Oval"
+  },
+  {
+    "id": "waratah",
+    "name": "Waratah",
+    "abbreviation": "WARA",
+    "colors": { "primary": "#FF8C00", "secondary": "#000000" },
+    "homeGround": "Waratah Oval"
+  }
+]

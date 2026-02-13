@@ -1,0 +1,51 @@
+[
+  {
+    "id": "clarence",
+    "name": "Clarence",
+    "abbreviation": "CLAR",
+    "colors": { "primary": "#FFD700", "secondary": "#000000" },
+    "homeGround": "Blundstone Arena"
+  },
+  {
+    "id": "glenorchy",
+    "name": "Glenorchy",
+    "abbreviation": "GLEN",
+    "colors": { "primary": "#FF0000", "secondary": "#000000" },
+    "homeGround": "KGV Football Park"
+  },
+  {
+    "id": "lauderdale",
+    "name": "Lauderdale",
+    "abbreviation": "LAUD",
+    "colors": { "primary": "#00008B", "secondary": "#FFD700" },
+    "homeGround": "Skybus Oval"
+  },
+  {
+    "id": "launceston",
+    "name": "Launceston",
+    "abbreviation": "LAUN",
+    "colors": { "primary": "#0000FF", "secondary": "#FFFFFF" },
+    "homeGround": "Windsor Park"
+  },
+  {
+    "id": "north-hobart",
+    "name": "North Hobart",
+    "abbreviation": "NTHB",
+    "colors": { "primary": "#FF0000", "secondary": "#003DA5" },
+    "homeGround": "North Hobart Oval"
+  },
+  {
+    "id": "north-launceston",
+    "name": "North Launceston",
+    "abbreviation": "NTHL",
+    "colors": { "primary": "#003DA5", "secondary": "#FFFFFF" },
+    "homeGround": "UTAS Stadium"
+  },
+  {
+    "id": "tigers-fc",
+    "name": "Tigers FC",
+    "abbreviation": "TGFC",
+    "colors": { "primary": "#000000", "secondary": "#FED102" },
+    "homeGround": "Twin Ovals"
+  }
+]

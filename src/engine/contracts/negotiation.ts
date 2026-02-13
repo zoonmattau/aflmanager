@@ -37,7 +37,7 @@ const ELITE_SALARY_CEILING = 1_200_000
 const ATTRIBUTE_COUNT = 52
 
 /** Positions that command a premium on the open market. */
-const PREMIUM_POSITIONS = new Set(['MID', 'C', 'FF', 'HF'])
+const PREMIUM_POSITIONS = new Set(['IM', 'OM', 'FF', 'CHF', 'HFF'])
 
 /**
  * Returns the arithmetic mean of every numeric attribute on a player.
@@ -91,7 +91,7 @@ function positionMultiplier(player: Player): number {
     return 1.08
   }
   // Rucks get a modest bump too
-  if (player.position.primary === 'FOLL') {
+  if (player.position.primary === 'RK') {
     return 1.04
   }
   return 1.0
@@ -196,8 +196,10 @@ export function generateContractDemand(
   player: Player,
   currentClubId: string,
   rng: SeededRNG,
+  options?: { playerLoyaltyEnabled?: boolean },
 ): ContractDemand {
   const baseValue = calculatePlayerValue(player)
+  const loyaltyEnabled = options?.playerLoyaltyEnabled !== false
 
   // --- Personality modifiers ---
 
@@ -207,7 +209,7 @@ export function generateContractDemand(
   // Loyalty: only applies if player is at the club making the offer
   // 1-100 → multiplier 1.0 – 0.85 (higher loyalty = bigger discount)
   const isAtCurrentClub = player.clubId === currentClubId
-  const loyaltyMultiplier = isAtCurrentClub
+  const loyaltyMultiplier = loyaltyEnabled && isAtCurrentClub
     ? 1.0 - (player.personality.loyalty / 100) * 0.15
     : 1.0
 
@@ -270,8 +272,10 @@ export function evaluateOffer(
   offer: ContractOffer,
   currentClubId: string,
   rng: SeededRNG,
+  options?: { playerLoyaltyEnabled?: boolean },
 ): NegotiationResult {
-  const demand = generateContractDemand(player, currentClubId, rng)
+  const demand = generateContractDemand(player, currentClubId, rng, options)
+  const loyaltyEnabled = options?.playerLoyaltyEnabled !== false
 
   // --- Term check ---
   const yearDiff = Math.abs(offer.years - demand.yearsWanted)
@@ -302,7 +306,7 @@ export function evaluateOffer(
 
   // Loyalty bonus for staying at current club
   const isStaying = offer.clubId === currentClubId
-  if (isStaying) {
+  if (isStaying && loyaltyEnabled) {
     acceptanceProbability = Math.min(0.99, acceptanceProbability + 0.10)
   }
 
@@ -377,8 +381,27 @@ export function getCapSpace(
   players: Player[],
   clubId: string,
   salaryCapAmount: number,
+  softCapEnabled?: boolean,
 ): number {
-  return salaryCapAmount - calculateClubSalaryTotal(players, clubId)
+  const effectiveCap = softCapEnabled
+    ? salaryCapAmount * 1.10
+    : salaryCapAmount
+  return effectiveCap - calculateClubSalaryTotal(players, clubId)
+}
+
+/**
+ * Calculates luxury tax for a club that has exceeded the hard salary cap.
+ * Tax is 150% of the amount over the cap. Returns 0 if under the cap.
+ */
+export function calculateLuxuryTax(
+  players: Player[],
+  clubId: string,
+  salaryCapAmount: number,
+): number {
+  const total = calculateClubSalaryTotal(players, clubId)
+  const overage = total - salaryCapAmount
+  if (overage <= 0) return 0
+  return Math.round(overage * 1.5)
 }
 
 // ---------------------------------------------------------------------------

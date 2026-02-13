@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useGameStore } from '@/stores/gameStore'
+import { Link } from 'react-router-dom'
 import type { DraftProspect, DraftPick, ScoutingRegion } from '@/types/draft'
-import type { PositionGroup } from '@/types/player'
+import type { PlayerPositionType } from '@/types/player'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -45,8 +46,8 @@ const TIER_LABELS: Record<DraftProspect['tier'], string> = {
   'rookie-list': 'Rookie',
 }
 
-const ALL_POSITIONS: PositionGroup[] = [
-  'FB', 'HB', 'C', 'HF', 'FF', 'FOLL', 'INT', 'MID', 'WING',
+const ALL_POSITIONS: PlayerPositionType[] = [
+  'BP', 'FB', 'HBF', 'CHB', 'W', 'IM', 'OM', 'RK', 'HFF', 'CHF', 'FP', 'FF',
 ]
 
 const ALL_REGIONS: ScoutingRegion[] = [
@@ -501,7 +502,7 @@ function ProspectListTab({
   clubs: Record<string, { abbreviation: string }>
 }) {
   const [search, setSearch] = useState('')
-  const [posFilter, setPosFilter] = useState<PositionGroup | ''>('')
+  const [posFilter, setPosFilter] = useState<PlayerPositionType | ''>('')
   const [regionFilter, setRegionFilter] = useState<ScoutingRegion | ''>('')
   const [tierFilter, setTierFilter] = useState<DraftProspect['tier'] | ''>('')
   const [sortField, setSortField] = useState<ProspectSortField>('projectedPick')
@@ -604,7 +605,7 @@ function ProspectListTab({
 
         <select
           value={posFilter}
-          onChange={(e) => setPosFilter(e.target.value as PositionGroup | '')}
+          onChange={(e) => setPosFilter(e.target.value as PlayerPositionType | '')}
           className="h-9 rounded-md border border-input bg-background px-3 text-sm"
         >
           <option value="">All Positions</option>
@@ -807,6 +808,110 @@ function ProspectListTab({
 }
 
 // ---------------------------------------------------------------------------
+// Draft History Tab
+// ---------------------------------------------------------------------------
+
+function DraftHistoryTab({
+  clubs,
+}: {
+  clubs: Record<string, { name: string; abbreviation: string }>
+}) {
+  const history = useGameStore((s) => s.history)
+  const draftHistory = history.draftHistory
+
+  const years = useMemo(() => {
+    const yearSet = new Set(draftHistory.map((d) => d.year))
+    return [...yearSet].sort((a, b) => b - a)
+  }, [draftHistory])
+
+  const [selectedYear, setSelectedYear] = useState<number | null>(() => years[0] ?? null)
+
+  const picks = useMemo(() => {
+    if (selectedYear === null) return []
+    return draftHistory
+      .filter((d) => d.year === selectedYear)
+      .sort((a, b) => a.pickNumber - b.pickNumber)
+  }, [draftHistory, selectedYear])
+
+  if (draftHistory.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <p className="text-muted-foreground font-medium">No draft history yet</p>
+          <p className="text-sm text-muted-foreground/60 mt-1">
+            Complete a draft to see historical picks here.
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <span className="text-sm text-muted-foreground">Year:</span>
+        <select
+          value={selectedYear ?? ''}
+          onChange={(e) => setSelectedYear(Number(e.target.value))}
+          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+        >
+          {years.map((y) => (
+            <option key={y} value={y}>{y}</option>
+          ))}
+        </select>
+      </div>
+
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-16 text-center">Pick</TableHead>
+                <TableHead>Club</TableHead>
+                <TableHead>Player</TableHead>
+                <TableHead>Position</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {picks.map((pick) => (
+                <TableRow key={`${pick.year}-${pick.pickNumber}`}>
+                  <TableCell className="text-center font-mono font-bold">
+                    {pick.pickNumber}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline">
+                      {clubs[pick.clubId]?.abbreviation ?? pick.clubId}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Link
+                      to={`/player/${pick.playerId}`}
+                      className="font-medium hover:underline"
+                    >
+                      {pick.playerName}
+                    </Link>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="secondary">{pick.position}</Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {picks.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                    No picks for this year.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Main Page Component
 // ---------------------------------------------------------------------------
 
@@ -905,6 +1010,7 @@ export function DraftPage() {
         <TabsList>
           <TabsTrigger value="board">Draft Board</TabsTrigger>
           <TabsTrigger value="prospects">Prospect List</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
 
         <TabsContent value="board">
@@ -926,6 +1032,10 @@ export function DraftPage() {
             playerClubId={playerClubId}
             clubs={clubs}
           />
+        </TabsContent>
+
+        <TabsContent value="history">
+          <DraftHistoryTab clubs={clubs} />
         </TabsContent>
       </Tabs>
     </div>
