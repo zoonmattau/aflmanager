@@ -8,6 +8,8 @@ import {
   ChevronRight,
   ClipboardList,
   Settings,
+  DollarSign,
+  FileText,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -26,6 +28,8 @@ const navItems = [
   { to: '/gameplan', icon: Settings, label: 'Gameplan' },
   { to: '/match', icon: Swords, label: 'Match Day' },
   { to: '/ladder', icon: Trophy, label: 'Ladder' },
+  { to: '/salary-cap', icon: DollarSign, label: 'Salary Cap' },
+  { to: '/contracts', icon: FileText, label: 'Contracts' },
 ]
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {

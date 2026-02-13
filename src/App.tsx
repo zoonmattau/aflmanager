@@ -10,6 +10,8 @@ import { LadderPage } from '@/pages/LadderPage'
 import { LineupPage } from '@/pages/LineupPage'
 import { GameplanPage } from '@/pages/GameplanPage'
 import { PlayerProfilePage } from '@/pages/PlayerProfilePage'
+import { SalaryCapPage } from '@/pages/SalaryCapPage'
+import { ContractsPage } from '@/pages/ContractsPage'
 import { useGameStore } from '@/stores/gameStore'
 
 export default function App() {
@@ -33,6 +35,8 @@ export default function App() {
                 <Route path="/lineup" element={<LineupPage />} />
                 <Route path="/gameplan" element={<GameplanPage />} />
                 <Route path="/player/:playerId" element={<PlayerProfilePage />} />
+                <Route path="/salary-cap" element={<SalaryCapPage />} />
+                <Route path="/contracts" element={<ContractsPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </AppLayout>
