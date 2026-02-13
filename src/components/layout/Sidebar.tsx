@@ -13,6 +13,7 @@ import {
   GraduationCap,
   Search,
   UserCog,
+  ArrowLeftRight,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -36,6 +37,7 @@ const navItems = [
   { to: '/draft', icon: GraduationCap, label: 'Draft' },
   { to: '/scouting', icon: Search, label: 'Scouting' },
   { to: '/staff', icon: UserCog, label: 'Staff' },
+  { to: '/trades', icon: ArrowLeftRight, label: 'Trades' },
 ]
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {

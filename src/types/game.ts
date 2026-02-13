@@ -69,4 +69,18 @@ export interface GameState {
   // Draft data
   draft: DraftState | null
   scouts: Scout[]
+
+  // Trade history
+  tradeHistory: CompletedTrade[]
+}
+
+export interface CompletedTrade {
+  id: string
+  date: string
+  clubA: string
+  clubB: string
+  playersToA: string[]
+  playersToB: string[]
+  salaryRetainedByA: number
+  salaryRetainedByB: number
 }

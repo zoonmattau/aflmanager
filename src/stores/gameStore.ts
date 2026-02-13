@@ -85,6 +85,7 @@ const createDefaultState = (): GameState => ({
   selectedLineup: null,
   draft: null,
   scouts: [],
+  tradeHistory: [],
 })
 
 // ---------------------------------------------------------------------------
