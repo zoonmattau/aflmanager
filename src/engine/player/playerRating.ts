@@ -1,11 +1,11 @@
-import type { Player } from '@/types/player'
+import type { Player, PlayerPreferredRole } from '@/types/player'
 import { averageAttributes } from '@/engine/contracts/negotiation'
 
 // ---------------------------------------------------------------------------
 // Overall rating
 // ---------------------------------------------------------------------------
 
-/** Simple mean of all 52 attributes — delegates to averageAttributes(). */
+/** Simple mean of all 52 attributes - delegates to averageAttributes(). */
 export function getOverallRating(player: Player): number {
   return Math.round(averageAttributes(player.attributes))
 }
@@ -14,18 +14,47 @@ export function getOverallRating(player: Player): number {
 // Star rating
 // ---------------------------------------------------------------------------
 
-/** Convert 1-100 overall to 0.5–5.0 star rating (half-star increments). */
+const ROLE_VALUE_MULTIPLIER: Record<PlayerPreferredRole, number> = {
+  ruck: 1.07,
+  'inside-mid': 1.05,
+  'intercept-defender': 1.04,
+  'key-forward': 1.04,
+  'outside-mid': 1.02,
+  'rebound-defender': 1.01,
+  'pressure-forward': 1.0,
+  'wing-runner': 0.99,
+  'small-forward': 0.98,
+  'lockdown-defender': 0.98,
+  utility: 0.97,
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+function roundToHalf(value: number): number {
+  return Math.round(value * 2) / 2
+}
+
+/**
+ * Convert overall (1-100) to 0.5-5.0 stars with half-star increments.
+ * This baseline variant does not include role value.
+ */
 export function getStarRating(overall: number): number {
-  if (overall >= 80) return 5
-  if (overall >= 75) return 4.5
-  if (overall >= 70) return 4
-  if (overall >= 65) return 3.5
-  if (overall >= 60) return 3
-  if (overall >= 55) return 2.5
-  if (overall >= 50) return 2
-  if (overall >= 45) return 1.5
-  if (overall >= 40) return 1
-  return 0.5
+  const normalized = (clamp(overall, 30, 95) - 30) / 65
+  return clamp(roundToHalf(0.5 + normalized * 4.5), 0.5, 5)
+}
+
+/** Preferred role impact on player value in star calculations. */
+export function getRoleValueMultiplier(role: PlayerPreferredRole): number {
+  return ROLE_VALUE_MULTIPLIER[role] ?? 1
+}
+
+/** Player star rating derived from overall rating and role value. */
+export function getPlayerStarRating(player: Player, overall?: number): number {
+  const ovr = overall ?? getOverallRating(player)
+  const roleAdjusted = ovr * getRoleValueMultiplier(player.preferredRole)
+  return getStarRating(roleAdjusted)
 }
 
 // ---------------------------------------------------------------------------

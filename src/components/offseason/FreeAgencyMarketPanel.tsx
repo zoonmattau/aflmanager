@@ -5,19 +5,20 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import {
+  getPlayerStarRating,
   getStarRating,
   getPlayerTier,
   type PlayerTier,
 } from '@/engine/player/playerRating'
 import { POSITION_LINE } from '@/engine/core/constants'
+import { isPlayerEligibleForPositionLine } from '@/engine/player/positionEligibility'
+import { PlayerStarRating } from '@/components/player/PlayerStarRating'
 import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
   FileText,
   ExternalLink,
-  Star,
-  StarHalf,
   UserPlus,
   Gavel,
   AlertTriangle as AlertTriangleIcon,
@@ -25,6 +26,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import type { FreeAgentListing } from '@/engine/contracts/freeAgencyMarket'
+import type { Player } from '@/types/player'
 
 // ---------------------------------------------------------------------------
 // Shared helpers (matching OffseasonPage patterns)
@@ -47,24 +49,6 @@ function tierBorder(tier: PlayerTier): string {
     case 'poor': return 'border-l-2 border-l-red-500'
     default: return ''
   }
-}
-
-function MiniStarDisplay({ stars }: { stars: number }) {
-  const fullStars = Math.floor(stars)
-  const hasHalf = stars % 1 !== 0
-  const emptyStars = 5 - fullStars - (hasHalf ? 1 : 0)
-
-  return (
-    <span className="inline-flex items-center gap-px">
-      {Array.from({ length: fullStars }, (_, i) => (
-        <Star key={`f${i}`} className="h-3 w-3 fill-current text-amber-400" />
-      ))}
-      {hasHalf && <StarHalf className="h-3 w-3 fill-current text-amber-400" />}
-      {Array.from({ length: emptyStars }, (_, i) => (
-        <Star key={`e${i}`} className="h-3 w-3 text-muted-foreground/30" />
-      ))}
-    </span>
-  )
 }
 
 // ---------------------------------------------------------------------------
@@ -141,12 +125,14 @@ function BidForm({
 
 function ListingRow({
   listing,
+  player,
   clubs,
   onBid,
   onWithdraw,
   isResolved,
 }: {
   listing: FreeAgentListing
+  player: Player | undefined
   clubs: Record<string, { name: string; abbreviation: string; colors: { primary: string } }>
   onBid: (playerId: string, aav: number, years: number) => void
   onWithdraw: (playerId: string) => void
@@ -154,7 +140,7 @@ function ListingRow({
 }) {
   const [expanded, setExpanded] = useState(false)
   const tier = getPlayerTier(listing.overall)
-  const stars = getStarRating(listing.overall)
+  const stars = player ? getPlayerStarRating(player, listing.overall) : getStarRating(listing.overall)
   const line = POSITION_LINE[listing.position as keyof typeof POSITION_LINE] ?? ''
   const previousClub = listing.previousClubId ? clubs[listing.previousClubId] : null
   const hasUserBid = listing.bids.some((b) => b.isUserBid)
@@ -172,7 +158,7 @@ function ListingRow({
               <p className="font-medium text-sm truncate">
                 {listing.playerName}
               </p>
-              <MiniStarDisplay stars={stars} />
+              <PlayerStarRating stars={stars} className="scale-[0.85] origin-left" />
               <span className={cn('text-xs font-semibold tabular-nums', tierColor(tier))}>
                 {listing.overall}
               </span>
@@ -315,9 +301,16 @@ export function FreeAgencyMarketPanel() {
   const filteredListings = useMemo(() => {
     if (!market) return []
     return market.listings
-      .filter((l) => posFilter === '' || POSITION_LINE[l.position as keyof typeof POSITION_LINE] === posFilter)
+      .filter((l) => {
+        if (posFilter === '') return true
+        const player = players[l.playerId]
+        if (player) {
+          return isPlayerEligibleForPositionLine(player, posFilter as 'DEF' | 'MID' | 'FWD' | 'RK')
+        }
+        return POSITION_LINE[l.position as keyof typeof POSITION_LINE] === posFilter
+      })
       .sort((a, b) => b.overall - a.overall)
-  }, [market, posFilter])
+  }, [market, posFilter, players])
 
   const handleBid = useCallback((playerId: string, aav: number, years: number) => {
     const result = submitBid(playerId, aav, years)
@@ -492,14 +485,15 @@ export function FreeAgencyMarketPanel() {
       ) : (
         <div className="divide-y divide-border/50 max-h-[500px] overflow-y-auto">
           {filteredListings.map((listing) => (
-            <ListingRow
-              key={listing.playerId}
-              listing={listing}
-              clubs={clubs}
-              onBid={handleBid}
-              onWithdraw={handleWithdraw}
-              isResolved={isResolved}
-            />
+          <ListingRow
+            key={listing.playerId}
+            listing={listing}
+            player={players[listing.playerId]}
+            clubs={clubs}
+            onBid={handleBid}
+            onWithdraw={handleWithdraw}
+            isResolved={isResolved}
+          />
           ))}
         </div>
       )}

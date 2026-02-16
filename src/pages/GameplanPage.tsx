@@ -11,6 +11,7 @@ import type { ClubGameplan } from '@/types/club'
 import type { Player } from '@/types/player'
 import { applyGameplanAdjustment } from '@/engine/coaching/tacticalAdjustments'
 import { createDefaultGameplan } from '@/engine/gameplan/defaults'
+import { isPlayerEligibleForPositionType } from '@/engine/player/positionEligibility'
 
 export function GameplanPage() {
   const playerClubId = useGameStore((s) => s.playerClubId)
@@ -60,7 +61,7 @@ export function GameplanPage() {
     (p: Player) => p.clubId === playerClubId,
   )
   const ruckmen = clubPlayers.filter(
-    (p: Player) => p.position.primary === 'RK',
+    (p: Player) => isPlayerEligibleForPositionType(p, 'RK'),
   )
 
   return (

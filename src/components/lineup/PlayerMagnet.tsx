@@ -1,5 +1,5 @@
 import type { Player, LineupSlot } from '@/types/player'
-import { SLOT_POSITION_COMPATIBILITY } from '@/engine/core/constants'
+import { getPositionSuitabilityForSlot } from '@/engine/player/positionEligibility'
 
 export type PositionSuitability = 'primary' | 'secondary' | 'out-of-position'
 
@@ -14,11 +14,7 @@ export function getPositionSuitability(
   player: Player,
   slot: string,
 ): PositionSuitability {
-  const compatTypes = SLOT_POSITION_COMPATIBILITY[slot as LineupSlot] ?? []
-  if (compatTypes.includes(player.position.primary)) return 'primary'
-  if (player.position.secondary.some((s) => compatTypes.includes(s)))
-    return 'secondary'
-  return 'out-of-position'
+  return getPositionSuitabilityForSlot(player, slot as LineupSlot)
 }
 
 const SUITABILITY_BORDER: Record<PositionSuitability, string> = {

@@ -11,6 +11,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { PlayerStarRating } from '@/components/player/PlayerStarRating'
+import { getPlayerStarRating } from '@/engine/player/playerRating'
 
 function DeltaBadge({ delta }: { delta: number }) {
   if (delta > 0) return <Badge className="bg-green-600 text-white">+{delta.toFixed(1)}</Badge>
@@ -21,6 +23,7 @@ function DeltaBadge({ delta }: { delta: number }) {
 export function PlayerDevelopmentReportPage() {
   const history = useGameStore((s) => s.history)
   const clubs = useGameStore((s) => s.clubs)
+  const players = useGameStore((s) => s.players)
 
   const reports = useMemo(
     () => [...history.developmentReports].sort((a, b) => b.year - a.year),
@@ -82,7 +85,12 @@ export function PlayerDevelopmentReportPage() {
                 {tableRows(report.risers).map((r) => (
                   <TableRow key={r.playerId}>
                     <TableCell>
-                      <Link to={`/player/${r.playerId}`} className="font-medium hover:underline">{r.playerName}</Link>
+                      <div>
+                        <Link to={`/player/${r.playerId}`} className="font-medium hover:underline">{r.playerName}</Link>
+                        {players[r.playerId] && (
+                          <PlayerStarRating stars={getPlayerStarRating(players[r.playerId])} className="scale-[0.75] origin-left" />
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>{clubs[r.clubId]?.abbreviation ?? r.clubId}</TableCell>
                     <TableCell className="text-center"><DeltaBadge delta={r.delta} /></TableCell>
@@ -110,7 +118,12 @@ export function PlayerDevelopmentReportPage() {
                 {tableRows(report.fallers).map((r) => (
                   <TableRow key={r.playerId}>
                     <TableCell>
-                      <Link to={`/player/${r.playerId}`} className="font-medium hover:underline">{r.playerName}</Link>
+                      <div>
+                        <Link to={`/player/${r.playerId}`} className="font-medium hover:underline">{r.playerName}</Link>
+                        {players[r.playerId] && (
+                          <PlayerStarRating stars={getPlayerStarRating(players[r.playerId])} className="scale-[0.75] origin-left" />
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>{clubs[r.clubId]?.abbreviation ?? r.clubId}</TableCell>
                     <TableCell className="text-center"><DeltaBadge delta={r.delta} /></TableCell>
@@ -130,7 +143,12 @@ export function PlayerDevelopmentReportPage() {
           <CardContent className="space-y-2">
             {report.breakoutCandidates.slice(0, 12).map((r) => (
               <div key={r.playerId} className="flex items-center justify-between rounded border p-2">
-                <Link to={`/player/${r.playerId}`} className="font-medium text-sm hover:underline">{r.playerName}</Link>
+                <div>
+                  <Link to={`/player/${r.playerId}`} className="font-medium text-sm hover:underline">{r.playerName}</Link>
+                  {players[r.playerId] && (
+                    <PlayerStarRating stars={getPlayerStarRating(players[r.playerId])} className="scale-[0.75] origin-left" />
+                  )}
+                </div>
                 <div className="flex items-center gap-2">
                   <Badge variant="outline">{r.overallAfter.toFixed(1)} OVR</Badge>
                   <DeltaBadge delta={r.delta} />
@@ -150,7 +168,12 @@ export function PlayerDevelopmentReportPage() {
           <CardContent className="space-y-2">
             {report.busts.slice(0, 12).map((r) => (
               <div key={r.playerId} className="flex items-center justify-between rounded border p-2">
-                <Link to={`/player/${r.playerId}`} className="font-medium text-sm hover:underline">{r.playerName}</Link>
+                <div>
+                  <Link to={`/player/${r.playerId}`} className="font-medium text-sm hover:underline">{r.playerName}</Link>
+                  {players[r.playerId] && (
+                    <PlayerStarRating stars={getPlayerStarRating(players[r.playerId])} className="scale-[0.75] origin-left" />
+                  )}
+                </div>
                 <div className="flex items-center gap-2">
                   <Badge variant="outline">Pick {r.draftPick ?? '-'}</Badge>
                   <DeltaBadge delta={r.delta} />

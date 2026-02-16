@@ -52,6 +52,9 @@ import {
 } from 'lucide-react'
 import { getCapWarnings } from '@/engine/salary/salaryCapEngine'
 import { calculateLuxuryTax } from '@/engine/contracts/negotiation'
+import { getPlayerStarRating } from '@/engine/player/playerRating'
+import { PlayerStarRating } from '@/components/player/PlayerStarRating'
+import { isPlayerEligibleForPositionType } from '@/engine/player/positionEligibility'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -102,15 +105,18 @@ type TileFilter = 'all' | 'expiring' | 'rookie'
 // Name cell (uses hooks, must be a component)
 // ---------------------------------------------------------------------------
 
-function NameCell({ playerId, name }: { playerId: string; name: string }) {
+function NameCell({ playerId, name, player }: { playerId: string; name: string; player: Player }) {
   const navigate = useNavigate()
   return (
-    <button
-      className="font-medium text-left hover:underline hover:text-primary cursor-pointer"
-      onClick={() => navigate(`/player/${playerId}`)}
-    >
-      {name}
-    </button>
+    <div>
+      <button
+        className="font-medium text-left hover:underline hover:text-primary cursor-pointer"
+        onClick={() => navigate(`/player/${playerId}`)}
+      >
+        {name}
+      </button>
+      <PlayerStarRating stars={getPlayerStarRating(player)} className="scale-[0.8] origin-left" />
+    </div>
   )
 }
 
@@ -274,7 +280,7 @@ export function SalaryCapPage() {
         id: 'name',
         header: 'Name',
         cell: (info) => (
-          <NameCell playerId={info.row.original.id} name={info.getValue()} />
+          <NameCell playerId={info.row.original.id} name={info.getValue()} player={info.row.original} />
         ),
         size: 180,
       }),
@@ -283,7 +289,8 @@ export function SalaryCapPage() {
         header: 'Pos',
         cell: (info) => <Badge variant="outline">{info.getValue()}</Badge>,
         size: 60,
-        filterFn: 'equals',
+        filterFn: (row, _columnId, filterValue) =>
+          isPlayerEligibleForPositionType(row.original, filterValue as PlayerPositionType),
       }),
       columnHelper.accessor('age', {
         header: 'Age',

@@ -13,13 +13,15 @@ import {
 } from '@/engine/season/offseasonFlow'
 import {
   getOverallRating,
-  getStarRating,
+  getPlayerStarRating,
   getPlayerTier,
   getPlayerTags,
   type PlayerTier,
   type PlayerTagKey,
 } from '@/engine/player/playerRating'
+import { PlayerStarRating } from '@/components/player/PlayerStarRating'
 import { POSITION_LINE } from '@/engine/core/constants'
+import { isPlayerEligibleForPositionLine } from '@/engine/player/positionEligibility'
 import { calculatePlayerValue } from '@/engine/contracts/negotiation'
 import {
   generatePreseasonFixtures,
@@ -54,7 +56,6 @@ import {
   ExternalLink,
   XCircle,
   Star,
-  StarHalf,
   MapPin,
   UserPlus,
 } from 'lucide-react'
@@ -124,24 +125,6 @@ function tagStyle(key: PlayerTagKey): string {
     case 'ageing': return 'bg-purple-500/15 text-purple-600 border-purple-500/30'
     case 'trade-listed': return 'bg-rose-500/15 text-rose-600 border-rose-500/30'
   }
-}
-
-function MiniStarDisplay({ stars }: { stars: number }) {
-  const fullStars = Math.floor(stars)
-  const hasHalf = stars % 1 !== 0
-  const emptyStars = 5 - fullStars - (hasHalf ? 1 : 0)
-
-  return (
-    <span className="inline-flex items-center gap-px">
-      {Array.from({ length: fullStars }, (_, i) => (
-        <Star key={`f${i}`} className="h-3 w-3 fill-current text-amber-400" />
-      ))}
-      {hasHalf && <StarHalf className="h-3 w-3 fill-current text-amber-400" />}
-      {Array.from({ length: emptyStars }, (_, i) => (
-        <Star key={`e${i}`} className="h-3 w-3 text-muted-foreground/30" />
-      ))}
-    </span>
-  )
 }
 
 // ---------------------------------------------------------------------------
@@ -506,7 +489,7 @@ function DelistingsPanel({
         {clubPlayers.map((p) => {
           const ovr = getOverallRating(p)
           const tier = getPlayerTier(ovr)
-          const stars = getStarRating(ovr)
+          const stars = getPlayerStarRating(p, ovr)
           const tags = getPlayerTags(p)
           const line = POSITION_LINE[p.position.primary]
 
@@ -524,7 +507,7 @@ function DelistingsPanel({
                         #{p.jerseyNumber}
                       </span>
                     </p>
-                    <MiniStarDisplay stars={stars} />
+                    <PlayerStarRating stars={stars} className="scale-[0.85] origin-left" />
                     <span className={`text-xs font-semibold tabular-nums ${tierColor(tier)}`}>
                       {ovr}
                     </span>
@@ -619,7 +602,7 @@ function UnsignedPoolPanel({
   const unsignedPlayers = useMemo(
     () =>
       getUnsignedPool(players)
-        .filter((p) => posFilter === '' || POSITION_LINE[p.position.primary] === posFilter)
+        .filter((p) => posFilter === '' || isPlayerEligibleForPositionLine(p, posFilter as 'DEF' | 'MID' | 'FWD' | 'RK'))
         .sort((a, b) => getOverallRating(b) - getOverallRating(a)),
     [players, posFilter],
   )
@@ -681,7 +664,7 @@ function UnsignedPoolPanel({
           {unsignedPlayers.map((p) => {
             const ovr = getOverallRating(p)
             const tier = getPlayerTier(ovr)
-            const stars = getStarRating(ovr)
+            const stars = getPlayerStarRating(p, ovr)
             const tags = getPlayerTags(p)
             const marketValue = calculatePlayerValue(p)
             const suggestedYears = p.age <= 24 ? 3 : p.age <= 28 ? 2 : 1
@@ -697,7 +680,7 @@ function UnsignedPoolPanel({
                       <p className="font-medium text-sm truncate">
                         {p.firstName} {p.lastName}
                       </p>
-                      <MiniStarDisplay stars={stars} />
+                      <PlayerStarRating stars={stars} className="scale-[0.85] origin-left" />
                       <span className={`text-xs font-semibold tabular-nums ${tierColor(tier)}`}>
                         {ovr}
                       </span>
@@ -1600,3 +1583,4 @@ export function OffseasonPage() {
     </div>
   )
 }
+

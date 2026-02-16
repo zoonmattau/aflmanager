@@ -12,6 +12,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { getPlayerStarRating } from '@/engine/player/playerRating'
+import { PlayerStarRating } from '@/components/player/PlayerStarRating'
 
 function severityColor(severity?: 'minor' | 'moderate' | 'major' | 'severe'): string {
   if (severity === 'severe') return 'bg-red-500/15 text-red-600 border-red-500/30'
@@ -130,9 +132,12 @@ export function InjuryReportPage() {
                     myClubInjuries.map((p) => (
                       <TableRow key={p.id}>
                         <TableCell>
-                          <Link to={`/player/${p.id}`} className="font-medium hover:underline">
-                            {p.firstName} {p.lastName}
-                          </Link>
+                          <div>
+                            <Link to={`/player/${p.id}`} className="font-medium hover:underline">
+                              {p.firstName} {p.lastName}
+                            </Link>
+                            <PlayerStarRating stars={getPlayerStarRating(p)} className="scale-[0.75] origin-left" />
+                          </div>
                         </TableCell>
                         <TableCell>{p.injury?.type}</TableCell>
                         <TableCell className="text-center">
@@ -175,9 +180,12 @@ export function InjuryReportPage() {
                     highRiskAvailable.map((p) => (
                       <TableRow key={p.id}>
                         <TableCell>
-                          <Link to={`/player/${p.id}`} className="font-medium hover:underline">
-                            {p.firstName} {p.lastName}
-                          </Link>
+                          <div>
+                            <Link to={`/player/${p.id}`} className="font-medium hover:underline">
+                              {p.firstName} {p.lastName}
+                            </Link>
+                            <PlayerStarRating stars={getPlayerStarRating(p)} className="scale-[0.75] origin-left" />
+                          </div>
                         </TableCell>
                         <TableCell className="text-right font-mono">{p.fatigue}</TableCell>
                         <TableCell className="text-right font-mono">{p.hiddenAttributes.injuryProneness}</TableCell>
@@ -218,9 +226,12 @@ export function InjuryReportPage() {
                     leagueInjuries.slice(0, 120).map((p) => (
                       <TableRow key={p.id}>
                         <TableCell>
-                          <Link to={`/player/${p.id}`} className="font-medium hover:underline">
-                            {p.firstName} {p.lastName}
-                          </Link>
+                          <div>
+                            <Link to={`/player/${p.id}`} className="font-medium hover:underline">
+                              {p.firstName} {p.lastName}
+                            </Link>
+                            <PlayerStarRating stars={getPlayerStarRating(p)} className="scale-[0.75] origin-left" />
+                          </div>
                         </TableCell>
                         <TableCell>{clubs[p.clubId]?.abbreviation ?? p.clubId}</TableCell>
                         <TableCell>{p.injury?.type}</TableCell>
@@ -265,9 +276,12 @@ export function InjuryReportPage() {
                     recentlyRecovered.map(({ player, history }, idx) => (
                       <TableRow key={`${player.id}-${history.type}-${idx}`}>
                         <TableCell>
-                          <Link to={`/player/${player.id}`} className="font-medium hover:underline">
-                            {player.firstName} {player.lastName}
-                          </Link>
+                          <div>
+                            <Link to={`/player/${player.id}`} className="font-medium hover:underline">
+                              {player.firstName} {player.lastName}
+                            </Link>
+                            <PlayerStarRating stars={getPlayerStarRating(player)} className="scale-[0.75] origin-left" />
+                          </div>
                         </TableCell>
                         <TableCell>{clubs[player.clubId]?.abbreviation ?? player.clubId}</TableCell>
                         <TableCell>{history.type}</TableCell>

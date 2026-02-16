@@ -18,6 +18,8 @@ import type { PlayerCareerStats } from '@/types/player'
 import { Trophy, Medal, Star, Lock } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
+import { getPlayerStarRating } from '@/engine/player/playerRating'
+import { PlayerStarRating } from '@/components/player/PlayerStarRating'
 
 const LEADER_STATS: { key: keyof PlayerCareerStats; label: string }[] = [
   { key: 'gamesPlayed', label: 'Games' },
@@ -66,12 +68,20 @@ function CareerLeadersTable({
               <TableRow key={entry.playerId}>
                 <TableCell className="text-muted-foreground">{i + 1}</TableCell>
                 <TableCell>
-                  <Link
-                    to={`/player/${entry.playerId}`}
-                    className="font-medium hover:underline"
-                  >
-                    {entry.playerName}
-                  </Link>
+                  <div>
+                    <Link
+                      to={`/player/${entry.playerId}`}
+                      className="font-medium hover:underline"
+                    >
+                      {entry.playerName}
+                    </Link>
+                    {players[entry.playerId] && (
+                      <PlayerStarRating
+                        stars={getPlayerStarRating(players[entry.playerId])}
+                        className="scale-[0.75] origin-left"
+                      />
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell className="text-muted-foreground">
                   {entry.clubId === 'retired'
@@ -278,12 +288,20 @@ export function LadderPage() {
                             <TableRow key={entry.playerId}>
                               <TableCell className="text-muted-foreground">{i + 1}</TableCell>
                               <TableCell>
-                                <Link
-                                  to={`/player/${entry.playerId}`}
-                                  className="font-medium hover:underline"
-                                >
-                                  {p ? `${p.firstName} ${p.lastName}` : entry.playerId}
-                                </Link>
+                                <div>
+                                  <Link
+                                    to={`/player/${entry.playerId}`}
+                                    className="font-medium hover:underline"
+                                  >
+                                    {p ? `${p.firstName} ${p.lastName}` : entry.playerId}
+                                  </Link>
+                                  {p && (
+                                    <PlayerStarRating
+                                      stars={getPlayerStarRating(p)}
+                                      className="scale-[0.75] origin-left"
+                                    />
+                                  )}
+                                </div>
                               </TableCell>
                               <TableCell className="text-muted-foreground">
                                 {p ? (clubs[p.clubId]?.abbreviation ?? p.clubId) : ''}
@@ -334,12 +352,20 @@ export function LadderPage() {
                           <TableRow key={entry.playerId}>
                             <TableCell className="text-muted-foreground">{i + 1}</TableCell>
                             <TableCell>
-                              <Link
-                                to={`/player/${entry.playerId}`}
-                                className="font-medium hover:underline"
-                              >
-                                {p ? `${p.firstName} ${p.lastName}` : entry.playerId}
-                              </Link>
+                              <div>
+                                <Link
+                                  to={`/player/${entry.playerId}`}
+                                  className="font-medium hover:underline"
+                                >
+                                  {p ? `${p.firstName} ${p.lastName}` : entry.playerId}
+                                </Link>
+                                {p && (
+                                  <PlayerStarRating
+                                    stars={getPlayerStarRating(p)}
+                                    className="scale-[0.75] origin-left"
+                                  />
+                                )}
+                              </div>
                             </TableCell>
                             <TableCell className="text-muted-foreground">
                               {p ? (clubs[p.clubId]?.abbreviation ?? p.clubId) : ''}
@@ -380,10 +406,18 @@ export function LadderPage() {
                     <p className="text-xs text-muted-foreground">No data yet.</p>
                   ) : (
                     rows.map((r, idx) => (
-                      <div key={`${label}-${r.playerId}`} className="flex items-center justify-between text-xs">
-                        <Link to={`/player/${r.playerId}`} className="truncate hover:underline">
-                          {idx + 1}. {r.name}
-                        </Link>
+                      <div key={`${label}-${r.playerId}`} className="flex items-center justify-between gap-2 text-xs">
+                        <div className="min-w-0">
+                          <Link to={`/player/${r.playerId}`} className="truncate hover:underline">
+                            {idx + 1}. {r.name}
+                          </Link>
+                          {players[r.playerId] && (
+                            <PlayerStarRating
+                              stars={getPlayerStarRating(players[r.playerId])}
+                              className="scale-[0.75] origin-left"
+                            />
+                          )}
+                        </div>
                         <span className="font-mono font-semibold">{r.value}</span>
                       </div>
                     ))
@@ -408,12 +442,15 @@ export function LadderPage() {
                     {(() => {
                       const p = players[currentAwards.risingStar!.playerId]
                       return p ? (
-                        <Link
-                          to={`/player/${p.id}`}
-                          className="font-medium hover:underline"
-                        >
-                          {p.firstName} {p.lastName} ({clubs[p.clubId]?.abbreviation})
-                        </Link>
+                        <div>
+                          <Link
+                            to={`/player/${p.id}`}
+                            className="font-medium hover:underline"
+                          >
+                            {p.firstName} {p.lastName} ({clubs[p.clubId]?.abbreviation})
+                          </Link>
+                          <PlayerStarRating stars={getPlayerStarRating(p)} className="scale-[0.75] origin-left" />
+                        </div>
                       ) : (
                         <span className="text-muted-foreground">Unknown</span>
                       )

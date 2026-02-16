@@ -6,33 +6,20 @@ import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Wand2, RotateCcw, Save, Eye, EyeOff } from 'lucide-react'
 import type { Player } from '@/types/player'
-import { POSITION_LINE, getLineupSlots } from '@/engine/core/constants'
+import { getLineupSlots } from '@/engine/core/constants'
 import { selectBestLineup } from '@/engine/ai/lineupSelection'
 import { FootballField } from '@/components/lineup/FootballField'
 import { isPlayerSuspended } from '@/engine/players/availability'
+import { getOverallRating, getPlayerStarRating } from '@/engine/player/playerRating'
+import {
+  getPlayerEligiblePositionTypes,
+  isPlayerEligibleForPositionLine,
+} from '@/engine/player/positionEligibility'
+import { PlayerStarRating } from '@/components/player/PlayerStarRating'
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function getPlayerOverall(p: Player): number {
-  const a = p.attributes
-  return Math.round(
-    (a.kickingEfficiency +
-      a.handballEfficiency +
-      a.markingOverhead +
-      a.speed +
-      a.endurance +
-      a.strength +
-      a.tackling +
-      a.disposalDecision +
-      a.positioning +
-      a.contested +
-      a.workRate +
-      a.pressure) /
-      12,
-  )
-}
 
 type PositionFilter = 'ALL' | 'DEF' | 'MID' | 'FWD' | 'RK'
 
@@ -49,9 +36,7 @@ function matchesFilter(
   filter: PositionFilter,
 ): boolean {
   if (filter === 'ALL') return true
-  const line = POSITION_LINE[player.position.primary]
-  if (line === filter) return true
-  return player.position.secondary.some((pos) => POSITION_LINE[pos] === filter)
+  return isPlayerEligibleForPositionLine(player, filter)
 }
 
 function sanitizeLineup(
@@ -115,7 +100,7 @@ export function LineupPage() {
     () =>
       Object.values(players)
         .filter((p) => p.clubId === playerClubId && !p.injury && !isPlayerSuspended(p) && p.fitness >= 50)
-        .sort((a, b) => getPlayerOverall(b) - getPlayerOverall(a)),
+        .sort((a, b) => getOverallRating(b) - getOverallRating(a)),
     [players, playerClubId],
   )
 
@@ -398,15 +383,20 @@ export function LineupPage() {
                         <span className="text-sm truncate block">
                           {p.firstName.charAt(0)}. {p.lastName}
                         </span>
+                        <PlayerStarRating
+                          stars={getPlayerStarRating(p)}
+                          className="scale-[0.8] origin-left"
+                        />
                       </div>
                       <Badge
                         variant="outline"
                         className="text-[10px] shrink-0"
+                        title={getPlayerEligiblePositionTypes(p).join(', ')}
                       >
                         {p.position.primary}
                       </Badge>
                       <span className="text-xs text-muted-foreground w-7 text-right">
-                        {getPlayerOverall(p)}
+                        {getOverallRating(p)}
                       </span>
                       <span className="text-xs text-muted-foreground w-7 text-right">
                         {p.fitness}%

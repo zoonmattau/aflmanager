@@ -27,6 +27,12 @@ import {
 } from '@/components/ui/dialog'
 import { getProspectOverall } from '@/engine/draft/prospects'
 import type { DraftPickTradeOffer } from '@/types/draft'
+import { ALL_POSITION_TYPES } from '@/engine/core/constants'
+import {
+  getProspectEligiblePositionTypes,
+  getPlayerEligiblePositionTypes,
+  isProspectEligibleForPositionType,
+} from '@/engine/player/positionEligibility'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -47,10 +53,6 @@ const TIER_LABELS: Record<DraftProspect['tier'], string> = {
   late: 'Late',
   'rookie-list': 'Rookie',
 }
-
-const ALL_POSITIONS: PlayerPositionType[] = [
-  'BP', 'FB', 'HBF', 'CHB', 'W', 'IM', 'OM', 'RK', 'HFF', 'CHF', 'FP', 'FF',
-]
 
 const ALL_REGIONS: ScoutingRegion[] = [
   'VIC', 'SA', 'WA', 'NSW/ACT', 'QLD', 'TAS', 'NT',
@@ -152,7 +154,11 @@ function deriveTeamNeeds(players: Record<string, import('@/types/player').Player
   const counts = {} as Record<PlayerPositionType, number>
   for (const p of Object.values(players)) {
     if (p.clubId !== clubId) continue
-    counts[p.position.primary] = (counts[p.position.primary] ?? 0) + 1
+    const eligiblePositions = getPlayerEligiblePositionTypes(p)
+    for (const pos of eligiblePositions) {
+      const weight = pos === p.position.primary ? 1 : 0.5
+      counts[pos] = (counts[pos] ?? 0) + weight
+    }
   }
   const needs = (Object.keys(IDEAL_POSITIONAL_COUNTS) as PlayerPositionType[])
     .map((pos) => ({ pos, deficit: (IDEAL_POSITIONAL_COUNTS[pos] ?? 0) - (counts[pos] ?? 0) }))
@@ -337,7 +343,12 @@ function ProspectSelectionDialog({
                     {prospect.firstName} {prospect.lastName}
                   </TableCell>
                   <TableCell>
-                    <Badge variant="outline">{prospect.position.primary}</Badge>
+                    <Badge
+                      variant="outline"
+                      title={getProspectEligiblePositionTypes(prospect).join(', ')}
+                    >
+                      {prospect.position.primary}
+                    </Badge>
                   </TableCell>
                   <TableCell className="text-center">{prospect.age}</TableCell>
                   <TableCell>{prospect.region}</TableCell>
@@ -696,7 +707,7 @@ function ProspectListTab({
 
     // Filters
     if (posFilter) {
-      list = list.filter((p) => p.position.primary === posFilter)
+      list = list.filter((p) => isProspectEligibleForPositionType(p, posFilter))
     }
     if (regionFilter) {
       list = list.filter((p) => p.region === regionFilter)
@@ -767,7 +778,7 @@ function ProspectListTab({
           className="h-9 rounded-md border border-input bg-background px-3 text-sm"
         >
           <option value="">All Positions</option>
-          {ALL_POSITIONS.map((pos) => (
+          {ALL_POSITION_TYPES.map((pos) => (
             <option key={pos} value={pos}>
               {pos}
             </option>
@@ -907,7 +918,10 @@ function ProspectListTab({
                         {prospect.firstName} {prospect.lastName}
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline">
+                        <Badge
+                          variant="outline"
+                          title={getProspectEligiblePositionTypes(prospect).join(', ')}
+                        >
                           {prospect.position.primary}
                         </Badge>
                       </TableCell>
