@@ -21,11 +21,14 @@ import { ArrowLeft, UserPlus } from 'lucide-react'
 const ROLE_DISPLAY_NAMES: Record<StaffRole, string> = {
   'head-coach': 'Head Coach',
   'assistant-coach': 'Assistant Coach',
+  'recruiting-manager': 'Recruiting Manager',
   'forwards-coach': 'Forwards Coach',
   'midfield-coach': 'Midfield Coach',
   'ruck-coach': 'Ruck Coach',
   'defensive-coach': 'Defensive Coach',
   'strength-conditioning': 'S&C Coach',
+  physio: 'Physio',
+  doctor: 'Doctor',
   'reserves-coach': 'Reserves Coach',
 }
 
@@ -59,11 +62,14 @@ const PHILOSOPHY_COLORS: Record<StaffMember['philosophy'], string> = {
 const ALL_ROLES: StaffRole[] = [
   'head-coach',
   'assistant-coach',
+  'recruiting-manager',
   'forwards-coach',
   'midfield-coach',
   'ruck-coach',
   'defensive-coach',
   'strength-conditioning',
+  'physio',
+  'doctor',
   'reserves-coach',
 ]
 

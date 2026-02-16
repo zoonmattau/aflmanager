@@ -12,10 +12,22 @@ export interface CoachingImpact {
   matchBonus: number
   fitnessBonus: number
   moraleBonus: number
+  tacticalAdjustment: number
+  scoutingAccuracy: number
+  draftSuccess: number
+  injuryPrevention: number
+  rehabSpeed: number
+  reInjuryReduction: number
   forwardsDev: number
   midfieldDev: number
   ruckDev: number
   defensiveDev: number
+}
+
+export interface MedicalStaffImpact {
+  injuryRiskMultiplier: number
+  rehabProgressMultiplier: number
+  recurrenceRiskMultiplier: number
 }
 
 // ---------------------------------------------------------------------------
@@ -25,11 +37,14 @@ export interface CoachingImpact {
 const ALL_ROLES: StaffRole[] = [
   'head-coach',
   'assistant-coach',
+  'recruiting-manager',
   'forwards-coach',
   'midfield-coach',
   'ruck-coach',
   'defensive-coach',
   'strength-conditioning',
+  'physio',
+  'doctor',
   'reserves-coach',
 ]
 
@@ -44,11 +59,14 @@ const PHILOSOPHIES: StaffMember['philosophy'][] = [
 const REQUIRED_ROLES: { role: StaffRole; count: number }[] = [
   { role: 'head-coach', count: 1 },
   { role: 'assistant-coach', count: 3 },
+  { role: 'recruiting-manager', count: 1 },
   { role: 'forwards-coach', count: 1 },
   { role: 'midfield-coach', count: 1 },
   { role: 'ruck-coach', count: 1 },
   { role: 'defensive-coach', count: 1 },
   { role: 'strength-conditioning', count: 1 },
+  { role: 'physio', count: 1 },
+  { role: 'doctor', count: 1 },
   { role: 'reserves-coach', count: 1 },
 ]
 
@@ -145,6 +163,19 @@ function getRoleParams(role: StaffRole): {
     case 'assistant-coach':
       return { ratingMin: 40, ratingMax: 80, salaryMin: 120_000, salaryMax: 400_000 }
 
+    case 'recruiting-manager':
+      return {
+        ratingMin: 42,
+        ratingMax: 86,
+        salaryMin: 130_000,
+        salaryMax: 420_000,
+        specialtyOverrides: {
+          recruitment: { min: 68, max: 95 },
+          tactical: { min: 45, max: 82 },
+          development: { min: 45, max: 82 },
+        },
+      }
+
     case 'forwards-coach':
       return {
         ratingMin: 40,
@@ -188,6 +219,30 @@ function getRoleParams(role: StaffRole): {
         salaryMin: 80_000,
         salaryMax: 250_000,
         specialtyOverrides: { fitness: { min: 60, max: 90 } },
+      }
+
+    case 'physio':
+      return {
+        ratingMin: 40,
+        ratingMax: 80,
+        salaryMin: 95_000,
+        salaryMax: 300_000,
+        specialtyOverrides: {
+          fitness: { min: 65, max: 92 },
+          development: { min: 50, max: 85 },
+        },
+      }
+
+    case 'doctor':
+      return {
+        ratingMin: 45,
+        ratingMax: 85,
+        salaryMin: 120_000,
+        salaryMax: 380_000,
+        specialtyOverrides: {
+          discipline: { min: 60, max: 92 },
+          gameDay: { min: 55, max: 88 },
+        },
       }
 
     case 'reserves-coach':
@@ -238,14 +293,17 @@ export function generateStaffPool(count: number, rng: SeededRNG): StaffMember[] 
 /**
  * Generate a full coaching staff for a club (called during game init).
  *
- * Always produces 10 staff members:
+ * Produces a full football department:
  * - 1 head coach
  * - 3 assistant coaches
+ * - 1 recruiting manager
  * - 1 forwards coach
  * - 1 midfield coach
  * - 1 ruck coach
  * - 1 defensive coach
  * - 1 strength & conditioning coach
+ * - 1 physio
+ * - 1 doctor
  * - 1 reserves coach
  *
  * All are assigned to the given `clubId` with 1-3 year contracts.
@@ -348,6 +406,12 @@ export function getCoachingImpact(
     matchBonus: 0,
     fitnessBonus: 0,
     moraleBonus: 0,
+    tacticalAdjustment: 0,
+    scoutingAccuracy: 0,
+    draftSuccess: 0,
+    injuryPrevention: 0,
+    rehabSpeed: 0,
+    reInjuryReduction: 0,
     forwardsDev: 0,
     midfieldDev: 0,
     ruckDev: 0,
@@ -370,12 +434,64 @@ export function getCoachingImpact(
   const headCoach = clubStaff.find((s) => s.role === 'head-coach')
   if (headCoach) {
     impact.matchBonus = (headCoach.ratings.gameDay + headCoach.ratings.tactical) / 2 / 200
+    impact.tacticalAdjustment = (headCoach.ratings.tactical * 0.65 + headCoach.ratings.gameDay * 0.35) / 100
   }
 
   // fitnessBonus: S&C coach's fitness / 200
   const scCoach = clubStaff.find((s) => s.role === 'strength-conditioning')
   if (scCoach) {
     impact.fitnessBonus = scCoach.ratings.fitness / 200
+  }
+
+  const physio = clubStaff.find((s) => s.role === 'physio')
+  const doctor = clubStaff.find((s) => s.role === 'doctor')
+  const recruitingManager = clubStaff.find((s) => s.role === 'recruiting-manager')
+  const assistants = clubStaff.filter((s) => s.role === 'assistant-coach')
+  const assistantTacticalAvg =
+    assistants.length > 0
+      ? assistants.reduce((sum, s) => sum + s.ratings.tactical, 0) / assistants.length
+      : 50
+  const assistantRecruitmentAvg =
+    assistants.length > 0
+      ? assistants.reduce((sum, s) => sum + s.ratings.recruitment, 0) / assistants.length
+      : 50
+  const headRecruitment = headCoach?.ratings.recruitment ?? 50
+  const recruitingLead = recruitingManager
+    ? (recruitingManager.ratings.recruitment * 0.7 + recruitingManager.ratings.development * 0.3)
+    : 50
+  const reservesCoach = clubStaff.find((s) => s.role === 'reserves-coach')
+  const reservesPipeline = reservesCoach
+    ? (reservesCoach.ratings.development * 0.6 + reservesCoach.ratings.tactical * 0.4)
+    : 50
+
+  if (physio || doctor) {
+    const physioSkill = physio ? (physio.ratings.fitness + physio.ratings.development) / 2 : 55
+    const doctorSkill = doctor ? (doctor.ratings.discipline + doctor.ratings.gameDay) / 2 : 55
+    impact.injuryPrevention = ((physioSkill * 0.6 + doctorSkill * 0.4) / 100) * 0.35
+    impact.rehabSpeed = ((physioSkill * 0.7 + doctorSkill * 0.3) / 100) * 0.4
+    impact.reInjuryReduction = ((doctorSkill * 0.65 + physioSkill * 0.35) / 100) * 0.35
+  }
+
+  const scoutingBlend =
+    recruitingLead * 0.52 +
+    assistantRecruitmentAvg * 0.18 +
+    headRecruitment * 0.2 +
+    assistantTacticalAvg * 0.1
+  impact.scoutingAccuracy = Math.max(0.6, Math.min(1.28, 0.62 + scoutingBlend / 160))
+
+  const draftSuccessBlend =
+    recruitingLead * 0.44 +
+    reservesPipeline * 0.22 +
+    headRecruitment * 0.18 +
+    assistantTacticalAvg * 0.16
+  impact.draftSuccess = Math.max(0.65, Math.min(1.3, 0.66 + draftSuccessBlend / 155))
+
+  if (!headCoach) {
+    impact.tacticalAdjustment = Math.max(0.35, assistantTacticalAvg / 100 * 0.8)
+  } else {
+    const tacticalBlend =
+      (headCoach.ratings.tactical * 0.6 + headCoach.ratings.gameDay * 0.2 + assistantTacticalAvg * 0.2) / 100
+    impact.tacticalAdjustment = Math.max(0.4, Math.min(1.2, tacticalBlend))
   }
 
   // Specialist development bonuses
@@ -400,6 +516,30 @@ export function getCoachingImpact(
   }
 
   return impact
+}
+
+export function getMedicalStaffImpact(
+  staff: StaffMember[],
+  clubId: string,
+): MedicalStaffImpact {
+  const clubStaff = staff.filter((s) => s.clubId === clubId)
+  const physio = clubStaff.find((s) => s.role === 'physio')
+  const doctor = clubStaff.find((s) => s.role === 'doctor')
+  const scCoach = clubStaff.find((s) => s.role === 'strength-conditioning')
+
+  const physioSkill = physio ? (physio.ratings.fitness + physio.ratings.development) / 2 : 55
+  const doctorSkill = doctor ? (doctor.ratings.discipline + doctor.ratings.gameDay) / 2 : 55
+  const conditioningSkill = scCoach ? scCoach.ratings.fitness : 55
+
+  const preventionScore = physioSkill * 0.45 + doctorSkill * 0.35 + conditioningSkill * 0.2
+  const rehabScore = physioSkill * 0.6 + doctorSkill * 0.25 + conditioningSkill * 0.15
+  const recurrenceScore = doctorSkill * 0.5 + physioSkill * 0.35 + conditioningSkill * 0.15
+
+  return {
+    injuryRiskMultiplier: Math.max(0.72, Math.min(1.05, 1 - (preventionScore - 50) / 260)),
+    rehabProgressMultiplier: Math.max(0.82, Math.min(1.25, 1 + (rehabScore - 50) / 220)),
+    recurrenceRiskMultiplier: Math.max(0.68, Math.min(1.08, 1 - (recurrenceScore - 50) / 240)),
+  }
 }
 
 // ---------------------------------------------------------------------------

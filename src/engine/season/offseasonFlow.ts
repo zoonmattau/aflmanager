@@ -6,9 +6,17 @@ import type { DraftProspect, DraftPick as DraftEnginePick } from '@/types/draft'
 import type { StaffMember } from '@/types/staff'
 import type { SeededRNG } from '@/engine/core/rng'
 import type { GameHistory } from '@/types/history'
+import type {
+  PlayerDevelopmentReport,
+  PlayerDevelopmentDelta,
+  ClubDevelopmentSummary,
+} from '@/types/history'
 import type { OffseasonCalendarState } from '@/engine/offseason/offseasonCalendar'
 import type { FreeAgencyMarketState } from '@/engine/contracts/freeAgencyMarket'
+import type { WeekSchedule } from '@/types/calendar'
+import type { TrainingFocus } from '@/engine/training/trainingEngine'
 import { recordDraftPick } from '@/engine/history/historyEngine'
+import { getCoachingImpact } from '@/engine/staff/staffEngine'
 
 import {
   processEndOfSeasonContracts,
@@ -115,6 +123,8 @@ const ALL_ATTRIBUTE_KEYS: (keyof PlayerAttributes)[] = [
 function emptyStats(): PlayerCareerStats {
   return {
     gamesPlayed: 0,
+    aflFantasyPoints: 0,
+    superCoachPoints: 0,
     goals: 0,
     behinds: 0,
     disposals: 0,
@@ -124,9 +134,12 @@ function emptyStats(): PlayerCareerStats {
     tackles: 0,
     hitouts: 0,
     contestedPossessions: 0,
+    uncontestedPossessions: 0,
     clearances: 0,
     insideFifties: 0,
     rebound50s: 0,
+    freesFor: 0,
+    freesAgainst: 0,
     contestedMarks: 0,
     scoreInvolvements: 0,
     metresGained: 0,
@@ -136,34 +149,6 @@ function emptyStats(): PlayerCareerStats {
     bounces: 0,
     clangers: 0,
     goalAssists: 0,
-  }
-}
-
-/** Merge season stats into career stats additively. */
-function mergeStats(career: PlayerCareerStats, season: PlayerCareerStats): PlayerCareerStats {
-  return {
-    gamesPlayed: career.gamesPlayed + season.gamesPlayed,
-    goals: career.goals + season.goals,
-    behinds: career.behinds + season.behinds,
-    disposals: career.disposals + season.disposals,
-    kicks: career.kicks + season.kicks,
-    handballs: career.handballs + season.handballs,
-    marks: career.marks + season.marks,
-    tackles: career.tackles + season.tackles,
-    hitouts: career.hitouts + season.hitouts,
-    contestedPossessions: career.contestedPossessions + season.contestedPossessions,
-    clearances: career.clearances + season.clearances,
-    insideFifties: career.insideFifties + season.insideFifties,
-    rebound50s: career.rebound50s + season.rebound50s,
-    contestedMarks: career.contestedMarks + season.contestedMarks,
-    scoreInvolvements: career.scoreInvolvements + season.scoreInvolvements,
-    metresGained: career.metresGained + season.metresGained,
-    turnovers: career.turnovers + season.turnovers,
-    intercepts: career.intercepts + season.intercepts,
-    onePercenters: career.onePercenters + season.onePercenters,
-    bounces: career.bounces + season.bounces,
-    clangers: career.clangers + season.clangers,
-    goalAssists: career.goalAssists + season.goalAssists,
   }
 }
 
@@ -239,6 +224,163 @@ function getPositionalCounts(
   return counts
 }
 
+function round1(value: number): number {
+  return Math.round(value * 10) / 10
+}
+
+function buildDevelopmentReport(
+  year: number,
+  dateStr: string,
+  snapshots: Array<{
+    playerId: string
+    clubId: string
+    playerName: string
+    age: number
+    position: string
+    draftPick: number | null
+    yearsInSystem: number
+    overallBefore: number
+    overallAfter: number
+    potentialCeiling: number
+  }>,
+): PlayerDevelopmentReport {
+  const deltas: PlayerDevelopmentDelta[] = snapshots.map((s) => ({
+    playerId: s.playerId,
+    clubId: s.clubId,
+    playerName: s.playerName,
+    age: s.age,
+    position: s.position,
+    draftPick: s.draftPick,
+    yearsInSystem: s.yearsInSystem,
+    overallBefore: round1(s.overallBefore),
+    overallAfter: round1(s.overallAfter),
+    delta: round1(s.overallAfter - s.overallBefore),
+    potentialCeiling: s.potentialCeiling,
+  }))
+
+  const risers = [...deltas]
+    .filter((d) => d.delta > 0)
+    .sort((a, b) => b.delta - a.delta)
+    .slice(0, 20)
+  const fallers = [...deltas]
+    .filter((d) => d.delta < 0)
+    .sort((a, b) => a.delta - b.delta)
+    .slice(0, 20)
+
+  const breakoutCandidates = [...deltas]
+    .filter((d) =>
+      d.age <= 24 &&
+      d.delta >= 1.5 &&
+      d.overallAfter >= 58 &&
+      d.potentialCeiling >= 72,
+    )
+    .sort((a, b) => b.delta - a.delta)
+    .slice(0, 15)
+
+  const busts = [...deltas]
+    .filter((d) =>
+      d.draftPick !== null &&
+      d.draftPick <= 20 &&
+      d.age <= 25 &&
+      d.overallAfter < 56 &&
+      d.delta <= -0.5,
+    )
+    .sort((a, b) => a.delta - b.delta)
+    .slice(0, 12)
+
+  const byClub = new Map<string, PlayerDevelopmentDelta[]>()
+  for (const d of deltas) {
+    const arr = byClub.get(d.clubId) ?? []
+    arr.push(d)
+    byClub.set(d.clubId, arr)
+  }
+  const clubSummaries: ClubDevelopmentSummary[] = Array.from(byClub.entries()).map(([clubId, arr]) => {
+    const avgDelta = arr.reduce((sum, d) => sum + d.delta, 0) / Math.max(1, arr.length)
+    const youth = arr.filter((d) => d.age <= 23)
+    const veteran = arr.filter((d) => d.age >= 29)
+    const youthAvgDelta = youth.length > 0
+      ? youth.reduce((sum, d) => sum + d.delta, 0) / youth.length
+      : 0
+    const veteranAvgDelta = veteran.length > 0
+      ? veteran.reduce((sum, d) => sum + d.delta, 0) / veteran.length
+      : 0
+    const sorted = [...arr].sort((a, b) => b.delta - a.delta)
+    const topRiser = sorted[0]
+    const topFaller = sorted[sorted.length - 1]
+    return {
+      clubId,
+      avgDelta: round1(avgDelta),
+      totalPlayers: arr.length,
+      risers: arr.filter((d) => d.delta > 0).length,
+      fallers: arr.filter((d) => d.delta < 0).length,
+      youthAvgDelta: round1(youthAvgDelta),
+      veteranAvgDelta: round1(veteranAvgDelta),
+      topRiserPlayerId: topRiser?.delta > 0 ? topRiser.playerId : null,
+      topFallerPlayerId: topFaller?.delta < 0 ? topFaller.playerId : null,
+    }
+  }).sort((a, b) => b.avgDelta - a.avgDelta)
+
+  return {
+    year: year + 1,
+    generatedAt: dateStr,
+    risers,
+    fallers,
+    breakoutCandidates,
+    busts,
+    clubSummaries,
+  }
+}
+
+function inferClubTrainingFocus(
+  club: Club,
+  weekSchedule?: WeekSchedule,
+): TrainingFocus {
+  const fromSchedule = weekSchedule
+    ? Object.values(weekSchedule)
+      .flatMap((d) => [d.morning, d.afternoon])
+      .filter((v): v is TrainingFocus => v !== null && v !== 'rest')
+    : []
+
+  if (fromSchedule.length > 0) {
+    const freq: Record<string, number> = {}
+    for (const f of fromSchedule) freq[f] = (freq[f] ?? 0) + 1
+    const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1])
+    const top = sorted[0]?.[0]
+    if (top) return top as TrainingFocus
+  }
+
+  if (club.gameplan.offensiveStyle === 'attacking') return 'offensive'
+  if (club.gameplan.offensiveStyle === 'defensive') return 'defensive'
+  if (club.gameplan.tempo === 'fast') return 'match-fitness'
+  return 'game-sense'
+}
+
+function computeClubCultureModifier(
+  players: Record<string, Player>,
+  clubId: string,
+): number {
+  const roster = Object.values(players).filter((p) => p.clubId === clubId)
+  if (roster.length === 0) return 1
+  const avgMorale = roster.reduce((s, p) => s + p.morale, 0) / roster.length
+  const avgProfessionalism = roster.reduce((s, p) => s + p.personality.professionalism, 0) / roster.length
+  const avgTeamPlayer = roster.reduce((s, p) => s + p.personality.teamPlayer, 0) / roster.length
+  const score = (avgMorale * 0.35 + avgProfessionalism * 0.4 + avgTeamPlayer * 0.25) / 100
+  return Math.max(0.85, Math.min(1.2, 0.82 + score * 0.4))
+}
+
+function computeFacilityDevelopmentModifier(club: Club): number {
+  const f = club.facilities
+  const weighted = (
+    f.trainingGround * 0.24 +
+    f.gym * 0.24 +
+    f.analysisSuite * 0.16 +
+    f.recoveryPool * 0.12 +
+    f.medicalCentre * 0.08 +
+    f.youthAcademy * 0.16
+  ) / 5
+  return Math.max(0.82, Math.min(1.22, 0.78 + weighted * 0.28))
+}
+
 // ---------------------------------------------------------------------------
 // 1. initOffseason
 // ---------------------------------------------------------------------------
@@ -305,6 +447,10 @@ export function canAdvancePhase(
  */
 export function processSeasonEnd(
   players: Record<string, Player>,
+  clubs: Record<string, Club>,
+  staff: Record<string, StaffMember>,
+  playerClubId: string,
+  weekSchedule: WeekSchedule,
   currentYear: number,
   rng: SeededRNG,
   developmentSpeedMultiplier?: number,
@@ -312,11 +458,58 @@ export function processSeasonEnd(
   updatedPlayers: Record<string, Player>
   retiredIds: string[]
   news: NewsItem[]
+  developmentReport: PlayerDevelopmentReport
 } {
   const updatedPlayers: Record<string, Player> = {}
   const retiredIds: string[] = []
   const news: NewsItem[] = []
   const dateStr = offseasonDate(currentYear, 10, 1)
+  const developmentSnapshots: Array<{
+    playerId: string
+    clubId: string
+    playerName: string
+    age: number
+    position: string
+    draftPick: number | null
+    yearsInSystem: number
+    overallBefore: number
+    overallAfter: number
+    potentialCeiling: number
+  }> = []
+  const staffList = Object.values(staff)
+
+  const clubContexts = new Map<string, {
+    coachingModifier: number
+    facilitiesModifier: number
+    cultureModifier: number
+    trainingFocus: TrainingFocus
+  }>()
+
+  for (const club of Object.values(clubs)) {
+    const coaching = getCoachingImpact(staffList, club.id)
+    const coachingModifier = Math.max(
+      0.78,
+      Math.min(
+        1.28,
+        0.82 +
+          coaching.developmentBonus * 0.26 +
+          coaching.moraleBonus * 0.12 +
+          coaching.fitnessBonus * 0.08,
+      ),
+    )
+    const facilitiesModifier = computeFacilityDevelopmentModifier(club)
+    const cultureModifier = computeClubCultureModifier(players, club.id)
+    const trainingFocus = inferClubTrainingFocus(
+      club,
+      club.id === playerClubId ? weekSchedule : undefined,
+    )
+    clubContexts.set(club.id, {
+      coachingModifier,
+      facilitiesModifier,
+      cultureModifier,
+      trainingFocus,
+    })
+  }
 
   for (const [id, original] of Object.entries(players)) {
     // Clone the player so we don't mutate the input
@@ -333,6 +526,7 @@ export function processSeasonEnd(
       },
       careerStats: { ...original.careerStats },
       seasonStats: { ...original.seasonStats },
+      injuryHistory: [...(original.injuryHistory ?? [])],
       injury: original.injury ? { ...original.injury } : null,
     }
 
@@ -342,17 +536,37 @@ export function processSeasonEnd(
       continue
     }
 
-    // Merge season stats into career stats
-    player.careerStats = mergeStats(player.careerStats, player.seasonStats)
-
-    // Reset season stats
+    // Career stats are persisted live from match processing; only reset season totals here.
     player.seasonStats = emptyStats()
 
     // Age player by 1 year
     agePlayer(player)
+    const overallBefore = getOverall(player)
 
-    // Run development (growth / peak fluctuation / decline)
-    developPlayer(player, rng, developmentSpeedMultiplier)
+    // Run contextual offseason development model
+    const clubContext = clubContexts.get(player.clubId)
+    developPlayer(player, rng, {
+      speedMultiplier: developmentSpeedMultiplier ?? 1,
+      coachingModifier: clubContext?.coachingModifier ?? 1,
+      facilitiesModifier: clubContext?.facilitiesModifier ?? 1,
+      cultureModifier: clubContext?.cultureModifier ?? 1,
+      trainingFocus: clubContext?.trainingFocus ?? 'game-sense',
+      randomness: rng.nextFloat(0.88, 1.12),
+    })
+    const overallAfter = getOverall(player)
+
+    developmentSnapshots.push({
+      playerId: player.id,
+      clubId: player.clubId,
+      playerName: `${player.firstName} ${player.lastName}`,
+      age: player.age,
+      position: player.position.primary,
+      draftPick: player.draftPick,
+      yearsInSystem: Math.max(0, currentYear - player.draftYear),
+      overallBefore,
+      overallAfter,
+      potentialCeiling: player.hiddenAttributes.potentialCeiling,
+    })
 
     // Check for retirement
     const overall = getOverall(player)
@@ -386,7 +600,12 @@ export function processSeasonEnd(
     updatedPlayers[id] = player
   }
 
-  return { updatedPlayers, retiredIds, news }
+  const developmentReport = buildDevelopmentReport(
+    currentYear,
+    dateStr,
+    developmentSnapshots,
+  )
+  return { updatedPlayers, retiredIds, news, developmentReport }
 }
 
 // ---------------------------------------------------------------------------
@@ -936,10 +1155,12 @@ export function processAIDraft(
 
   const draftedPlayerIds: string[] = []
   const newsItems: NewsItem[] = []
-  let currentHistory: GameHistory = history ?? { seasons: [], draftHistory: [] }
+  let currentHistory: GameHistory = history ?? { seasons: [], draftHistory: [], developmentReports: [] }
 
   // Track which prospects have been drafted
   const draftedProspectIds = new Set<string>()
+  const staffList: StaffMember[] = []
+  const clubDraftContext = new Map<string, { scoutingAccuracy: number; draftSuccess: number }>()
 
   for (const pick of draftOrder) {
     const club = clubs[pick.clubId]
@@ -956,12 +1177,24 @@ export function processAIDraft(
     if (available.length === 0) break
 
     // AI selects a prospect
+    const existingContext = clubDraftContext.get(club.id)
+    const draftContext = existingContext ?? (() => {
+      const impact = getCoachingImpact(staffList, club.id)
+      const computed = {
+        scoutingAccuracy: impact.scoutingAccuracy || 1,
+        draftSuccess: impact.draftSuccess || 1,
+      }
+      clubDraftContext.set(club.id, computed)
+      return computed
+    })()
+
     const selectedProspectId = aiSelectProspect(
       club,
       pick,
       available,
       updatedPlayers,
       rng,
+      draftContext,
     )
 
     draftedProspectIds.add(selectedProspectId)
@@ -1004,7 +1237,9 @@ export function processAIDraft(
           `${clubName} have selected ${fullName}, a ${prospect.age}-year-old ` +
           `${prospect.position.primary} from ${prospect.region}. ` +
           `The ${prospect.height}cm, ${prospect.weight}kg prospect came through ` +
-          `the ${prospect.pathway} pathway.`,
+          `${prospect.background.schoolName} (${prospect.background.schoolSystem}), ` +
+          `represented ${prospect.background.nationalU18Team} at the U18 Championships, ` +
+          `and developed via the ${prospect.pathway} pathway.`,
         'draft',
         [pick.clubId],
         [newPlayer.id],
@@ -1054,6 +1289,7 @@ export function processPreseason(
       },
       careerStats: { ...original.careerStats },
       seasonStats: { ...original.seasonStats },
+      injuryHistory: [...(original.injuryHistory ?? [])],
       injury: null, // Heal all injuries for preseason
     }
   }

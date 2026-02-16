@@ -1,11 +1,15 @@
-import type { DraftProspect, DraftPick, DraftState } from '@/types/draft'
-import type { Club } from '@/types/club'
+import type { DraftProspect, DraftPick, DraftState, DraftLinkedType } from '@/types/draft'
+import type { Club, DraftPick as ClubDraftPick } from '@/types/club'
 import type { Player, PlayerPositionType } from '@/types/player'
 import type { LadderEntry } from '@/types/season'
 import type { SeededRNG } from '@/engine/core/rng'
-import { getProspectOverall } from '@/engine/draft/prospects'
 import type { ExpansionPlan } from '@/types/expansion'
 import { MINIMUM_SALARY } from '@/engine/core/constants'
+import {
+  getRoleNeedBonus,
+  mapDraftProspectToPreferredRole,
+  roleNeedsByClub,
+} from '@/engine/player/roles'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -13,6 +17,7 @@ import { MINIMUM_SALARY } from '@/engine/core/constants'
 
 /** Number of rounds in the national draft. */
 const NATIONAL_DRAFT_ROUNDS = 3
+const DRAFT_LEDGER_ROUNDS: number[] = [1, 2, 3]
 
 /** Draft-value points table (pick number -> point value). Loosely modelled
  *  on the AFL draft value index used for Father-Son / Academy bidding. */
@@ -62,6 +67,21 @@ function getPickPoints(pickNumber: number): number {
   return DRAFT_POINTS[pickNumber] ?? Math.max(40, Math.round(3000 / (1 + 0.12 * (pickNumber - 1))))
 }
 
+export function getDraftPickPoints(pickNumber: number): number {
+  return getPickPoints(pickNumber)
+}
+
+function canLinkedClubMatchByType(
+  linkedType: DraftLinkedType | null,
+  options?: { ngaAcademyEnabled?: boolean; ngaAcademyZoneMatching?: boolean },
+): boolean {
+  if (!linkedType) return false
+  if (options?.ngaAcademyEnabled === false) return false
+  if (linkedType === 'father-son') return true
+  if (options?.ngaAcademyZoneMatching === false) return true
+  return linkedType === 'academy' || linkedType === 'nga'
+}
+
 /**
  * Get the position-group counts for a club's current roster.
  */
@@ -103,12 +123,151 @@ function identifyPositionalNeeds(
   return needs.map((n) => n.position)
 }
 
+function computeAgeProfile(players: Record<string, Player>, clubId: string): {
+  avgAge: number
+  under23Ratio: number
+  over29Ratio: number
+} {
+  const roster = Object.values(players).filter((p) => p.clubId === clubId)
+  if (roster.length === 0) {
+    return { avgAge: 24, under23Ratio: 0.25, over29Ratio: 0.2 }
+  }
+  const totalAge = roster.reduce((sum, p) => sum + p.age, 0)
+  const under23 = roster.filter((p) => p.age <= 22).length
+  const over29 = roster.filter((p) => p.age >= 29).length
+  return {
+    avgAge: totalAge / roster.length,
+    under23Ratio: under23 / roster.length,
+    over29Ratio: over29 / roster.length,
+  }
+}
+
+function estimateProspectValueForClub(
+  prospect: DraftProspect,
+  clubId: string,
+  options?: {
+    scoutingAccuracy?: number
+    draftSuccess?: number
+  },
+): { overall: number; potential: number; confidence: number } {
+  const scoutingAccuracy = Math.max(0.6, Math.min(1.35, options?.scoutingAccuracy ?? 1))
+  const draftSuccess = Math.max(0.6, Math.min(1.35, options?.draftSuccess ?? 1))
+  const report = prospect.scoutingReports[clubId]
+  if (report) {
+    const confidenceBoost = Math.max(0, (scoutingAccuracy - 1) * 0.22)
+    return {
+      overall: report.overallEstimate,
+      potential: report.potentialEstimate ?? report.overallEstimate + 8,
+      confidence: Math.max(0, Math.min(1, report.confidence + confidenceBoost)),
+    }
+  }
+
+  // Unknown prospect: infer from projection/tier with heavy uncertainty penalty.
+  const tierBase: Record<DraftProspect['tier'], number> = {
+    elite: 70,
+    'first-round': 61,
+    'second-round': 54,
+    late: 47,
+    'rookie-list': 42,
+  }
+  const projectionAdj = Math.max(0, (80 - prospect.projectedPick) * 0.12)
+  const overall = tierBase[prospect.tier] + projectionAdj + (draftSuccess - 1) * 1.8
+  const potential = overall + (prospect.tier === 'elite' ? 16 : prospect.tier === 'first-round' ? 13 : 10)
+  const inferredConfidence = Math.max(0.08, Math.min(0.45, 0.12 + (scoutingAccuracy - 1) * 0.2))
+  return { overall, potential, confidence: inferredConfidence }
+}
+
+function identityArchetypeBonus(club: Club, prospect: DraftProspect): number {
+  const style = club.gameplan.offensiveStyle
+  if (style === 'attacking') {
+    if (prospect.role === 'line-breaker' || prospect.role === 'aerial-threat') return 4
+    if (prospect.archetype === 'outside-runner' || prospect.archetype === 'lead-up-forward') return 3
+  }
+  if (style === 'defensive') {
+    if (prospect.role === 'shutdown' || prospect.role === 'ground-pressure') return 4
+    if (prospect.archetype === 'lockdown-defender' || prospect.archetype === 'intercept-defender') return 3
+  }
+  if (style === 'balanced' && prospect.role === 'utility') return 2
+  return 0
+}
+
+function getDraftPickLedgerOwner(
+  clubs: Record<string, Club>,
+  year: number,
+  round: number,
+  originalClubId: string,
+): string {
+  for (const club of Object.values(clubs)) {
+    const found = club.draftPicks.find(
+      (p) => p.year === year && p.round === round && p.originalClubId === originalClubId,
+    )
+    if (found) return found.currentClubId || club.id
+  }
+  return originalClubId
+}
+
+export function ensureDraftPickLedger(
+  clubs: Record<string, Club>,
+  currentYear: number,
+  yearsAhead = 2,
+): Record<string, Club> {
+  const updated: Record<string, Club> = {}
+  for (const [clubId, club] of Object.entries(clubs)) {
+    updated[clubId] = {
+      ...club,
+      draftPicks: (club.draftPicks ?? []).map((p) => ({ ...p })),
+    }
+  }
+
+  const clubIds = Object.keys(updated)
+  for (let year = currentYear; year <= currentYear + yearsAhead; year++) {
+    for (const originalClubId of clubIds) {
+      for (const round of DRAFT_LEDGER_ROUNDS) {
+        const exists = Object.values(updated).some((club) =>
+          club.draftPicks.some(
+            (p) =>
+              p.year === year &&
+              p.round === round &&
+              p.originalClubId === originalClubId,
+          ),
+        )
+        if (!exists && updated[originalClubId]) {
+          updated[originalClubId].draftPicks.push({
+            year,
+            round,
+            originalClubId,
+            currentClubId: originalClubId,
+          })
+        }
+      }
+    }
+  }
+
+  return updated
+}
+
+export function pruneExpiredDraftPicks(
+  clubs: Record<string, Club>,
+  currentYear: number,
+): Record<string, Club> {
+  const updated: Record<string, Club> = {}
+  for (const [clubId, club] of Object.entries(clubs)) {
+    updated[clubId] = {
+      ...club,
+      draftPicks: (club.draftPicks ?? [])
+        .filter((p) => p.year >= currentYear)
+        .map((p) => ({ ...p })),
+    }
+  }
+  return updated
+}
+
 /**
  * Score a prospect for a club using the "best-available" strategy.
  * Simply returns the prospect's overall rating.
  */
-function scoreBestAvailable(prospect: DraftProspect): number {
-  return getProspectOverall(prospect)
+function scoreBestAvailable(overall: number): number {
+  return overall
 }
 
 /**
@@ -119,9 +278,8 @@ function scoreBestAvailable(prospect: DraftProspect): number {
 function scorePositionalNeed(
   prospect: DraftProspect,
   neededPositions: PlayerPositionType[],
+  overall: number,
 ): number {
-  const overall = getProspectOverall(prospect)
-
   // Check if the prospect fills a need
   const primaryNeedIndex = neededPositions.indexOf(prospect.position.primary)
   if (primaryNeedIndex !== -1) {
@@ -144,18 +302,6 @@ function scorePositionalNeed(
 }
 
 /**
- * Score a prospect for a club using the "high-upside" strategy.
- * Heavily weights the prospect's potential ceiling.
- */
-function scoreHighUpside(prospect: DraftProspect): number {
-  const overall = getProspectOverall(prospect)
-  const ceiling = prospect.hiddenAttributes.potentialCeiling
-
-  // Blend: 40% current overall, 60% ceiling
-  return overall * 0.4 + ceiling * 0.6
-}
-
-/**
  * Apply a competitive-window modifier to a prospect's score.
  *
  * - 'win-now' clubs prefer prospects with higher current ratings (ready-made)
@@ -164,23 +310,20 @@ function scoreHighUpside(prospect: DraftProspect): number {
  */
 function applyWindowModifier(
   score: number,
-  prospect: DraftProspect,
+  age: number,
+  overall: number,
+  potential: number,
   competitiveWindow: 'win-now' | 'balanced' | 'rebuilding',
 ): number {
-  const overall = getProspectOverall(prospect)
-  const ceiling = prospect.hiddenAttributes.potentialCeiling
-
   switch (competitiveWindow) {
     case 'win-now': {
-      // Prefer higher current rating; penalise raw/young prospects
       const readinessBonus = (overall - 40) * 0.15
-      const agePenalty = prospect.age < 18 ? -5 : 0
+      const agePenalty = age < 18 ? -5 : 0
       return score + readinessBonus + agePenalty
     }
     case 'rebuilding': {
-      // Prefer youth and ceiling
-      const ceilingBonus = (ceiling - 50) * 0.2
-      const youthBonus = prospect.age <= 18 ? 5 : 0
+      const ceilingBonus = (potential - 50) * 0.2
+      const youthBonus = age <= 18 ? 5 : 0
       return score + ceilingBonus + youthBonus
     }
     case 'balanced':
@@ -194,6 +337,8 @@ function applyWindowModifier(
 function emptyStats(): Player['careerStats'] {
   return {
     gamesPlayed: 0,
+    aflFantasyPoints: 0,
+    superCoachPoints: 0,
     goals: 0,
     behinds: 0,
     disposals: 0,
@@ -203,9 +348,12 @@ function emptyStats(): Player['careerStats'] {
     tackles: 0,
     hitouts: 0,
     contestedPossessions: 0,
+    uncontestedPossessions: 0,
     clearances: 0,
     insideFifties: 0,
     rebound50s: 0,
+    freesFor: 0,
+    freesAgainst: 0,
     contestedMarks: 0,
     scoreInvolvements: 0,
     metresGained: 0,
@@ -234,7 +382,7 @@ function emptyStats(): Player['careerStats'] {
  */
 export function generateDraftOrder(
   ladder: LadderEntry[],
-  _clubs: Record<string, Club>,
+  clubs: Record<string, Club>,
   expansionPlans?: ExpansionPlan[],
   currentYear?: number,
 ): DraftPick[] {
@@ -255,10 +403,11 @@ export function generateDraftOrder(
       const yearsInAFL = currentYear - plan.aflEntryYear
       if (yearsInAFL >= 0 && yearsInAFL < plan.priorityPickYears) {
         for (let p = 0; p < plan.priorityPicksPerYear; p++) {
+          const ownerId = getDraftPickLedgerOwner(clubs, currentYear, 1, plan.clubId)
           picks.push({
             pickNumber,
             round: 1,
-            clubId: plan.clubId,
+            clubId: ownerId,
             originalClubId: plan.clubId,
             selectedProspectId: null,
             isBid: false,
@@ -271,12 +420,15 @@ export function generateDraftOrder(
 
   for (let round = 1; round <= NATIONAL_DRAFT_ROUNDS; round++) {
     for (let i = 0; i < totalClubs; i++) {
-      const clubId = sorted[i].clubId
+      const originalClubId = sorted[i].clubId
+      const ownerClubId = currentYear
+        ? getDraftPickLedgerOwner(clubs, currentYear, round, originalClubId)
+        : originalClubId
       picks.push({
         pickNumber,
         round,
-        clubId,
-        originalClubId: clubId,
+        clubId: ownerClubId,
+        originalClubId,
         selectedProspectId: null,
         isBid: false,
       })
@@ -302,6 +454,8 @@ export function generateDraftOrder(
  */
 export function generateRookieDraftOrder(
   ladder: LadderEntry[],
+  clubs: Record<string, Club>,
+  currentYear?: number,
 ): DraftPick[] {
   const totalClubs = ladder.length
   const sorted = [...ladder].sort((a, b) => {
@@ -313,12 +467,15 @@ export function generateRookieDraftOrder(
   const startingPickNumber = NATIONAL_DRAFT_ROUNDS * totalClubs + 1
 
   for (let i = 0; i < totalClubs; i++) {
-    const clubId = sorted[i].clubId
+    const originalClubId = sorted[i].clubId
+    const ownerClubId = currentYear
+      ? getDraftPickLedgerOwner(clubs, currentYear, 4, originalClubId)
+      : originalClubId
     picks.push({
       pickNumber: startingPickNumber + i,
       round: 1,
-      clubId,
-      originalClubId: clubId,
+      clubId: ownerClubId,
+      originalClubId,
       selectedProspectId: null,
       isBid: false,
     })
@@ -359,7 +516,11 @@ export function aiSelectProspect(
   availableProspects: DraftProspect[],
   players: Record<string, Player>,
   rng: SeededRNG,
-  options?: { ngaAcademyEnabled?: boolean },
+  context?: {
+    scoutingAccuracy?: number
+    draftSuccess?: number
+  },
+  options?: { ngaAcademyEnabled?: boolean; ngaAcademyZoneMatching?: boolean },
 ): string {
   if (availableProspects.length === 0) {
     throw new Error(`No available prospects for club ${club.id} to select`)
@@ -370,7 +531,7 @@ export function aiSelectProspect(
   const ngaEnabled = options?.ngaAcademyEnabled !== false
   if (ngaEnabled) {
     const linkedProspect = availableProspects.find(
-      (p) => p.linkedClubId === club.id,
+      (p) => p.linkedClubId === club.id && canLinkedClubMatchByType(p.linkedType, options),
     )
     if (linkedProspect) {
       return linkedProspect.id
@@ -383,30 +544,78 @@ export function aiSelectProspect(
     draftPhilosophy === 'positional-need'
       ? identifyPositionalNeeds(players, club.id)
       : []
+  const roleNeeds = roleNeedsByClub(players, club.id)
+  const ageProfile = computeAgeProfile(players, club.id)
 
   let bestId = availableProspects[0].id
   let bestScore = -Infinity
 
   for (const prospect of availableProspects) {
+    const valuation = estimateProspectValueForClub(prospect, club.id, context)
+    const uncertaintyPenaltyByRisk: Record<Club['aiPersonality']['riskTolerance'], number> = {
+      aggressive: 0.25,
+      moderate: 0.45,
+      conservative: 0.7,
+    }
+    const scoutingPenalty = (1 - valuation.confidence) * 16 * uncertaintyPenaltyByRisk[club.aiPersonality.riskTolerance]
+
+    const strategyBase = (() => {
+      switch (draftPhilosophy) {
+        case 'best-available':
+          return scoreBestAvailable(valuation.overall)
+        case 'positional-need':
+          return scorePositionalNeed(prospect, neededPositions, valuation.overall)
+        case 'high-upside':
+          return valuation.overall * 0.35 + valuation.potential * 0.65
+      }
+    })()
+
     let score: number
 
-    switch (draftPhilosophy) {
-      case 'best-available':
-        score = scoreBestAvailable(prospect)
-        break
-      case 'positional-need':
-        score = scorePositionalNeed(prospect, neededPositions)
-        break
-      case 'high-upside':
-        score = scoreHighUpside(prospect)
-        break
+    score = strategyBase
+    score = applyWindowModifier(
+      score,
+      prospect.age,
+      valuation.overall,
+      valuation.potential,
+      competitiveWindow,
+    )
+
+    // Age-profile balancing:
+    // - if list is old, prioritize younger options
+    // - if list is very young and in win-now, prefer mature-ready age
+    if (ageProfile.over29Ratio > 0.28) {
+      score += prospect.age <= 18 ? 3.5 : prospect.age === 19 ? 2 : 0
+    }
+    if (competitiveWindow === 'win-now' && ageProfile.under23Ratio > 0.45) {
+      score += prospect.age === 19 ? 2.2 : 0
+      score -= prospect.age <= 17 ? 2.5 : 0
     }
 
-    // Apply competitive window modifier
-    score = applyWindowModifier(score, prospect, competitiveWindow)
+    // Club identity/style alignment (gameplan + archetype/role).
+    score += identityArchetypeBonus(club, prospect)
+    score += getRoleNeedBonus(mapDraftProspectToPreferredRole(prospect), roleNeeds)
+
+    // Scouting confidence weighting.
+    score -= scoutingPenalty
+
+    // Gentle identity bias by club market size:
+    // small clubs value two-way utility and character-read prospects.
+    if (club.tier === 'small' && (prospect.role === 'utility' || prospect.role === 'ground-pressure')) {
+      score += 1.8
+    }
+
+    // Conservative clubs avoid very uncertain prospects with extreme upside.
+    if (
+      club.aiPersonality.riskTolerance === 'conservative' &&
+      valuation.confidence < 0.35 &&
+      valuation.potential - valuation.overall >= 16
+    ) {
+      score -= 2.8
+    }
 
     // Add a small random element to avoid perfectly deterministic picks
-    score += rng.nextFloat(-2, 2)
+    score += rng.nextFloat(-1.5, 1.5)
 
     if (score > bestScore) {
       bestScore = score
@@ -471,6 +680,58 @@ export function processFatherSonBid(
   }
 }
 
+export function getMatchBidCost(
+  prospect: DraftProspect,
+  bidPickNumber: number,
+): number {
+  const referencePick = Math.max(1, Math.min(bidPickNumber, prospect.projectedPick))
+  return getPickPoints(referencePick)
+}
+
+export function getMatchingClubPickIndicesForBid(
+  picks: DraftPick[],
+  currentPickIndex: number,
+  matchingClubId: string,
+  bidCost: number,
+): { canMatch: boolean; consumedPickIndices: number[]; consumedPoints: number } {
+  const future = picks
+    .map((pick, idx) => ({ pick, idx }))
+    .filter(({ pick, idx }) =>
+      idx > currentPickIndex &&
+      pick.clubId === matchingClubId &&
+      pick.selectedProspectId === null,
+    )
+
+  let points = 0
+  const consumed: number[] = []
+  for (const candidate of future) {
+    consumed.push(candidate.idx)
+    points += getPickPoints(candidate.pick.pickNumber)
+    if (points >= bidCost) break
+  }
+
+  return {
+    canMatch: points >= bidCost,
+    consumedPickIndices: consumed,
+    consumedPoints: points,
+  }
+}
+
+export function applyBidPickSliding(
+  picks: DraftPick[],
+  consumedPickIndices: number[],
+): DraftPick[] {
+  if (consumedPickIndices.length === 0) return picks
+  const consumedSet = new Set(consumedPickIndices)
+  const consumed = picks.filter((_, idx) => consumedSet.has(idx))
+  const remaining = picks.filter((_, idx) => !consumedSet.has(idx))
+  const reordered = [...remaining, ...consumed]
+  return reordered.map((pick, idx) => ({
+    ...pick,
+    pickNumber: idx + 1,
+  }))
+}
+
 // ---------------------------------------------------------------------------
 // 5. convertProspectToPlayer
 // ---------------------------------------------------------------------------
@@ -496,6 +757,7 @@ export function convertProspectToPlayer(
   draftYear: number,
   draftPick: number,
 ): Player {
+  const preferredRole = mapDraftProspectToPreferredRole(prospect)
   return {
     id: prospect.id,
     firstName: prospect.firstName,
@@ -516,6 +778,8 @@ export function convertProspectToPlayer(
         ),
       },
     },
+    preferredRole,
+    archetype: prospect.archetype,
     attributes: { ...prospect.trueAttributes },
     hiddenAttributes: { ...prospect.hiddenAttributes },
     personality: { ...prospect.personality },
@@ -536,6 +800,7 @@ export function convertProspectToPlayer(
     draftPick,
     careerStats: emptyStats(),
     seasonStats: emptyStats(),
+    injuryHistory: [],
   }
 }
 
@@ -627,4 +892,65 @@ export function advanceDraftPick(
     nationalDraftComplete: isComplete,
     draftedProspectIds: [...draftState.draftedProspectIds, selectedProspectId],
   }
+}
+
+export function swapDraftPickOwners(
+  picks: DraftPick[],
+  outgoingPickIndex: number,
+  incomingPickIndex: number,
+): DraftPick[] {
+  if (
+    outgoingPickIndex < 0 ||
+    incomingPickIndex < 0 ||
+    outgoingPickIndex >= picks.length ||
+    incomingPickIndex >= picks.length
+  ) {
+    return picks
+  }
+
+  const outgoing = picks[outgoingPickIndex]
+  const incoming = picks[incomingPickIndex]
+  if (!outgoing || !incoming) return picks
+  if (outgoing.selectedProspectId || incoming.selectedProspectId) return picks
+
+  return picks.map((pick, idx) => {
+    if (idx === outgoingPickIndex) return { ...pick, clubId: incoming.clubId }
+    if (idx === incomingPickIndex) return { ...pick, clubId: outgoing.clubId }
+    return pick
+  })
+}
+
+export function transferFuturePickOwnership(
+  clubs: Record<string, Club>,
+  move: {
+    pick: ClubDraftPick
+    fromClubId: string
+    toClubId: string
+  },
+): Record<string, Club> {
+  const fromClub = clubs[move.fromClubId]
+  const toClub = clubs[move.toClubId]
+  if (!fromClub || !toClub) return clubs
+
+  const updated: Record<string, Club> = {}
+  for (const [clubId, club] of Object.entries(clubs)) {
+    updated[clubId] = {
+      ...club,
+      draftPicks: (club.draftPicks ?? []).map((p) => ({ ...p })),
+    }
+  }
+
+  const key = `${move.pick.year}-${move.pick.round}-${move.pick.originalClubId}`
+  const idx = updated[move.fromClubId].draftPicks.findIndex(
+    (p) => `${p.year}-${p.round}-${p.originalClubId}` === key,
+  )
+  if (idx < 0) return updated
+
+  const [picked] = updated[move.fromClubId].draftPicks.splice(idx, 1)
+  updated[move.toClubId].draftPicks.push({
+    ...picked,
+    currentClubId: move.toClubId,
+  })
+
+  return updated
 }

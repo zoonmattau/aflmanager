@@ -26,6 +26,9 @@ import {
   Dumbbell,
   Heart,
   TrendingUp,
+  Shield,
+  Search,
+  Target,
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -35,25 +38,31 @@ import {
 const ROLE_DISPLAY_NAMES: Record<StaffRole, string> = {
   'head-coach': 'Head Coach',
   'assistant-coach': 'Assistant Coach',
+  'recruiting-manager': 'Recruiting Manager',
   'forwards-coach': 'Forwards Coach',
   'midfield-coach': 'Midfield Coach',
   'ruck-coach': 'Ruck Coach',
   'defensive-coach': 'Defensive Coach',
   'strength-conditioning': 'S&C Coach',
+  physio: 'Physio',
+  doctor: 'Doctor',
   'reserves-coach': 'Reserves Coach',
 }
 
-/** All 10 coaching positions in display order (assistant-coach appears 3 times) */
+/** All coaching positions in display order (assistant-coach appears 3 times) */
 const ALL_POSITIONS: { role: StaffRole; slotIndex: number }[] = [
   { role: 'head-coach', slotIndex: 0 },
   { role: 'assistant-coach', slotIndex: 0 },
   { role: 'assistant-coach', slotIndex: 1 },
   { role: 'assistant-coach', slotIndex: 2 },
+  { role: 'recruiting-manager', slotIndex: 0 },
   { role: 'forwards-coach', slotIndex: 0 },
   { role: 'midfield-coach', slotIndex: 0 },
   { role: 'ruck-coach', slotIndex: 0 },
   { role: 'defensive-coach', slotIndex: 0 },
   { role: 'strength-conditioning', slotIndex: 0 },
+  { role: 'physio', slotIndex: 0 },
+  { role: 'doctor', slotIndex: 0 },
   { role: 'reserves-coach', slotIndex: 0 },
 ]
 
@@ -244,7 +253,7 @@ function StaffPositionCard({
 function CoachingImpactCard({ clubStaff }: { clubStaff: StaffMember[] }) {
   const bonuses = useMemo(() => {
     if (clubStaff.length === 0) {
-      return { development: 0, matchDay: 0, fitness: 0, morale: 0 }
+      return { development: 0, matchDay: 0, fitness: 0, morale: 0, prevention: 0, rehab: 0, recurrence: 0, tactical: 0, scouting: 0, draft: 0 }
     }
 
     // Development Bonus: average of all staff development ratings
@@ -264,20 +273,57 @@ function CoachingImpactCard({ clubStaff }: { clubStaff: StaffMember[] }) {
     // Morale Bonus: average man management rating across all staff
     const avgManManagement =
       clubStaff.reduce((sum, s) => sum + s.ratings.manManagement, 0) / clubStaff.length
+    const recruiting = clubStaff.find((s) => s.role === 'recruiting-manager')
+    const assistants = clubStaff.filter((s) => s.role === 'assistant-coach')
+    const assistantTacticalAvg = assistants.length > 0
+      ? assistants.reduce((sum, s) => sum + s.ratings.tactical, 0) / assistants.length
+      : 50
+    const tactical = headCoach
+      ? (headCoach.ratings.tactical * 0.6 + headCoach.ratings.gameDay * 0.2 + assistantTacticalAvg * 0.2)
+      : assistantTacticalAvg
+    const scouting = recruiting
+      ? recruiting.ratings.recruitment * 0.7 + recruiting.ratings.development * 0.3
+      : 50
+    const draft = scouting * 0.7 + avgDevelopment * 0.3
+
+    const physio = clubStaff.find((s) => s.role === 'physio')
+    const doctor = clubStaff.find((s) => s.role === 'doctor')
+    const prevention = physio || doctor
+      ? ((physio ? (physio.ratings.fitness + physio.ratings.development) / 2 : 55) * 0.6
+        + (doctor ? (doctor.ratings.discipline + doctor.ratings.gameDay) / 2 : 55) * 0.4)
+      : 0
+    const rehab = physio
+      ? (physio.ratings.fitness + physio.ratings.development) / 2
+      : 0
+    const recurrence = doctor
+      ? (doctor.ratings.discipline + doctor.ratings.gameDay) / 2
+      : 0
 
     return {
       development: Math.round(avgDevelopment),
       matchDay: Math.round(matchDay),
       fitness: Math.round(fitness),
       morale: Math.round(avgManManagement),
+      prevention: Math.round(prevention),
+      rehab: Math.round(rehab),
+      recurrence: Math.round(recurrence),
+      tactical: Math.round(tactical),
+      scouting: Math.round(scouting),
+      draft: Math.round(draft),
     }
   }, [clubStaff])
 
   const items = [
     { label: 'Development Bonus', value: bonuses.development, icon: TrendingUp },
     { label: 'Match Day Bonus', value: bonuses.matchDay, icon: Trophy },
+    { label: 'Tactical Adaptation', value: bonuses.tactical, icon: Target },
     { label: 'Fitness Bonus', value: bonuses.fitness, icon: Dumbbell },
+    { label: 'Scouting Accuracy', value: bonuses.scouting, icon: Search },
+    { label: 'Draft Success', value: bonuses.draft, icon: Star },
     { label: 'Morale Bonus', value: bonuses.morale, icon: Heart },
+    { label: 'Injury Prevention', value: bonuses.prevention, icon: Shield },
+    { label: 'Rehab Speed', value: bonuses.rehab, icon: TrendingUp },
+    { label: 'Re-Injury Control', value: bonuses.recurrence, icon: AlertTriangle },
   ]
 
   return (
@@ -369,11 +415,14 @@ export function StaffPage() {
     const roleStaffMap: Record<StaffRole, StaffMember[]> = {
       'head-coach': [],
       'assistant-coach': [],
+      'recruiting-manager': [],
       'forwards-coach': [],
       'midfield-coach': [],
       'ruck-coach': [],
       'defensive-coach': [],
       'strength-conditioning': [],
+      physio: [],
+      doctor: [],
       'reserves-coach': [],
     }
     for (const s of clubStaff) {
@@ -436,7 +485,7 @@ export function StaffPage() {
             </div>
             <p className="text-2xl font-bold">
               {staffCount}{' '}
-              <span className="text-sm font-normal text-muted-foreground">/ 10</span>
+              <span className="text-sm font-normal text-muted-foreground">/ {ALL_POSITIONS.length}</span>
             </p>
             <p className="text-xs text-muted-foreground">positions filled</p>
           </CardContent>

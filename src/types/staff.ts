@@ -1,11 +1,14 @@
 export type StaffRole =
   | 'head-coach'
   | 'assistant-coach'
+  | 'recruiting-manager'
   | 'forwards-coach'
   | 'midfield-coach'
   | 'ruck-coach'
   | 'defensive-coach'
   | 'strength-conditioning'
+  | 'physio'
+  | 'doctor'
   | 'reserves-coach'
 
 export interface StaffRatings {
