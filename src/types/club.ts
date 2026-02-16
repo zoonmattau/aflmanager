@@ -35,6 +35,28 @@ export interface RuckNomination {
   aroundTheGround: boolean
 }
 
+export interface ClubLeadership {
+  captainId: string | null
+  viceCaptainId: string | null
+  leadershipGroupIds: string[]  // 4-6 additional leaders
+}
+
+export interface ClubCulture {
+  score: number              // 0-100
+  momentum: number           // -20 to +20
+  stability: number          // 0-100
+  leadershipFactor: number   // 0-100
+  ageBalance: number         // 0-100
+  lastUpdatedRound: number
+}
+
+export type TacticalIdentity =
+  | 'fast-movement'
+  | 'contested'
+  | 'defensive'
+  | 'stoppage-focused'
+  | 'corridor-heavy'
+
 export interface ClubGameplan {
   offensiveStyle: 'attacking' | 'balanced' | 'defensive'
   tempo: 'fast' | 'medium' | 'slow'
@@ -64,7 +86,11 @@ export interface Club {
   finances: ClubFinances
   draftPicks: DraftPick[]
   gameplan: ClubGameplan
+  tacticalIdentity: TacticalIdentity
+  leadership: ClubLeadership
+  culture?: ClubCulture
   fanSatisfaction?: number
+  lastSeasonLadderPosition?: number  // 1-18, undefined for first season
   /** AI personality for non-player clubs */
   aiPersonality: {
     competitiveWindow: 'win-now' | 'balanced' | 'rebuilding'

@@ -35,6 +35,7 @@ import {
 } from '@/engine/players/tribunal'
 import { isPlayerSuspended } from '@/engine/players/availability'
 import { applyRoleDisputeMorale, updateMoralePostMatch } from '@/engine/players/morale'
+import { applyBetweenRoundMorale, generateMoraleWarnings } from '@/engine/players/happiness'
 import { selectBestLineup } from '@/engine/ai/lineupSelection'
 import { SLOT_POSITION_COMPATIBILITY } from '@/engine/core/constants'
 import { SeededRNG } from '@/engine/core/rng'
@@ -43,6 +44,9 @@ import { awardBrownlowVotes, computeSeasonAwards } from '@/engine/awards/awardsE
 import { buildSeasonCalendar, computeDefaultGameStartDate, getYear } from '@/engine/calendar/calendarEngine'
 import { initializeStateLeagues, simStateLeagueRound } from '@/engine/stateLeague/stateLeagueEngine'
 import { createDefaultSettings, DEFAULT_REALISM } from '@/engine/core/defaultSettings'
+import { autoSelectLeadership, getTeamLeadershipRating, getLeadershipMoraleBonus } from '@/engine/leadership/leadershipEngine'
+import { updateClubCulture, getCultureMoraleBuffer, createDefaultCulture } from '@/engine/culture/cultureEngine'
+import type { ClubLeadership } from '@/types/club'
 import { getDevelopmentSpeedMultiplier } from '@/engine/core/difficultyPresets'
 import {
   getClubState,
@@ -114,6 +118,7 @@ import {
   completeNegotiation,
 } from '@/engine/contracts/negotiationEngine'
 import { processAIReSignings } from '@/engine/contracts/aiNegotiations'
+import { evaluateAndUpdateAIStrategies } from '@/engine/clubs/strategyEvaluation'
 import {
   buildFreeAgentMarket,
   generateAIBids,
@@ -504,6 +509,7 @@ interface GameActions {
   advanceRound: () => void
   updatePlayer: (playerId: string, updates: Partial<Player>) => void
   updateClub: (clubId: string, updates: Partial<Club>) => void
+  setClubLeadership: (clubId: string, leadership: ClubLeadership) => void
   addMatchResult: (match: Match) => void
   updateLadder: (ladder: LadderEntry[]) => void
   setSelectedLineup: (lineup: Record<string, string> | null) => void
@@ -621,6 +627,13 @@ export const useGameStore = create<GameStore>()(
             draftPicks: (c.draftPicks ?? []).map((p) => ({ ...p })),
           }
         }
+        // Initialize default (empty) leadership for all clubs
+        for (const club of Object.values(clubsRecord)) {
+          if (!club.leadership) {
+            (club as Club).leadership = { captainId: null, viceCaptainId: null, leadershipGroupIds: [] }
+          }
+        }
+
         const clubsWithPicks = ensureDraftPickLedger(clubsRecord, 2026, 2)
 
         // Generate players for all clubs
@@ -630,6 +643,16 @@ export const useGameStore = create<GameStore>()(
           for (const p of clubPlayers) {
             playersRecord[p.id] = p
           }
+        }
+
+        // Auto-select leadership for all clubs based on generated players
+        for (const club of Object.values(clubsWithPicks)) {
+          club.leadership = autoSelectLeadership(playersRecord, club.id)
+        }
+
+        // Initialize culture for all clubs
+        for (const club of Object.values(clubsWithPicks)) {
+          club.culture = createDefaultCulture()
         }
 
         // Generate staff for all clubs + a free agent pool
@@ -801,6 +824,15 @@ export const useGameStore = create<GameStore>()(
           const existing = state.clubs[clubId]
           if (existing) {
             Object.assign(existing, updates)
+          }
+        })
+      },
+
+      setClubLeadership: (clubId: string, leadership: ClubLeadership) => {
+        set((state) => {
+          const club = state.clubs[clubId]
+          if (club) {
+            club.leadership = leadership
           }
         })
       },
@@ -1385,6 +1417,7 @@ export const useGameStore = create<GameStore>()(
               bidResolution.awardedClubId,
               s.currentYear,
               activePick.pickNumber,
+              rng,
             )
             s.players[newPlayer.id] = newPlayer
             s.history.draftHistory.push({
@@ -1437,6 +1470,7 @@ export const useGameStore = create<GameStore>()(
         const prospect = state.draft.prospects.find((p) => p.id === prospectId)
         if (!prospect) return { success: false, error: 'Prospect not found' }
 
+        const rng = new SeededRNG(state.rngSeed + Date.now())
         set((s) => {
           if (!s.draft) return
           const currentIdx = s.draft.currentPickIndex
@@ -1462,6 +1496,7 @@ export const useGameStore = create<GameStore>()(
             bidResolution.awardedClubId,
             s.currentYear,
             activePick.pickNumber,
+            rng,
           )
           s.players[newPlayer.id] = newPlayer
           s.history.draftHistory.push({
@@ -1614,10 +1649,20 @@ export const useGameStore = create<GameStore>()(
         // 2. Process retirements (set clubId to 'retired')
         const postRetirePlayers = processRetirements(updatedPlayers, retiredIds)
 
-        // 3. AI delistings
+        // 3. Evaluate and update AI club strategies (before delistings so updated competitiveWindow propagates)
+        const { updatedClubs: strategyUpdatedClubs, news: strategyNews } = evaluateAndUpdateAIStrategies(
+          state.clubs,
+          postRetirePlayers,
+          state.ladder,
+          rng,
+          state.playerClubId,
+          state.currentYear,
+        )
+
+        // 4. AI delistings (uses updated strategies from step 3)
         const { delistedIds: aiDelistedIds, news: delistNews } = processAIDelistings(
           postRetirePlayers,
-          state.clubs,
+          strategyUpdatedClubs,
           rng,
           state.playerClubId,
           state.settings,
@@ -1637,8 +1682,12 @@ export const useGameStore = create<GameStore>()(
           for (const [id, p] of Object.entries(postRetirePlayers)) {
             s.players[id] = p
           }
+          // Write strategy-updated clubs
+          for (const [id, c] of Object.entries(strategyUpdatedClubs)) {
+            s.clubs[id] = c
+          }
           // Append news
-          for (const n of [...retirementNews, ...delistNews]) {
+          for (const n of [...retirementNews, ...strategyNews, ...delistNews]) {
             s.newsLog.push(n)
           }
           s.history.developmentReports.push(developmentReport)
@@ -2136,6 +2185,7 @@ export const useGameStore = create<GameStore>()(
             nextDate,
             state.playerClubId,
             rng,
+            state.ladder,
           )
           nextPlayers = tradeReqs.updatedPlayers
           generatedNews = [...generatedNews, ...tradeReqs.news]
@@ -2376,10 +2426,12 @@ export const useGameStore = create<GameStore>()(
         const ladderPos = state.ladder.findIndex((e) => e.clubId === state.playerClubId) + 1
 
         const rng = new SeededRNG(state.rngSeed + state.currentRound * 7919 + playerId.length * 13)
+        const teamCount = Object.keys(state.clubs).length
         const result = startNegotiation(
           player, state.playerClubId, isReSigning, state.currentRound,
           state.currentDate, rng, ladderPos || 9,
           { playerLoyaltyEnabled: state.settings.realism.playerLoyalty },
+          teamCount,
         )
 
         if (!result.success || !result.negotiation) {
@@ -3140,6 +3192,29 @@ export const useGameStore = create<GameStore>()(
             })
           }
 
+          // Update club culture scores post-round
+          for (const clubId of Object.keys(s.clubs)) {
+            const club = s.clubs[clubId]
+            if (!club) continue
+            const clubMatches = s.matchResults
+              .filter(m => m.homeClubId === clubId || m.awayClubId === clubId)
+              .slice(-5)
+            const recentResults: ('W' | 'L' | 'D')[] = clubMatches.map(m => {
+              if (!m.result) return 'D' as const
+              const isHome = m.homeClubId === clubId
+              const won = isHome
+                ? m.result.homeTotalScore > m.result.awayTotalScore
+                : m.result.awayTotalScore > m.result.homeTotalScore
+              if (won) return 'W' as const
+              if (m.result.homeTotalScore === m.result.awayTotalScore) return 'D' as const
+              return 'L' as const
+            })
+            const tradeCount = s.tradeHistory.filter(
+              t => t.clubA === clubId || t.clubB === clubId,
+            ).length
+            updateClubCulture(club, s.players, s.ladder, tradeCount, s.currentRound, s.currentYear, Object.keys(s.clubs).length, recentResults)
+          }
+
           // Update morale post-match for each club
           for (const m of result.matches) {
             if (!m.result) continue
@@ -3148,8 +3223,44 @@ export const useGameStore = create<GameStore>()(
             const homeWon = m.result.homeTotalScore > m.result.awayTotalScore
             const awayWon = m.result.awayTotalScore > m.result.homeTotalScore
             const draw = m.result.homeTotalScore === m.result.awayTotalScore
-            updateMoralePostMatch(s.players, homeSelected, m.homeClubId, homeWon, draw)
-            updateMoralePostMatch(s.players, awaySelected, m.awayClubId, awayWon, draw)
+
+            // Compute leadership morale bonus
+            const homeLeadershipRating = getTeamLeadershipRating(
+              [...homeSelected].map(id => s.players[id]).filter(Boolean),
+              s.clubs[m.homeClubId]?.leadership,
+            )
+            const homeMoraleBonus = getLeadershipMoraleBonus(homeLeadershipRating, homeWon)
+            const awayLeadershipRating = getTeamLeadershipRating(
+              [...awaySelected].map(id => s.players[id]).filter(Boolean),
+              s.clubs[m.awayClubId]?.leadership,
+            )
+            const awayMoraleBonus = getLeadershipMoraleBonus(awayLeadershipRating, awayWon)
+
+            const homeCultureBuf = getCultureMoraleBuffer(s.clubs[m.homeClubId]?.culture)
+            const awayCultureBuf = getCultureMoraleBuffer(s.clubs[m.awayClubId]?.culture)
+            updateMoralePostMatch(s.players, homeSelected, m.homeClubId, homeWon, draw, homeMoraleBonus, homeCultureBuf)
+            updateMoralePostMatch(s.players, awaySelected, m.awayClubId, awayWon, draw, awayMoraleBonus, awayCultureBuf)
+          }
+
+          // Between-round morale adjustments (team success, contract, underpayment, etc.)
+          const preMoraleSnapshot: Record<string, number> = {}
+          for (const p of Object.values(s.players)) {
+            if (p.clubId === s.playerClubId) {
+              preMoraleSnapshot[p.id] = p.morale
+            }
+          }
+          applyBetweenRoundMorale(s.players, s.clubs, s.ladder, s.currentRound, Object.keys(s.clubs).length)
+
+          // Generate morale warning news for user's team
+          const userClubName = s.clubs[s.playerClubId]?.name ?? s.playerClubId
+          for (const p of Object.values(s.players)) {
+            if (p.clubId !== s.playerClubId) continue
+            const prevMorale = preMoraleSnapshot[p.id]
+            if (prevMorale === undefined) continue
+            const warning = generateMoraleWarnings(p, prevMorale, userClubName, s.currentDate)
+            if (warning) {
+              s.newsLog.push(warning)
+            }
           }
 
           // Award Brownlow votes for each match
@@ -3534,8 +3645,23 @@ export const useGameStore = create<GameStore>()(
               const homeWon = m.result.homeTotalScore > m.result.awayTotalScore
               const awayWon = m.result.awayTotalScore > m.result.homeTotalScore
               const draw = m.result.homeTotalScore === m.result.awayTotalScore
-              updateMoralePostMatch(s.players, homeSelected, m.homeClubId, homeWon, draw)
-              updateMoralePostMatch(s.players, awaySelected, m.awayClubId, awayWon, draw)
+
+              // Compute leadership morale bonus
+              const homeLeadershipRating = getTeamLeadershipRating(
+                [...homeSelected].map(id => s.players[id]).filter(Boolean),
+                s.clubs[m.homeClubId]?.leadership,
+              )
+              const homeMoraleBonus = getLeadershipMoraleBonus(homeLeadershipRating, homeWon)
+              const awayLeadershipRating = getTeamLeadershipRating(
+                [...awaySelected].map(id => s.players[id]).filter(Boolean),
+                s.clubs[m.awayClubId]?.leadership,
+              )
+              const awayMoraleBonus = getLeadershipMoraleBonus(awayLeadershipRating, awayWon)
+
+              const homeCultureBuf = getCultureMoraleBuffer(s.clubs[m.homeClubId]?.culture)
+              const awayCultureBuf = getCultureMoraleBuffer(s.clubs[m.awayClubId]?.culture)
+              updateMoralePostMatch(s.players, homeSelected, m.homeClubId, homeWon, draw, homeMoraleBonus, homeCultureBuf)
+              updateMoralePostMatch(s.players, awaySelected, m.awayClubId, awayWon, draw, awayMoraleBonus, awayCultureBuf)
             }
           })
 
