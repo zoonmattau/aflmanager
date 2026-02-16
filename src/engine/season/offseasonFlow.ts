@@ -23,6 +23,7 @@ import { validateFixture } from '@/engine/season/fixtureValidator'
 import { calculatePreseasonTraining } from '@/engine/training/trainingEngine'
 import { developPlayer, agePlayer, shouldRetire } from '@/engine/players/development'
 import { calculatePlayerValue } from '@/engine/contracts/negotiation'
+import { getPlayerTradeValue } from '@/engine/trades/tradeValuation'
 import {
   MINIMUM_SALARY,
   DEFAULT_SALARY_CAP,
@@ -598,8 +599,8 @@ export function processAITradePeriod(
     if (!playerFromA || !playerFromB) continue
 
     // Ensure the trade makes some sense: both clubs should want what they receive
-    const valueA = calculatePlayerValue(playerFromA)
-    const valueB = calculatePlayerValue(playerFromB)
+    const valueA = getPlayerTradeValue(playerFromA)
+    const valueB = getPlayerTradeValue(playerFromB)
 
     // Only proceed if values are within 40% of each other
     const ratio = Math.min(valueA, valueB) / Math.max(valueA, valueB)

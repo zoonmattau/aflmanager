@@ -1,7 +1,6 @@
 import { useMemo, useState, useCallback } from 'react'
 import { useGameStore } from '@/stores/gameStore'
 import type { Player } from '@/types/player'
-import type { PlayerAttributes } from '@/types/player'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -46,6 +45,7 @@ import {
 import { gradeTradeRetrospective } from '@/engine/history/summaryEngine'
 import type { TradeGradeLetter } from '@/engine/history/summaryEngine'
 import { validateTradeCapImpact, validateListSize } from '@/engine/salary/salaryCapEngine'
+import { getPackageTradeValue } from '@/engine/trades/tradeValuation'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -55,27 +55,8 @@ function formatDollars(value: number): string {
   return '$' + value.toLocaleString('en-AU', { maximumFractionDigits: 0 })
 }
 
-function getAgeFactor(age: number): number {
-  if (age < 25) return 1.1
-  if (age <= 30) return 1.0
-  if (age <= 33) return 0.85
-  return 0.7
-}
-
-function getAttributeAverage(attributes: PlayerAttributes): number {
-  const values = Object.values(attributes) as number[]
-  if (values.length === 0) return 50
-  return values.reduce((sum, v) => sum + v, 0) / values.length
-}
-
-function calculatePlayerValue(player: Player): number {
-  const avg = getAttributeAverage(player.attributes)
-  const ageFactor = getAgeFactor(player.age)
-  return Math.round(avg * ageFactor * 12_000)
-}
-
-function calculatePackageValue(players: Player[]): number {
-  return players.reduce((sum, p) => sum + calculatePlayerValue(p), 0)
+function formatPoints(value: number): string {
+  return value.toLocaleString('en-AU', { maximumFractionDigits: 0 }) + ' pts'
 }
 
 function getTradeBalance(
@@ -327,7 +308,7 @@ function TradeValueBar({
         <div className="flex items-center justify-between text-sm">
           <div>
             <span className="text-muted-foreground">Your package: </span>
-            <span className="font-semibold">{formatDollars(yourValue)}</span>
+            <span className="font-semibold">{formatPoints(yourValue)}</span>
           </div>
           <div className={`flex items-center gap-1 font-medium ${balanceColor}`}>
             <BalanceIcon className="h-4 w-4" />
@@ -335,7 +316,7 @@ function TradeValueBar({
           </div>
           <div className="text-right">
             <span className="text-muted-foreground">Their package: </span>
-            <span className="font-semibold">{formatDollars(theirValue)}</span>
+            <span className="font-semibold">{formatPoints(theirValue)}</span>
           </div>
         </div>
 
@@ -609,13 +590,24 @@ function MakeTradeTab() {
     [partnerPlayers, receiveIds],
   )
 
+  const currentYear = new Date().getFullYear()
   const yourValue = useMemo(
-    () => calculatePackageValue(sendPlayers),
-    [sendPlayers],
+    () => getPackageTradeValue(
+      sendPlayers.map((p) => p.id),
+      [],
+      players,
+      currentYear,
+    ),
+    [sendPlayers, players, currentYear],
   )
   const theirValue = useMemo(
-    () => calculatePackageValue(receivePlayers),
-    [receivePlayers],
+    () => getPackageTradeValue(
+      receivePlayers.map((p) => p.id),
+      [],
+      players,
+      currentYear,
+    ),
+    [receivePlayers, players, currentYear],
   )
 
   const handlePartnerChange = useCallback((clubId: string) => {
@@ -799,7 +791,7 @@ function MakeTradeTab() {
 
       let message = `${theirAbbr} have rejected the trade.`
       if (deficit > 0) {
-        message += ` They felt the package was approximately ${formatDollars(deficit)} (${pctShort}%) short in value. Consider adding more to your offer.`
+        message += ` They felt the package was approximately ${formatPoints(deficit)} (${pctShort}%) short in value. Consider adding more to your offer.`
       } else {
         message += ` Despite a fair value, they decided to hold onto their players at this time.`
       }

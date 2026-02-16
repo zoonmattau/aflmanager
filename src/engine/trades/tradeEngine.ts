@@ -1,7 +1,7 @@
 import type { Player, PlayerPositionType } from '@/types/player'
 import type { Club, DraftPick } from '@/types/club'
 import type { SeededRNG } from '@/engine/core/rng'
-import { calculatePlayerValue } from '@/engine/contracts/negotiation'
+import { getPlayerTradeValue, getPickTradeValue, getPackageTradeValue } from '@/engine/trades/tradeValuation'
 
 // ---------------------------------------------------------------------------
 // Exported interfaces
@@ -49,45 +49,6 @@ const ALL_POSITIONS: PlayerPositionType[] = [
 ]
 
 /**
- * Calculates the trade value of a single draft pick in dollars.
- *
- * Round 1 picks are valued $500k-$800k, scaled by pick position so that
- * earlier picks (lower numbers) are worth more. Round 2 picks range
- * $200k-$400k. Round 3+ picks range $80k-$150k.
- *
- * Future-year picks are discounted to 80% of their current-year value.
- */
-function pickValue(pick: DraftPick, currentYear: number = new Date().getFullYear()): number {
-  const isFuture = pick.year > currentYear
-  const futureDiscount = isFuture ? 0.80 : 1.0
-
-  // pickNumber may not be set yet — default to mid-round position
-  const position = pick.pickNumber ?? (pick.round === 1 ? 10 : pick.round === 2 ? 28 : 46)
-
-  let value: number
-  if (pick.round === 1) {
-    // Round 1: 18 picks, pick 1 = $800k, pick 18 = $500k, linearly interpolated
-    const maxPicks = 18
-    const t = Math.min(1, Math.max(0, (position - 1) / (maxPicks - 1)))
-    value = 800_000 - t * 300_000
-  } else if (pick.round === 2) {
-    // Round 2: pick 19-36, $400k down to $200k
-    const maxPicks = 18
-    const roundPosition = pick.pickNumber != null ? position - 18 : 9
-    const t = Math.min(1, Math.max(0, (roundPosition - 1) / (maxPicks - 1)))
-    value = 400_000 - t * 200_000
-  } else {
-    // Round 3+: $150k down to $80k
-    const maxPicks = 18
-    const roundPosition = pick.pickNumber != null ? position - 36 : 9
-    const t = Math.min(1, Math.max(0, (roundPosition - 1) / (maxPicks - 1)))
-    value = 150_000 - t * 70_000
-  }
-
-  return value * futureDiscount
-}
-
-/**
  * Returns a set of position groups where a club is thin on talent.
  * A club "needs" a position if it has fewer than 3 players listed there
  * as their primary position.
@@ -129,44 +90,22 @@ function generateId(rng: SeededRNG): string {
   return id
 }
 
-/**
- * Returns the current year from the system clock. Used as the baseline for
- * determining whether a draft pick is a future pick.
- */
-function currentYear(): number {
-  return new Date().getFullYear()
-}
-
 // ---------------------------------------------------------------------------
 // 1. calculateTradeValue
 // ---------------------------------------------------------------------------
 
 /**
- * Calculates the total trade value of a package of players and draft picks.
- *
- * Player values are derived from `calculatePlayerValue` (salary-based market
- * valuation). Pick values use a tiered scale by round and position.
+ * Calculates the total trade value of a package of players and draft picks
+ * using the centralized trade points system.
  */
 export function calculateTradeValue(
   playerIds: string[],
   picks: DraftPick[],
   players: Record<string, Player>,
+  currentYear?: number,
 ): number {
-  let total = 0
-
-  for (const id of playerIds) {
-    const player = players[id]
-    if (player) {
-      total += calculatePlayerValue(player)
-    }
-  }
-
-  const year = currentYear()
-  for (const pick of picks) {
-    total += pickValue(pick, year)
-  }
-
-  return total
+  const year = currentYear ?? new Date().getFullYear()
+  return getPackageTradeValue(playerIds, picks, players, year)
 }
 
 // ---------------------------------------------------------------------------
@@ -229,14 +168,14 @@ export function validateTradeProposal(
 /**
  * AI evaluation of a trade proposal from the receiving club's perspective.
  *
- * The decision accounts for:
- * - Raw value difference between the two packages
- * - Positional needs — bonus value for players at positions the club lacks
- * - Competitive window — win-now clubs prefer proven veterans; rebuilding
- *   clubs prefer picks and young talent
- * - Trade activity personality — active clubs accept smaller surpluses;
- *   passive clubs require larger margins
- * - Contract burden — large/long contracts reduce a player's trade value
+ * Uses the centralized trade points system for valuation. Role fit and
+ * positional need bonuses are baked into getPlayerTradeValue via context.
+ *
+ * Additional modifiers:
+ * - Competitive window — simplified bonus for proven players or youth/picks
+ * - Contract burden — salary cap impact (separate from trade points)
+ * - Trade activity personality — active/passive acceptance thresholds
+ * - Risk tolerance jitter
  *
  * If the proposal is rejected but the gap is within 25%, a counter-proposal
  * is generated.
@@ -258,70 +197,47 @@ export function evaluateTradeProposal(
   }
 
   const personality = receivingClub.aiPersonality
-  const positionalNeeds = getPositionalNeeds(proposal.receivingClubId, players)
+  const year = new Date().getFullYear()
 
-  // --- Raw package values ---
-  const offeredValue = calculateTradeValue(
+  // --- Raw package values with role-fit context for the receiving club ---
+  const receivingContext = {
+    evaluatingClubId: proposal.receivingClubId,
+    players,
+    competitiveWindow: personality.competitiveWindow,
+  }
+  const offeredValue = getPackageTradeValue(
     proposal.playersOffered,
     proposal.picksOffered,
     players,
+    year,
+    receivingContext,
   )
-  const requestedValue = calculateTradeValue(
+  const requestedValue = getPackageTradeValue(
     proposal.playersRequested,
     proposal.picksRequested,
     players,
+    year,
   )
 
-  // --- Positional need bonus ---
-  // If the offered players fill a positional hole, they're worth more to
-  // the receiving club.
-  let positionalBonus = 0
-  for (const playerId of proposal.playersOffered) {
-    const player = players[playerId]
-    if (player && positionalNeeds.has(player.position.primary)) {
-      positionalBonus += calculatePlayerValue(player) * 0.15
-    }
-  }
-
   // --- Competitive window modifier ---
-  // Win-now clubs inflate the value of proven (older, higher-rated) players
-  // and discount picks/youth. Rebuilding clubs do the opposite.
   let windowModifier = 0
   if (personality.competitiveWindow === 'win-now') {
-    // Bonus for experienced offered players
+    // Win-now clubs add +10% to proven players (age >= 25, overall >= 55) in offered package
     for (const playerId of proposal.playersOffered) {
       const player = players[playerId]
       if (player && player.age >= 25 && !player.isRookie) {
-        windowModifier += calculatePlayerValue(player) * 0.10
+        windowModifier += getPlayerTradeValue(player) * 0.10
       }
-    }
-    // Penalty for giving up experienced players
-    for (const playerId of proposal.playersRequested) {
-      const player = players[playerId]
-      if (player && player.age >= 25 && !player.isRookie) {
-        windowModifier -= calculatePlayerValue(player) * 0.10
-      }
-    }
-    // Win-now clubs discount draft picks they'd be receiving
-    for (const pick of proposal.picksOffered) {
-      windowModifier -= pickValue(pick, currentYear()) * 0.15
     }
   } else if (personality.competitiveWindow === 'rebuilding') {
-    // Bonus for picks and young players being offered
+    // Rebuilding clubs add +15% to pick values and +10% to young players (age <= 23) in offered package
     for (const pick of proposal.picksOffered) {
-      windowModifier += pickValue(pick, currentYear()) * 0.15
+      windowModifier += getPickTradeValue(pick, year) * 0.15
     }
     for (const playerId of proposal.playersOffered) {
       const player = players[playerId]
       if (player && player.age <= 23) {
-        windowModifier += calculatePlayerValue(player) * 0.12
-      }
-    }
-    // Penalty for giving up young players
-    for (const playerId of proposal.playersRequested) {
-      const player = players[playerId]
-      if (player && player.age <= 23) {
-        windowModifier -= calculatePlayerValue(player) * 0.12
+        windowModifier += getPlayerTradeValue(player) * 0.10
       }
     }
   }
@@ -396,7 +312,7 @@ export function evaluateTradeProposal(
 
   // --- Final evaluation ---
   const adjustedOfferedValue =
-    offeredValue + positionalBonus + windowModifier + contractDiscount + retentionBonus + riskJitter
+    offeredValue + windowModifier + contractDiscount + retentionBonus + riskJitter
   const adjustedRequestedValue = requestedValue * activityMultiplier
 
   const valueDifference = adjustedOfferedValue - adjustedRequestedValue
@@ -406,7 +322,7 @@ export function evaluateTradeProposal(
   if (differenceRatio < -0.15) {
     // Way too lopsided — check if within 25% for a counter
     if (differenceRatio >= -0.25) {
-      const counter = generateCounterProposal(proposal, players, clubs, rng, differenceRatio)
+      const counter = generateCounterProposal(proposal, players, clubs, rng, differenceRatio, year)
       return {
         accepted: false,
         message: `${receivingClub.name} feel the offer undervalues their assets, but are open to further discussion.`,
@@ -441,7 +357,7 @@ export function evaluateTradeProposal(
   }
 
   // Rejected but close — generate counter
-  const counter = generateCounterProposal(proposal, players, clubs, rng, differenceRatio)
+  const counter = generateCounterProposal(proposal, players, clubs, rng, differenceRatio, year)
   return {
     accepted: false,
     message: `${receivingClub.name} have rejected the current offer but have made a counter-proposal.`,
@@ -464,6 +380,7 @@ function generateCounterProposal(
   clubs: Record<string, Club>,
   rng: SeededRNG,
   _differenceRatio: number,
+  currentYear: number,
 ): TradeProposal {
   // Start with the same structure but request an additional pick or remove
   // an offered pick to close the gap.
@@ -497,7 +414,7 @@ function generateCounterProposal(
     if (availablePicks.length > 0) {
       // Pick the lowest-value available pick (so the counter is reasonable)
       const sorted = [...availablePicks].sort(
-        (a, b) => pickValue(a, currentYear()) - pickValue(b, currentYear()),
+        (a, b) => getPickTradeValue(a, currentYear) - getPickTradeValue(b, currentYear),
       )
       counter.picksRequested.push(sorted[0])
     }
