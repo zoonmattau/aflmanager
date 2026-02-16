@@ -20,6 +20,8 @@ export const INTERCHANGE_PLAYERS = 5
 export const DEFAULT_SALARY_CAP = 18_300_000
 export const MINIMUM_SALARY = 110_000
 export const TPP_ALLOWANCE = 1_200_000  // Total Player Payments allowance above cap
+export const LUXURY_TAX_RATE = 1.50           // 150% of overage (matches calculateLuxuryTax)
+export const CAP_WARNING_THRESHOLD = 0.95      // warn at 95% of cap
 
 // Attribute ranges
 export const MIN_ATTRIBUTE = 1
@@ -124,3 +126,12 @@ export const POSITION_LINE: Record<PlayerPositionType, 'DEF' | 'MID' | 'FWD' | '
 export const ALL_POSITION_TYPES: PlayerPositionType[] = [
   'BP', 'FB', 'HBF', 'CHB', 'W', 'IM', 'OM', 'RK', 'HFF', 'CHF', 'FP', 'FF',
 ]
+
+// Negotiation system
+export const MAX_NEGOTIATION_ROUNDS = 6
+export const NEGOTIATION_COOLDOWN_BASE = 1
+export const MEDIA_LEAK_BASE_PROBABILITY = 0.15
+export const NEGOTIATION_CONVERGENCE_RATE = 0.06
+export const INCENTIVE_CAP_RATE = 0.50
+export const MAX_CONCURRENT_NEGOTIATIONS = 3
+export const NEGOTIATION_ELIGIBLE_ROUND = 8

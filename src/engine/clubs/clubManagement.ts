@@ -166,9 +166,12 @@ export function calculateRevenue(
   ladderPosition: number,
   isFinalist: boolean,
   rng: SeededRNG,
+  accumulatedMatchDayRevenue?: number,
 ): RevenueBreakdown {
-  // matchDay: $5M for 1st, scaling down to $2M for 18th
-  const matchDay = Math.round(lerpByLadder(ladderPosition, 5_000_000, 2_000_000))
+  // matchDay: use venue system accumulated revenue if available, else estimate by ladder
+  const matchDay = accumulatedMatchDayRevenue != null
+    ? accumulatedMatchDayRevenue
+    : Math.round(lerpByLadder(ladderPosition, 5_000_000, 2_000_000))
 
   // membership: $3M-$6M with slight random variance
   const membershipBase = lerpByLadder(ladderPosition, 5_500_000, 3_500_000)
@@ -483,4 +486,18 @@ export function evaluateBoardSatisfaction(
   }
 
   return { satisfied, message, jobSecurity }
+}
+
+// ---------------------------------------------------------------------------
+// Fan satisfaction modifier for board evaluation
+// ---------------------------------------------------------------------------
+
+export function applyFanSatisfactionToJobSecurity(
+  jobSecurity: number,
+  fanSatisfaction: number | undefined,
+): number {
+  const fan = fanSatisfaction ?? 60
+  if (fan < 20) return Math.max(0, jobSecurity - 5)
+  if (fan > 80) return Math.min(100, jobSecurity + 5)
+  return jobSecurity
 }

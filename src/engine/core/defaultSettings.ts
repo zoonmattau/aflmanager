@@ -292,6 +292,24 @@ export const DEFAULT_FIXTURE_SCHEDULE = {
 }
 
 // ---------------------------------------------------------------------------
+// Default rivalry pairs (protected matchups that play twice per season)
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_RIVALRY_PAIRS: [string, string][] = [
+  ['carlton', 'collingwood'],
+  ['carlton', 'essendon'],
+  ['collingwood', 'essendon'],
+  ['hawthorn', 'geelong'],
+  ['richmond', 'carlton'],
+  ['richmond', 'collingwood'],
+  ['melbourne', 'collingwood'],
+  ['richmond', 'essendon'],
+  ['westernbulldogs', 'melbourne'],
+  ['stkilda', 'melbourne'],
+  ['hawthorn', 'essendon'],
+]
+
+// ---------------------------------------------------------------------------
 // Default realism settings
 // ---------------------------------------------------------------------------
 
@@ -304,9 +322,15 @@ export const DEFAULT_REALISM: RealismSettings = {
   draftVariance: true,
   ngaAcademy: true,
   fixtureBlockbusterBias: true,
+  fixtureRivalryScheduling: true,
+  venueScheduling: true,
   coachingCarousel: true,
   boardPressure: true,
   aflHouseInterference: false,
+  listSizeEnforcement: true,
+  mediaLeaks: true,
+  negotiationDelays: true,
+  brownlowNight: true,
 }
 
 // ---------------------------------------------------------------------------

@@ -6,6 +6,8 @@ import type { DraftProspect, DraftPick as DraftEnginePick } from '@/types/draft'
 import type { StaffMember } from '@/types/staff'
 import type { SeededRNG } from '@/engine/core/rng'
 import type { GameHistory } from '@/types/history'
+import type { OffseasonCalendarState } from '@/engine/offseason/offseasonCalendar'
+import type { FreeAgencyMarketState } from '@/engine/contracts/freeAgencyMarket'
 import { recordDraftPick } from '@/engine/history/historyEngine'
 
 import {
@@ -26,6 +28,10 @@ import {
   DEFAULT_SALARY_CAP,
 } from '@/engine/core/constants'
 import {
+  validateTradeCapImpact,
+  validateContractOffer,
+} from '@/engine/salary/salaryCapEngine'
+import {
   resolveListConstraints,
   validateClubList,
   canAddToSeniorList,
@@ -44,7 +50,9 @@ export type OffseasonPhase =
   | 'free-agency' // FA signings
   | 'national-draft' // National draft
   | 'rookie-draft' // Rookie draft
+  | 'supplemental-signing' // Sign remaining unsigned players post-draft
   | 'preseason' // Pre-season training
+  | 'venue-allocation' // Venue scheduling for next season
   | 'practice-matches' // Practice matches
   | 'ready' // Ready for new season
 
@@ -54,6 +62,10 @@ export interface OffseasonState {
   retiredPlayerIds: string[]
   delistedPlayerIds: string[]
   newDraftees: string[] // player IDs of newly drafted players
+  venueOffers?: import('@/types/venue').VenueNegotiationOffer[]
+  venueConfig?: import('@/types/venue').ClubVenueConfig
+  calendarState?: OffseasonCalendarState
+  freeAgencyMarket?: FreeAgencyMarketState
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +81,9 @@ export const PHASE_ORDER: OffseasonPhase[] = [
   'free-agency',
   'national-draft',
   'rookie-draft',
+  'supplemental-signing',
   'preseason',
+  'venue-allocation',
   'practice-matches',
   'ready',
 ]
@@ -342,9 +356,10 @@ export function processSeasonEnd(
     // Check for retirement
     const overall = getOverall(player)
     const shouldForceRetire = player.age > 28 && overall < 30
-    const naturalRetirement = shouldRetire(player, rng)
+    const ageForceRetire = player.age >= 39
+    const naturalRetirement = !ageForceRetire && shouldRetire(player, rng)
 
-    if (shouldForceRetire || naturalRetirement) {
+    if (shouldForceRetire || ageForceRetire || naturalRetirement) {
       retiredIds.push(player.id)
 
       const fullName = `${player.firstName} ${player.lastName}`
@@ -533,6 +548,7 @@ export function processAITradePeriod(
   rng: SeededRNG,
   playerClubId?: string,
   currentYear?: number,
+  settings?: GameSettings,
 ): {
   updatedPlayers: Record<string, Player>
   trades: CompletedTrade[]
@@ -588,6 +604,23 @@ export function processAITradePeriod(
     // Only proceed if values are within 40% of each other
     const ratio = Math.min(valueA, valueB) / Math.max(valueA, valueB)
     if (ratio < 0.6) continue
+
+    // --- Cap validation for both clubs ---
+    if (settings?.salaryCap) {
+      const allPlayersArray = Object.values(updatedPlayers)
+      const salaryA = playerFromA.contract.yearByYear[0] ?? 0
+      const salaryB = playerFromB.contract.yearByYear[0] ?? 0
+
+      const capA = validateTradeCapImpact(
+        allPlayersArray, clubAId, [salaryB], [salaryA],
+        settings.salaryCapAmount, settings.realism.softCapSpending,
+      )
+      const capB = validateTradeCapImpact(
+        allPlayersArray, clubBId, [salaryA], [salaryB],
+        settings.salaryCapAmount, settings.realism.softCapSpending,
+      )
+      if (!capA.allowed || !capB.allowed) continue
+    }
 
     // Execute the trade
     updatedPlayers[playerFromA.id] = {
@@ -746,15 +779,23 @@ export function processAIFreeAgency(
     const bids: { clubId: string; bidValue: number }[] = []
 
     for (const club of aiClubs) {
-      // Check cap space
-      const clubRoster = getClubPlayers(updatedPlayers, club.id)
-      const currentSpend = clubRoster.reduce(
-        (sum, p) => sum + (p.contract.yearByYear[0] ?? 0),
-        0,
-      )
-      const availableCap = (club.finances.salaryCap || DEFAULT_SALARY_CAP) - currentSpend
-
-      if (availableCap < MINIMUM_SALARY) continue
+      // Check cap space using engine validation
+      if (settings?.salaryCap) {
+        const allPlayersArray = Object.values(updatedPlayers)
+        const capResult = validateContractOffer(
+          allPlayersArray, club.id, marketValue, 0,
+          settings.salaryCapAmount, settings.realism.softCapSpending,
+        )
+        if (!capResult.allowed) continue
+      } else {
+        // Fallback: basic cap check when salaryCap setting not available
+        const clubRoster = getClubPlayers(updatedPlayers, club.id)
+        const currentSpend = clubRoster.reduce(
+          (sum, p) => sum + (p.contract.yearByYear[0] ?? 0), 0,
+        )
+        const availableCap = (club.finances.salaryCap || DEFAULT_SALARY_CAP) - currentSpend
+        if (availableCap < MINIMUM_SALARY) continue
+      }
 
       // Check list space
       const faConstraints = settings
@@ -790,7 +831,15 @@ export function processAIFreeAgency(
       const bidMultiplier = 0.85 + rng.next() * 0.35 // 85% to 120% of market value
       const bidAmount = Math.max(MINIMUM_SALARY, Math.round(marketValue * bidMultiplier))
 
-      if (bidAmount > availableCap) continue
+      // Verify bid amount fits within cap
+      if (settings?.salaryCap) {
+        const allPlayersArray = Object.values(updatedPlayers)
+        const bidCapResult = validateContractOffer(
+          allPlayersArray, club.id, bidAmount, 0,
+          settings.salaryCapAmount, settings.realism.softCapSpending,
+        )
+        if (!bidCapResult.allowed) continue
+      }
 
       bids.push({ clubId: club.id, bidValue: bidAmount })
     }
@@ -1157,11 +1206,37 @@ export function getOffseasonPhaseLabel(phase: OffseasonPhase): string {
       return 'National Draft'
     case 'rookie-draft':
       return 'Rookie Draft'
+    case 'supplemental-signing':
+      return 'Supplemental Signing'
     case 'preseason':
       return 'Pre-Season Training'
+    case 'venue-allocation':
+      return 'Venue Allocation'
     case 'practice-matches':
       return 'Practice Matches'
     case 'ready':
       return 'Ready for New Season'
   }
+}
+
+// ---------------------------------------------------------------------------
+// 12. getUnsignedPool
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns all players in the "unsigned pool" — delisted or out-of-contract
+ * players who are not retired and meet a minimum quality threshold.
+ *
+ * These players are available for clubs to sign during free agency.
+ */
+export function getUnsignedPool(
+  players: Record<string, Player>,
+  minOverall = 25,
+): Player[] {
+  return Object.values(players).filter(
+    (p) =>
+      p.clubId === '' &&
+      p.contract.yearsRemaining <= 0 &&
+      getOverall(p) >= minOverall,
+  )
 }

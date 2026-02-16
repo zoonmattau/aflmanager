@@ -4,6 +4,7 @@ import type { SeededRNG } from '@/engine/core/rng'
 import type { ListConstraints } from '@/engine/rules/listRules'
 import { calculatePlayerValue } from '@/engine/contracts/negotiation'
 import { MINIMUM_SALARY, SENIOR_LIST_SIZE } from '@/engine/core/constants'
+import { validateContractOffer } from '@/engine/salary/salaryCapEngine'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -190,12 +191,17 @@ export function generateFreeAgentInterest(
     // so we skip it here.
     if (club.id === player.clubId) continue
 
-    // --- Cap space check ---
-    const effectiveCap = options?.softCapEnabled
-      ? club.finances.salaryCap * 1.10
-      : club.finances.salaryCap
-    const availableCap = effectiveCap - club.finances.currentSpend
-    if (availableCap < demandedAav) continue
+    // --- Cap space check (uses engine validation) ---
+    const allPlayersArray = Object.values(players)
+    const capResult = validateContractOffer(
+      allPlayersArray,
+      club.id,
+      demandedAav,
+      0, // new signing, no existing salary
+      club.finances.salaryCap,
+      options?.softCapEnabled ?? false,
+    )
+    if (!capResult.allowed) continue
 
     // --- List space check ---
     const maxSenior = options?.constraints?.maxSenior ?? SENIOR_LIST_SIZE
@@ -332,4 +338,21 @@ export function canUpgradeRookie(
   const { senior } = getListCounts(players, clubId)
   const max = constraints?.maxSenior ?? SENIOR_LIST_SIZE
   return senior < max
+}
+
+/**
+ * Identify players whose contracts expired and who were NOT re-signed
+ * during in-season negotiations. These players enter the free agent pool.
+ */
+export function identifyUnresignedExpiredPlayers(
+  players: Record<string, Player>,
+  resignedPlayerIds: Set<string>,
+): Player[] {
+  return Object.values(players).filter(
+    (p) =>
+      p.contract.yearsRemaining <= 0 &&
+      p.clubId !== 'retired' &&
+      p.clubId !== '' &&
+      !resignedPlayerIds.has(p.id),
+  )
 }

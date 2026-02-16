@@ -15,7 +15,9 @@ import {
 import { getCareerLeaders } from '@/engine/history/historyEngine'
 import { getBrownlowLeaderboard, getColemanLeaderboard } from '@/engine/awards/awardsEngine'
 import type { PlayerCareerStats } from '@/types/player'
-import { Trophy, Medal, Star } from 'lucide-react'
+import { Trophy, Medal, Star, Lock } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Button } from '@/components/ui/button'
 
 const LEADER_STATS: { key: keyof PlayerCareerStats; label: string }[] = [
   { key: 'gamesPlayed', label: 'Games' },
@@ -94,7 +96,11 @@ export function LadderPage() {
   const playerClubId = useGameStore((s) => s.playerClubId)
   const currentYear = useGameStore((s) => s.currentYear)
   const brownlowTracker = useGameStore((s) => s.brownlowTracker)
+  const brownlowRevealed = useGameStore((s) => s.brownlowRevealed)
+  const brownlowNight = useGameStore((s) => s.settings.realism.brownlowNight)
+  const phase = useGameStore((s) => s.phase)
   const awards = useGameStore((s) => s.awards)
+  const navigate = useNavigate()
 
   const brownlowLeaders = useMemo(
     () => getBrownlowLeaderboard(brownlowTracker, 20),
@@ -182,59 +188,90 @@ export function LadderPage() {
         <TabsContent value="awards" className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Brownlow Leaderboard */}
-            <Card>
-              <CardHeader className="py-3">
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <Medal className="h-4 w-4 text-yellow-500" />
-                  Brownlow Medal
-                </CardTitle>
-                <CardDescription>3-2-1 votes per match</CardDescription>
-              </CardHeader>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-8">#</TableHead>
-                      <TableHead>Player</TableHead>
-                      <TableHead>Club</TableHead>
-                      <TableHead className="text-right">Votes</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {brownlowLeaders.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={4} className="text-center text-muted-foreground py-4">
-                          No votes yet — play some rounds first.
-                        </TableCell>
-                      </TableRow>
+            {brownlowNight && !brownlowRevealed ? (
+              <Card>
+                <CardHeader className="py-3">
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    <Medal className="h-4 w-4 text-yellow-500" />
+                    Brownlow Medal
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-col items-center gap-3 py-6 text-center">
+                    <Lock className="h-8 w-8 text-zinc-500" />
+                    <p className="font-medium text-foreground">Votes are sealed</p>
+                    <p className="text-sm text-muted-foreground">
+                      The Brownlow Medal count will be held on the Monday before the Grand Final.
+                    </p>
+                    {(phase === 'finals' || phase === 'post-season') ? (
+                      <Button
+                        onClick={() => navigate('/brownlow-night')}
+                        className="mt-2"
+                      >
+                        <Medal className="mr-2 h-4 w-4" />
+                        Watch Brownlow Night
+                      </Button>
                     ) : (
-                      brownlowLeaders.map((entry, i) => {
-                        const p = players[entry.playerId]
-                        return (
-                          <TableRow key={entry.playerId}>
-                            <TableCell className="text-muted-foreground">{i + 1}</TableCell>
-                            <TableCell>
-                              <Link
-                                to={`/player/${entry.playerId}`}
-                                className="font-medium hover:underline"
-                              >
-                                {p ? `${p.firstName} ${p.lastName}` : entry.playerId}
-                              </Link>
-                            </TableCell>
-                            <TableCell className="text-muted-foreground">
-                              {p ? (clubs[p.clubId]?.abbreviation ?? p.clubId) : ''}
-                            </TableCell>
-                            <TableCell className="text-right font-mono font-bold">
-                              {entry.votes}
-                            </TableCell>
-                          </TableRow>
-                        )
-                      })
+                      <p className="text-xs text-muted-foreground">Available during finals</p>
                     )}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <CardHeader className="py-3">
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    <Medal className="h-4 w-4 text-yellow-500" />
+                    Brownlow Medal
+                  </CardTitle>
+                  <CardDescription>3-2-1 votes per match</CardDescription>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-8">#</TableHead>
+                        <TableHead>Player</TableHead>
+                        <TableHead>Club</TableHead>
+                        <TableHead className="text-right">Votes</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {brownlowLeaders.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={4} className="text-center text-muted-foreground py-4">
+                            No votes yet — play some rounds first.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        brownlowLeaders.map((entry, i) => {
+                          const p = players[entry.playerId]
+                          return (
+                            <TableRow key={entry.playerId}>
+                              <TableCell className="text-muted-foreground">{i + 1}</TableCell>
+                              <TableCell>
+                                <Link
+                                  to={`/player/${entry.playerId}`}
+                                  className="font-medium hover:underline"
+                                >
+                                  {p ? `${p.firstName} ${p.lastName}` : entry.playerId}
+                                </Link>
+                              </TableCell>
+                              <TableCell className="text-muted-foreground">
+                                {p ? (clubs[p.clubId]?.abbreviation ?? p.clubId) : ''}
+                              </TableCell>
+                              <TableCell className="text-right font-mono font-bold">
+                                {entry.votes}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })
+                      )}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Coleman Leaderboard */}
             <Card>

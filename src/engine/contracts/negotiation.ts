@@ -31,19 +31,19 @@ export interface NegotiationResult {
 // ---------------------------------------------------------------------------
 
 /** The maximum AAV an elite player can command. */
-const ELITE_SALARY_CEILING = 1_200_000
+export const ELITE_SALARY_CEILING = 1_200_000
 
 /** Number of attributes in PlayerAttributes (all 52 numeric fields). */
-const ATTRIBUTE_COUNT = 52
+export const ATTRIBUTE_COUNT = 52
 
 /** Positions that command a premium on the open market. */
-const PREMIUM_POSITIONS = new Set(['IM', 'OM', 'FF', 'CHF', 'HFF'])
+export const PREMIUM_POSITIONS = new Set(['IM', 'OM', 'FF', 'CHF', 'HFF'])
 
 /**
  * Returns the arithmetic mean of every numeric attribute on a player.
  * All 52 attributes are weighted equally.
  */
-function averageAttributes(attrs: PlayerAttributes): number {
+export function averageAttributes(attrs: PlayerAttributes): number {
   const values = Object.values(attrs) as number[]
   let sum = 0
   for (const v of values) {
@@ -59,7 +59,7 @@ function averageAttributes(attrs: PlayerAttributes): number {
  * (clubs pay for upside). Players past their peak-end decline in value.
  * Players in their peak window are valued at full price.
  */
-function ageCurveMultiplier(player: Player, overallRating: number): number {
+export function ageCurveMultiplier(player: Player, overallRating: number): number {
   const { age, hiddenAttributes } = player
   const { potentialCeiling, peakAgeStart, peakAgeEnd } = hiddenAttributes
 
@@ -86,7 +86,7 @@ function ageCurveMultiplier(player: Player, overallRating: number): number {
  * Position multiplier. Midfielders and key forwards attract a small premium
  * because of their direct impact on scoring and contested possessions.
  */
-function positionMultiplier(player: Player): number {
+export function positionMultiplier(player: Player): number {
   if (PREMIUM_POSITIONS.has(player.position.primary)) {
     return 1.08
   }
@@ -103,7 +103,7 @@ function positionMultiplier(player: Player): number {
  *
  * Returns a multiplier in [0.88, 1.10].
  */
-function formMoraleMultiplier(player: Player): number {
+export function formMoraleMultiplier(player: Player): number {
   // form: 1-100, morale: 1-100
   const formFactor = (player.form - 50) / 500   // ±0.10
   const moraleFactor = (player.morale - 50) / 1000 // ±0.05
@@ -114,7 +114,7 @@ function formMoraleMultiplier(player: Player): number {
  * Rounds a salary to the nearest $5,000 — contracts in the AFL are not
  * specified to the dollar.
  */
-function roundSalary(value: number): number {
+export function roundSalary(value: number): number {
   return Math.round(value / 5_000) * 5_000
 }
 
@@ -126,7 +126,7 @@ function roundSalary(value: number): number {
  * the supplied `aav` because the first year is lower and the last year is
  * higher; the function adjusts the starting salary so the *average* matches.
  */
-function buildYearByYear(aav: number, years: number, escalationRate: number): number[] {
+export function buildYearByYear(aav: number, years: number, escalationRate: number): number[] {
   if (years <= 0) {
     return []
   }

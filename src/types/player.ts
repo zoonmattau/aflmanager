@@ -132,6 +132,9 @@ export interface PlayerContract {
   aav: number                    // Average annual value ($)
   yearByYear: number[]           // Salary for each remaining year
   isRestricted: boolean          // Restricted free agent when contract expires
+  clauses?: import('./contract').ContractClause[]
+  structure?: import('./contract').ContractStructure
+  incentiveTotal?: number
 }
 
 export interface PlayerInjury {

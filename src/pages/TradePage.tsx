@@ -45,6 +45,7 @@ import {
 } from 'lucide-react'
 import { gradeTradeRetrospective } from '@/engine/history/summaryEngine'
 import type { TradeGradeLetter } from '@/engine/history/summaryEngine'
+import { validateTradeCapImpact, validateListSize } from '@/engine/salary/salaryCapEngine'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -549,10 +550,12 @@ function MakeTradeTab() {
   const players = useGameStore((s) => s.players)
   const clubs = useGameStore((s) => s.clubs)
   const currentDate = useGameStore((s) => s.currentDate)
+  const settings = useGameStore((s) => s.settings)
   const updatePlayer = useGameStore((s) => s.updatePlayer)
   const addNewsItem = useGameStore((s) => s.addNewsItem)
 
   const [partnerId, setPartnerId] = useState<string>('')
+  const [capError, setCapError] = useState<string | null>(null)
   const [sendIds, setSendIds] = useState<Set<string>>(new Set())
   const [receiveIds, setReceiveIds] = useState<Set<string>>(new Set())
   const [sendSearch, setSendSearch] = useState('')
@@ -671,6 +674,73 @@ function MakeTradeTab() {
     if (sendPlayers.length === 0 || receivePlayers.length === 0 || !partnerClub)
       return
 
+    setCapError(null)
+
+    // --- Salary cap validation ---
+    if (settings.salaryCap) {
+      const allPlayers = Object.values(players)
+      const incomingSalaries = receivePlayers.map((p) => p.contract.yearByYear[0] ?? 0)
+      const outgoingSalaries = sendPlayers.map((p) => p.contract.yearByYear[0] ?? 0)
+
+      const capResult = validateTradeCapImpact(
+        allPlayers,
+        playerClubId,
+        incomingSalaries,
+        outgoingSalaries,
+        settings.salaryCapAmount,
+        settings.realism.softCapSpending,
+      )
+
+      if (!capResult.allowed) {
+        setCapError(capResult.reason ?? 'Trade would breach salary cap')
+        setTradeResult('rejected')
+        setRejectionMessage(capResult.reason ?? 'Trade would breach salary cap')
+        return
+      }
+    }
+
+    // --- List size validation ---
+    if (settings.realism.listSizeEnforcement) {
+      const allPlayers = Object.values(players)
+      const netSenior = receivePlayers.filter((p) => !p.isRookie).length - sendPlayers.filter((p) => !p.isRookie).length
+      const netRookie = receivePlayers.filter((p) => p.isRookie).length - sendPlayers.filter((p) => p.isRookie).length
+
+      if (netSenior > 0) {
+        for (let i = 0; i < netSenior; i++) {
+          const listResult = validateListSize(
+            allPlayers,
+            playerClubId,
+            settings.listRules.seniorListSize,
+            settings.listRules.rookieListSize,
+            { type: 'add-senior' },
+          )
+          if (!listResult.allowed) {
+            setCapError(listResult.reason ?? 'Trade would exceed list size')
+            setTradeResult('rejected')
+            setRejectionMessage(listResult.reason ?? 'Trade would exceed senior list size')
+            return
+          }
+        }
+      }
+      if (netRookie > 0) {
+        for (let i = 0; i < netRookie; i++) {
+          const listResult = validateListSize(
+            allPlayers,
+            playerClubId,
+            settings.listRules.seniorListSize,
+            settings.listRules.rookieListSize,
+            { type: 'add-rookie' },
+          )
+          if (!listResult.allowed) {
+            setCapError(listResult.reason ?? 'Trade would exceed list size')
+            setTradeResult('rejected')
+            setRejectionMessage(listResult.reason ?? 'Trade would exceed rookie list size')
+            return
+          }
+        }
+      }
+    }
+
     const acceptance = calculateAcceptanceChance(yourValue, theirValue)
     const roll = Math.random()
 
@@ -749,6 +819,8 @@ function MakeTradeTab() {
     currentDate,
     updatePlayer,
     addNewsItem,
+    settings,
+    players,
   ])
 
   const handleResetTrade = useCallback(() => {
@@ -911,6 +983,17 @@ function MakeTradeTab() {
                     The trade has been completed successfully. Check the Trade
                     History tab for details.
                   </p>
+                </div>
+              </div>
+            )}
+
+            {/* Cap Error */}
+            {capError && (
+              <div className="rounded-md border border-red-500/50 bg-red-500/10 p-3 flex items-start gap-2">
+                <XCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-red-600 dark:text-red-400">Salary Cap Blocked</p>
+                  <p className="text-sm text-muted-foreground">{capError}</p>
                 </div>
               </div>
             )}

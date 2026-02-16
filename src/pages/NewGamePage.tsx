@@ -1301,6 +1301,20 @@ export function NewGamePage() {
                       </div>
                       <div className="flex items-center justify-between">
                         <div>
+                          <Label className="text-zinc-200">Rivalry Scheduling</Label>
+                          <p className="text-xs text-zinc-500">Traditional rivals guaranteed to play twice per season</p>
+                        </div>
+                        <Switch checked={settings.realism.fixtureRivalryScheduling} onCheckedChange={(val) => updateRealism('fixtureRivalryScheduling', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-zinc-200">Venue Scheduling</Label>
+                          <p className="text-xs text-zinc-500">Shared venue allocation, sold games, dynamic home advantage</p>
+                        </div>
+                        <Switch checked={settings.realism.venueScheduling} onCheckedChange={(val) => updateRealism('venueScheduling', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
                           <Label className="text-zinc-200">Coaching Carousel</Label>
                           <p className="text-xs text-zinc-500">Poor-performing AI coaches get sacked</p>
                         </div>
@@ -1319,6 +1333,41 @@ export function NewGamePage() {
                           <p className="text-xs text-zinc-500">AFL mandates priority picks & scheduling for struggling clubs</p>
                         </div>
                         <Switch checked={settings.realism.aflHouseInterference} onCheckedChange={(val) => updateRealism('aflHouseInterference', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-zinc-200">List Size Enforcement</Label>
+                          <p className="text-xs text-zinc-500">Enforce senior (38) and rookie (6) list limits</p>
+                        </div>
+                        <Switch checked={settings.realism.listSizeEnforcement} onCheckedChange={(val) => updateRealism('listSizeEnforcement', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-zinc-200">Media Leaks</Label>
+                          <p className="text-xs text-zinc-500">Player managers leak contract negotiations to the media</p>
+                        </div>
+                        <Switch checked={settings.realism.mediaLeaks} onCheckedChange={(val) => updateRealism('mediaLeaks', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-zinc-200">Negotiation Delays</Label>
+                          <p className="text-xs text-zinc-500">Multi-round negotiation delays (off = instant resolution)</p>
+                        </div>
+                        <Switch checked={settings.realism.negotiationDelays} onCheckedChange={(val) => updateRealism('negotiationDelays', val)} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Awards */}
+                  <div className="space-y-3">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Awards</p>
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-zinc-200">Brownlow Night</Label>
+                          <p className="text-xs text-zinc-500">Votes hidden until the Brownlow ceremony before the Grand Final</p>
+                        </div>
+                        <Switch checked={settings.realism.brownlowNight} onCheckedChange={(val) => updateRealism('brownlowNight', val)} />
                       </div>
                     </div>
                   </div>

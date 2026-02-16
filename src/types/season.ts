@@ -12,6 +12,7 @@ export interface Fixture {
   homeClubId: string
   awayClubId: string
   venue: string
+  venueId?: string
   matchDay?: MatchDay
   scheduledTime?: string  // e.g. "7:25pm"
   isBlockbuster?: boolean

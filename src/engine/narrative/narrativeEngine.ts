@@ -820,3 +820,261 @@ export function generateSeasonSummaryNews(
 
   return news
 }
+
+// ---------------------------------------------------------------------------
+// Venue-related news generation
+// ---------------------------------------------------------------------------
+
+export function generateVenueOfferNews(
+  clubName: string,
+  venueName: string,
+  payment: number,
+): NewsItem {
+  return {
+    id: crypto.randomUUID(),
+    date: todayISO(),
+    headline: `AFL approaches ${clubName} for ${venueName} deal`,
+    body: `The AFL has approached ${clubName} about playing a home game at ${venueName} next season, ` +
+      `with a reported payment of $${payment.toLocaleString()} on the table. ` +
+      `The deal would see the club sacrifice home ground advantage in exchange for a financial boost.`,
+    category: 'general',
+    clubIds: [],
+    playerIds: [],
+  }
+}
+
+export function generateVenueAcceptNews(
+  clubName: string,
+  venueName: string,
+  payment: number,
+): NewsItem {
+  return {
+    id: crypto.randomUUID(),
+    date: todayISO(),
+    headline: `${clubName} agrees to play at ${venueName}`,
+    body: `${clubName} have agreed to play a home game at ${venueName} next season for $${payment.toLocaleString()}. ` +
+      `Fans have expressed mixed reactions to the club's decision to move a home game interstate.`,
+    category: 'general',
+    clubIds: [],
+    playerIds: [],
+  }
+}
+
+export function generateFanFrustrationNews(
+  clubName: string,
+): NewsItem {
+  return {
+    id: crypto.randomUUID(),
+    date: todayISO(),
+    headline: `${clubName} fans voice frustration`,
+    body: `Supporters of ${clubName} are growing increasingly frustrated with the club's venue management decisions. ` +
+      `Fan satisfaction has dropped to concerning levels, with many season ticket holders threatening not to renew.`,
+    category: 'general',
+    clubIds: [],
+    playerIds: [],
+  }
+}
+
+export function generateBigCrowdNews(
+  clubName: string,
+  attendance: number,
+  venueName: string,
+): NewsItem {
+  return {
+    id: crypto.randomUUID(),
+    date: todayISO(),
+    headline: `Huge crowd for ${clubName} at ${venueName}`,
+    body: `${clubName} drew a crowd of ${attendance.toLocaleString()} at ${venueName}, ` +
+      `creating an electric atmosphere for their home supporters. ` +
+      `The big turnout is a positive sign for the club's match-day revenue.`,
+    category: 'match',
+    clubIds: [],
+    playerIds: [],
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Salary cap-related news generation
+// ---------------------------------------------------------------------------
+
+export function generateCapPressureNews(
+  clubName: string,
+  clubId: string,
+): NewsItem {
+  return {
+    id: crypto.randomUUID(),
+    date: todayISO(),
+    headline: `${clubName} feeling salary cap squeeze`,
+    body: `${clubName} are operating within 5% of the salary cap, leaving very little room to manoeuvre in the player market. ` +
+      `The club's list management team will need to be creative to fit any new signings under the cap.`,
+    category: 'contract',
+    clubIds: [clubId],
+    playerIds: [],
+  }
+}
+
+export function generateLuxuryTaxNews(
+  clubName: string,
+  clubId: string,
+  amount: number,
+): NewsItem {
+  return {
+    id: crypto.randomUUID(),
+    date: todayISO(),
+    headline: `${clubName} slugged with $${amount.toLocaleString()} luxury tax`,
+    body: `${clubName} have been hit with a luxury tax bill of $${amount.toLocaleString()} for exceeding the salary cap this season. ` +
+      `The penalty, calculated at 150% of the overage, will be deducted from the club's operating balance.`,
+    category: 'contract',
+    clubIds: [clubId],
+    playerIds: [],
+  }
+}
+
+export function generateCapBreachWarningNews(
+  clubName: string,
+  clubId: string,
+): NewsItem {
+  return {
+    id: crypto.randomUUID(),
+    date: todayISO(),
+    headline: `${clubName} over the salary cap`,
+    body: `${clubName} are currently exceeding the salary cap. The club must address this breach through ` +
+      `player movements, contract restructures, or delistings before the season begins.`,
+    category: 'contract',
+    clubIds: [clubId],
+    playerIds: [],
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Negotiation-related news generation
+// ---------------------------------------------------------------------------
+
+export function generateNegotiationStartedNews(
+  playerName: string,
+  clubName: string,
+  clubId: string,
+  playerId: string,
+  isReSigning: boolean,
+): NewsItem {
+  return {
+    id: crypto.randomUUID(),
+    date: todayISO(),
+    headline: isReSigning
+      ? `${clubName} open contract talks with ${playerName}`
+      : `${clubName} begin negotiations with free agent ${playerName}`,
+    body: isReSigning
+      ? `${clubName} have commenced contract discussions with ${playerName} ahead of the expiry of his current deal. ` +
+        `The club is keen to lock away the ${playerName.split(' ').pop()} for the foreseeable future.`
+      : `${clubName} have entered the race for free agent ${playerName}, ` +
+        `with the club understood to have made initial contact with the player's management.`,
+    category: 'contract',
+    clubIds: [clubId],
+    playerIds: [playerId],
+  }
+}
+
+export function generateNegotiationAcceptedNews(
+  playerName: string,
+  clubName: string,
+  clubId: string,
+  playerId: string,
+  years: number,
+  aav: number,
+  isReSigning: boolean,
+): NewsItem {
+  const formattedAAV = `$${aav.toLocaleString()}`
+  return {
+    id: crypto.randomUUID(),
+    date: todayISO(),
+    headline: isReSigning
+      ? `${playerName} commits to ${clubName} on ${years}-year deal`
+      : `${playerName} signs with ${clubName}`,
+    body: isReSigning
+      ? `${playerName} has re-signed with ${clubName}, penning a ${years}-year contract ` +
+        `worth an average of ${formattedAAV} per season. The club moved quickly to secure the player's future.`
+      : `${clubName} have secured the signature of ${playerName} on a ${years}-year deal ` +
+        `averaging ${formattedAAV} per season. The new signing will bolster the club's list.`,
+    category: 'contract',
+    clubIds: [clubId],
+    playerIds: [playerId],
+  }
+}
+
+export function generateNegotiationRejectedNews(
+  playerName: string,
+  clubName: string,
+  clubId: string,
+  playerId: string,
+): NewsItem {
+  return {
+    id: crypto.randomUUID(),
+    date: todayISO(),
+    headline: `${playerName} walks away from ${clubName} talks`,
+    body: `${playerName} has ended contract negotiations with ${clubName}. ` +
+      `The two parties were unable to reach an agreement, ` +
+      `leaving the player's future at the club in doubt.`,
+    category: 'contract',
+    clubIds: [clubId],
+    playerIds: [playerId],
+  }
+}
+
+export function generateNegotiationExpiredNews(
+  playerName: string,
+  clubName: string,
+  clubId: string,
+  playerId: string,
+  totalRounds: number,
+): NewsItem {
+  return {
+    id: crypto.randomUUID(),
+    date: todayISO(),
+    headline: `${playerName}-${clubName} talks break down`,
+    body: `Contract negotiations between ${playerName} and ${clubName} have broken down ` +
+      `after ${totalRounds} rounds of talks without agreement. ` +
+      `Both parties are understood to be disappointed by the outcome.`,
+    category: 'contract',
+    clubIds: [clubId],
+    playerIds: [playerId],
+  }
+}
+
+export function generateCounterOfferNews(
+  playerName: string,
+  clubName: string,
+  clubId: string,
+  playerId: string,
+  counterAav: number,
+  counterYears: number,
+): NewsItem {
+  return {
+    id: crypto.randomUUID(),
+    date: todayISO(),
+    headline: `${playerName} counters ${clubName} contract proposal`,
+    body: `${playerName} has rejected the latest offer from ${clubName} and tabled a counter-proposal ` +
+      `of ${counterYears} years at $${counterAav.toLocaleString()} per season. ` +
+      `The ball is now back in the club's court.`,
+    category: 'contract',
+    clubIds: [clubId],
+    playerIds: [playerId],
+  }
+}
+
+export function generateNegotiationWithdrawnNews(
+  playerName: string,
+  clubName: string,
+  clubId: string,
+  playerId: string,
+): NewsItem {
+  return {
+    id: crypto.randomUUID(),
+    date: todayISO(),
+    headline: `${clubName} withdraw from ${playerName} negotiations`,
+    body: `${clubName} have pulled out of contract negotiations with ${playerName}. ` +
+      `The club has opted to pursue other targets, leaving the player to explore his options elsewhere.`,
+    category: 'contract',
+    clubIds: [clubId],
+    playerIds: [playerId],
+  }
+}

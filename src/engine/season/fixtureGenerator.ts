@@ -3,7 +3,7 @@ import type { Club } from '@/types/club'
 import type { GameSettings, MatchTimeSlot, BlockbusterMatch } from '@/types/game'
 import { SeededRNG } from '@/engine/core/rng'
 import { REGULAR_SEASON_ROUNDS } from '@/engine/core/constants'
-import { BLOCKBUSTER_AUTO_ROUNDS } from '@/engine/core/defaultSettings'
+import { BLOCKBUSTER_AUTO_ROUNDS, DEFAULT_RIVALRY_PAIRS } from '@/engine/core/defaultSettings'
 import { validateFixture } from './fixtureValidator'
 
 // ---------------------------------------------------------------------------
@@ -145,12 +145,16 @@ function generateFixtureWithRetry(options: FixtureGeneratorOptions, attempt: num
 
   // ---- Phase 3: Generate balanced repeat rounds ----
   if (fullRounds.length < fullRoundCount) {
+    const useRivalries = settings?.leagueMode === 'real'
+      && settings.realism?.fixtureRivalryScheduling !== false
+
     const repeatRounds = generateBalancedRepeatRounds(
       clubIds,
       fullRounds,
       fullRoundCount,
       clubs,
       rng,
+      useRivalries ? DEFAULT_RIVALRY_PAIRS : undefined,
     )
     fullRounds.push(...repeatRounds)
   }
@@ -312,8 +316,8 @@ function generateBalancedRepeatRounds(
   targetFullRounds: number,
   clubs: Record<string, Club>,
   rng: SeededRNG,
+  protectedPairs?: [string, string][],
 ): Round[] {
-  const numTeams = clubIds.length
   const rounds: Round[] = []
 
   // Build meeting count map
@@ -344,10 +348,54 @@ function generateBalancedRepeatRounds(
     }
   }
 
-  for (let r = existingRounds.length; r < targetFullRounds; r++) {
+  // Pre-compute forced rivalry pairs per repeat round
+  const repeatCount = targetFullRounds - existingRounds.length
+  const forcedPerRound: [string, string][][] = Array.from({ length: repeatCount }, () => [])
+
+  if (protectedPairs && protectedPairs.length > 0) {
+    // Filter to pairs where both clubs exist and have met exactly once
+    const pendingRivals = protectedPairs.filter(([a, b]) => {
+      if (!clubIds.includes(a) || !clubIds.includes(b)) return false
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`
+      return (meetingCounts.get(key) ?? 0) === 1
+    })
+
+    // Distribute across repeat rounds
+    pendingRivals.forEach((pair, i) => {
+      forcedPerRound[i % repeatCount].push(pair)
+    })
+  }
+
+  for (let r = 0; r < repeatCount; r++) {
     const fixtures: Fixture[] = []
     const used = new Set<string>()
-    const available = rng.shuffle([...clubIds])
+
+    // Force-assign rivalry fixtures for this round
+    for (const [a, b] of forcedPerRound[r]) {
+      if (used.has(a) || used.has(b)) continue
+
+      used.add(a)
+      used.add(b)
+
+      const aHome = rng.chance(0.5)
+      const home = aHome ? a : b
+      const away = aHome ? b : a
+
+      fixtures.push({
+        homeClubId: home,
+        awayClubId: away,
+        venue: clubs[home].homeGround,
+      })
+
+      // Update counts
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`
+      meetingCounts.set(key, (meetingCounts.get(key) ?? 0) + 1)
+      totalMatches.set(a, (totalMatches.get(a) ?? 0) + 1)
+      totalMatches.set(b, (totalMatches.get(b) ?? 0) + 1)
+    }
+
+    // Greedy pairing for remaining teams
+    const available = rng.shuffle(clubIds.filter((id) => !used.has(id)))
 
     // Sort available by total matches (ascending) to balance match counts
     available.sort((a, b) => (totalMatches.get(a) ?? 0) - (totalMatches.get(b) ?? 0))
@@ -561,11 +609,20 @@ function applyAFLHouseScheduling(
 
 /**
  * Post-process the fixture to place blockbuster matches in their target rounds.
- * For each enabled blockbuster where both clubs exist in the league:
- * 1. Determine target round (auto-mapped or explicit)
- * 2. Find the existing matchup between the two clubs across all rounds
- * 3. Swap it into the target round
- * 4. Override venue, matchDay, scheduledTime, and add blockbuster metadata
+ *
+ * Algorithm per blockbuster:
+ * 1. If exact matchup already exists in target round → replace in-place
+ * 2. Find matchup in any OTHER round (skip target in search)
+ * 3. Remove matchup from source round (source: −1)
+ * 4. Displace all fixtures involving either BB club from target → move to source
+ *    (displaced count N: 0, 1, or 2)
+ *    source: −1 + N, target: −N
+ * 5. Balance:
+ *    N=0 → move 1 safe fixture from target → source (both balanced)
+ *    N=1 → already balanced
+ *    N=2 → move 1 safe fixture from source → target
+ * 6. Insert blockbuster in target (+1)
+ * 7. Re-schedule source round time slots
  */
 function applyBlockbusters(
   rounds: Round[],
@@ -576,6 +633,16 @@ function applyBlockbusters(
   playerClubId?: string,
 ): void {
   const clubIds = new Set(Object.keys(clubs))
+
+  /** Check if a fixture involves either blockbuster club */
+  const involvesBBClub = (f: Fixture, homeId: string, awayId: string) =>
+    f.homeClubId === homeId || f.awayClubId === homeId ||
+    f.homeClubId === awayId || f.awayClubId === awayId
+
+  /** Check if a fixture is the exact BB matchup (either direction) */
+  const isMatchup = (f: Fixture, homeId: string, awayId: string) =>
+    (f.homeClubId === homeId && f.awayClubId === awayId) ||
+    (f.homeClubId === awayId && f.awayClubId === homeId)
 
   for (const bb of blockbusters) {
     if (!bb.enabled) continue
@@ -593,28 +660,12 @@ function applyBlockbusters(
     targetRound = Math.max(1, Math.min(targetRound, rounds.length))
     const targetIdx = targetRound - 1
 
-    // Find the existing matchup between these two clubs (in any round)
-    let sourceRoundIdx = -1
-    let sourceFixtureIdx = -1
-
-    for (let ri = 0; ri < rounds.length; ri++) {
-      const fi = rounds[ri].fixtures.findIndex(
-        (f) =>
-          (f.homeClubId === bb.homeClubId && f.awayClubId === bb.awayClubId) ||
-          (f.homeClubId === bb.awayClubId && f.awayClubId === bb.homeClubId),
-      )
-      if (fi !== -1) {
-        sourceRoundIdx = ri
-        sourceFixtureIdx = fi
-        break
-      }
-    }
-
-    if (sourceRoundIdx === -1) continue // Matchup doesn't exist
-
-    // If already in target round, just override metadata
-    if (sourceRoundIdx === targetIdx) {
-      rounds[targetIdx].fixtures[sourceFixtureIdx] = {
+    // Step 1: If exact matchup already in target round → replace in-place
+    const existingInTargetIdx = rounds[targetIdx].fixtures.findIndex(
+      (f) => isMatchup(f, bb.homeClubId, bb.awayClubId),
+    )
+    if (existingInTargetIdx !== -1) {
+      rounds[targetIdx].fixtures[existingInTargetIdx] = {
         homeClubId: bb.homeClubId,
         awayClubId: bb.awayClubId,
         venue: bb.venue,
@@ -626,39 +677,62 @@ function applyBlockbusters(
       continue
     }
 
-    // Remove the existing fixture between these clubs from the target round
-    // (if it exists there too, e.g. from repeat matchups)
-    const existingInTargetIdx = rounds[targetIdx].fixtures.findIndex(
-      (f) =>
-        (f.homeClubId === bb.homeClubId && f.awayClubId === bb.awayClubId) ||
-        (f.homeClubId === bb.awayClubId && f.awayClubId === bb.homeClubId),
-    )
-    if (existingInTargetIdx !== -1) {
-      rounds[targetIdx].fixtures.splice(existingInTargetIdx, 1)
+    // Step 2: Find matchup in any OTHER round (skip target)
+    let sourceRoundIdx = -1
+    let sourceFixtureIdx = -1
+
+    for (let ri = 0; ri < rounds.length; ri++) {
+      if (ri === targetIdx) continue // skip target round
+      const fi = rounds[ri].fixtures.findIndex(
+        (f) => isMatchup(f, bb.homeClubId, bb.awayClubId),
+      )
+      if (fi !== -1) {
+        sourceRoundIdx = ri
+        sourceFixtureIdx = fi
+        break
+      }
     }
 
-    // Remove the matchup from the source round
-    const [sourceFixture] = rounds[sourceRoundIdx].fixtures.splice(sourceFixtureIdx, 1)
+    if (sourceRoundIdx === -1) continue // Matchup doesn't exist anywhere
 
-    // Find a fixture in the target round that can be moved to the source round
-    // (one that doesn't involve either blockbuster club — to avoid scheduling conflicts)
-    const swapIdx = rounds[targetIdx].fixtures.findIndex(
-      (f) =>
-        f.homeClubId !== bb.homeClubId &&
-        f.awayClubId !== bb.homeClubId &&
-        f.homeClubId !== bb.awayClubId &&
-        f.awayClubId !== bb.awayClubId,
-    )
+    // Step 3: Remove matchup from source round (source: −1)
+    rounds[sourceRoundIdx].fixtures.splice(sourceFixtureIdx, 1)
 
-    if (swapIdx !== -1) {
-      const [swapFixture] = rounds[targetIdx].fixtures.splice(swapIdx, 1)
-      rounds[sourceRoundIdx].fixtures.push(swapFixture)
-    } else {
-      // No safe swap found — push sourceFixture back to source round to avoid losing it
-      rounds[sourceRoundIdx].fixtures.push(sourceFixture)
+    // Step 4: Displace all fixtures involving either BB club from target → source
+    const displaced: Fixture[] = []
+    for (let i = rounds[targetIdx].fixtures.length - 1; i >= 0; i--) {
+      if (involvesBBClub(rounds[targetIdx].fixtures[i], bb.homeClubId, bb.awayClubId)) {
+        displaced.push(...rounds[targetIdx].fixtures.splice(i, 1))
+      }
     }
+    // Move displaced fixtures to source round
+    rounds[sourceRoundIdx].fixtures.push(...displaced)
+    // source is now: −1 + N displaced, target is now: −N displaced
 
-    // Insert blockbuster fixture in target round
+    // Step 5: Balance based on displaced count
+    const N = displaced.length
+    if (N === 0) {
+      // Move 1 safe fixture from target → source
+      const safeIdx = rounds[targetIdx].fixtures.findIndex(
+        (f) => !f.isBlockbuster && !involvesBBClub(f, bb.homeClubId, bb.awayClubId),
+      )
+      if (safeIdx !== -1) {
+        const [moved] = rounds[targetIdx].fixtures.splice(safeIdx, 1)
+        rounds[sourceRoundIdx].fixtures.push(moved)
+      }
+    } else if (N === 2) {
+      // Move 1 safe fixture from source → target
+      const safeIdx = rounds[sourceRoundIdx].fixtures.findIndex(
+        (f) => !f.isBlockbuster && !involvesBBClub(f, bb.homeClubId, bb.awayClubId),
+      )
+      if (safeIdx !== -1) {
+        const [moved] = rounds[sourceRoundIdx].fixtures.splice(safeIdx, 1)
+        rounds[targetIdx].fixtures.push(moved)
+      }
+    }
+    // N === 1: already balanced
+
+    // Step 6: Insert blockbuster in target (+1)
     rounds[targetIdx].fixtures.push({
       homeClubId: bb.homeClubId,
       awayClubId: bb.awayClubId,
@@ -669,7 +743,7 @@ function applyBlockbusters(
       blockbusterName: bb.name,
     })
 
-    // Re-schedule the source round's time slots (since a fixture was moved)
+    // Step 7: Re-schedule the source round's time slots
     if (playerClubId) {
       rounds[sourceRoundIdx].fixtures = scheduleRoundDays(
         rounds[sourceRoundIdx].fixtures,
@@ -680,18 +754,25 @@ function applyBlockbusters(
     }
   }
 
-  // Validation: verify no team appears more than once per round
+  // Post-loop safety: remove self-play and duplicate appearances per round
   for (const round of rounds) {
     const seen = new Set<string>()
     for (let i = round.fixtures.length - 1; i >= 0; i--) {
       const f = round.fixtures[i]
-      if (seen.has(f.homeClubId) || seen.has(f.awayClubId)) {
-        // Remove duplicate fixture
+      // Remove self-play
+      if (f.homeClubId === f.awayClubId) {
+        console.warn(`[applyBlockbusters] Removed self-play: ${f.homeClubId} in round ${round.number}`)
         round.fixtures.splice(i, 1)
-      } else {
-        seen.add(f.homeClubId)
-        seen.add(f.awayClubId)
+        continue
       }
+      // Remove duplicate appearances
+      if (seen.has(f.homeClubId) || seen.has(f.awayClubId)) {
+        console.warn(`[applyBlockbusters] Removed duplicate: ${f.homeClubId} v ${f.awayClubId} in round ${round.number}`)
+        round.fixtures.splice(i, 1)
+        continue
+      }
+      seen.add(f.homeClubId)
+      seen.add(f.awayClubId)
     }
   }
 }
@@ -791,7 +872,24 @@ export function scheduleRoundDays(
     }
   }
 
-  return [...scheduled, ...blockbusters]
+  // Combine all fixtures and sort by match day order
+  const DAY_ORDER: Record<string, number> = {
+    Thursday: 0,
+    Friday: 1,
+    'Saturday-Early': 2,
+    'Saturday-Twilight': 3,
+    'Saturday-Night': 4,
+    'Sunday-Early': 5,
+    'Sunday-Twilight': 6,
+    Monday: 7,
+  }
+  const combined = [...scheduled, ...blockbusters]
+  combined.sort((a, b) => {
+    const aOrder = a.matchDay ? (DAY_ORDER[a.matchDay] ?? 99) : 99
+    const bOrder = b.matchDay ? (DAY_ORDER[b.matchDay] ?? 99) : 99
+    return aOrder - bOrder
+  })
+  return combined
 }
 
 // ---------------------------------------------------------------------------

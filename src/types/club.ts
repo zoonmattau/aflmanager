@@ -64,6 +64,7 @@ export interface Club {
   finances: ClubFinances
   draftPicks: DraftPick[]
   gameplan: ClubGameplan
+  fanSatisfaction?: number
   /** AI personality for non-player clubs */
   aiPersonality: {
     competitiveWindow: 'win-now' | 'balanced' | 'rebuilding'

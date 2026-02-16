@@ -63,7 +63,7 @@ export const navGroups: NavGroup[] = [
     defaultTo: '/salary-cap',
     matchPaths: ['/salary-cap', '/contracts', '/trades', '/draft', '/scouting', '/staff'],
     items: [
-      { to: '/salary-cap', label: 'Salary Cap' },
+      { to: '/salary-cap', label: 'Cap Dashboard' },
       { to: '/contracts', label: 'Contracts' },
       { to: '/trades', label: 'Trades' },
       { to: '/draft', label: 'Draft' },

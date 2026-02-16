@@ -30,6 +30,7 @@ import {
   addDays,
   formatDate,
 } from '@/engine/calendar/calendarEngine'
+import { RecommendedActions } from '@/components/dashboard/RecommendedActions'
 
 // ---------------------------------------------------------------------------
 // Calendar constants
@@ -454,6 +455,8 @@ export function DashboardPage() {
             </CardContent>
           </Card>
         </div>
+
+        <RecommendedActions />
       </div>
     )
   }
@@ -758,19 +761,6 @@ export function DashboardPage() {
     }
   }, [weekSchedule])
 
-  const pendingActions = useMemo(() => {
-    const actions: { label: string; path: string }[] = []
-    if (phase === 'regular-season' && nextFixture) {
-      actions.push({ label: 'Set Lineup', path: '/lineup' })
-      actions.push({ label: 'Review Gameplan', path: '/gameplan' })
-    }
-    if (unreadCount > 0) {
-      actions.push({ label: `${unreadCount} Unread`, path: '/inbox' })
-    }
-    actions.push({ label: 'View Squad', path: '/squad' })
-    actions.push({ label: 'Check Calendar', path: '/calendar' })
-    return actions
-  }, [phase, nextFixture, unreadCount])
 
   return (
     <div className="space-y-6">
@@ -1218,29 +1208,8 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* RIGHT: Pending Actions */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Quick Actions</CardTitle>
-            <ClipboardList className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {pendingActions.map((action) => (
-                <Button
-                  key={action.path + action.label}
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start text-xs"
-                  onClick={() => navigate(action.path)}
-                >
-                  <ArrowRight className="mr-2 h-3 w-3" />
-                  {action.label}
-                </Button>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+        {/* RIGHT: Recommended Actions */}
+        <RecommendedActions />
       </div>
 
       {/* Next Matchup Card */}

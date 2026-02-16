@@ -9,7 +9,18 @@ import { cn } from '@/lib/utils'
 import {
   getOffseasonPhaseLabel,
   PHASE_ORDER,
+  getUnsignedPool,
 } from '@/engine/season/offseasonFlow'
+import {
+  getOverallRating,
+  getStarRating,
+  getPlayerTier,
+  getPlayerTags,
+  type PlayerTier,
+  type PlayerTagKey,
+} from '@/engine/player/playerRating'
+import { POSITION_LINE } from '@/engine/core/constants'
+import { calculatePlayerValue } from '@/engine/contracts/negotiation'
 import {
   generatePreseasonFixtures,
   simulatePreseasonMatch,
@@ -23,6 +34,8 @@ import type { NewsItem } from '@/types/game'
 import { buildOffseasonSummary } from '@/engine/history/summaryEngine'
 import type { TradeGradeLetter } from '@/engine/history/summaryEngine'
 import { resolveListConstraints, validateClubList, mustDelist } from '@/engine/rules/listRules'
+import { OffseasonStatusDashboard } from '@/components/offseason/OffseasonStatusDashboard'
+import { FreeAgencyMarketPanel } from '@/components/offseason/FreeAgencyMarketPanel'
 import { AlertTriangle as AlertTriangleIcon } from 'lucide-react'
 import {
   CheckCircle2,
@@ -41,6 +54,9 @@ import {
   ExternalLink,
   XCircle,
   Star,
+  StarHalf,
+  MapPin,
+  UserPlus,
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -57,7 +73,9 @@ const PHASE_ICONS: Record<OffseasonPhase, React.ReactNode> = {
   'free-agency': <FileText className="h-4 w-4" />,
   'national-draft': <Users className="h-4 w-4" />,
   'rookie-draft': <Users className="h-4 w-4" />,
+  'supplemental-signing': <UserPlus className="h-4 w-4" />,
   preseason: <Dumbbell className="h-4 w-4" />,
+  'venue-allocation': <MapPin className="h-4 w-4" />,
   'practice-matches': <Swords className="h-4 w-4" />,
   ready: <Rocket className="h-4 w-4" />,
 }
@@ -69,6 +87,58 @@ const NEWS_CATEGORY_COLORS: Record<string, string> = {
   draft: 'bg-green-500/15 text-green-400 border-green-500/30',
   contract: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
   general: 'bg-zinc-500/15 text-zinc-400 border-zinc-500/30',
+}
+
+// ---------------------------------------------------------------------------
+// Shared player rating helpers
+// ---------------------------------------------------------------------------
+
+function tierColor(tier: PlayerTier): string {
+  switch (tier) {
+    case 'elite': return 'text-green-500'
+    case 'good': return 'text-emerald-400'
+    case 'average': return 'text-yellow-500'
+    case 'developing': return 'text-orange-500'
+    case 'poor': return 'text-red-500'
+  }
+}
+
+function tierBorder(tier: PlayerTier): string {
+  switch (tier) {
+    case 'elite': return 'border-l-2 border-l-green-500'
+    case 'good': return 'border-l-2 border-l-emerald-400'
+    case 'poor': return 'border-l-2 border-l-red-500'
+    default: return ''
+  }
+}
+
+function tagStyle(key: PlayerTagKey): string {
+  switch (key) {
+    case 'injured': return 'bg-red-500/15 text-red-600 border-red-500/30'
+    case 'expiring': return 'bg-amber-500/15 text-amber-600 border-amber-500/30'
+    case 'unhappy': return 'bg-orange-500/15 text-orange-600 border-orange-500/30'
+    case 'high-potential': return 'bg-blue-500/15 text-blue-600 border-blue-500/30'
+    case 'ageing': return 'bg-purple-500/15 text-purple-600 border-purple-500/30'
+    case 'trade-listed': return 'bg-rose-500/15 text-rose-600 border-rose-500/30'
+  }
+}
+
+function MiniStarDisplay({ stars }: { stars: number }) {
+  const fullStars = Math.floor(stars)
+  const hasHalf = stars % 1 !== 0
+  const emptyStars = 5 - fullStars - (hasHalf ? 1 : 0)
+
+  return (
+    <span className="inline-flex items-center gap-px">
+      {Array.from({ length: fullStars }, (_, i) => (
+        <Star key={`f${i}`} className="h-3 w-3 fill-current text-amber-400" />
+      ))}
+      {hasHalf && <StarHalf className="h-3 w-3 fill-current text-amber-400" />}
+      {Array.from({ length: emptyStars }, (_, i) => (
+        <Star key={`e${i}`} className="h-3 w-3 text-muted-foreground/30" />
+      ))}
+    </span>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -374,12 +444,7 @@ function DelistingsPanel({
     () =>
       Object.values(players)
         .filter((p) => p.clubId === playerClubId && !delistedSet.has(p.id))
-        .sort((a, b) => {
-          // Sort by overall value: age-weighted and games played
-          const aVal = a.careerStats.gamesPlayed
-          const bVal = b.careerStats.gamesPlayed
-          return aVal - bVal
-        }),
+        .sort((a, b) => getOverallRating(a) - getOverallRating(b)),
     [players, playerClubId, delistedSet],
   )
 
@@ -416,58 +481,91 @@ function DelistingsPanel({
             Delisted ({delistedPlayers.length})
           </p>
           <div className="flex flex-wrap gap-2">
-            {delistedPlayers.map((p) => (
-              <Badge key={p.id} variant="outline" className="text-red-400 border-red-500/30">
-                {p.firstName} {p.lastName}
-              </Badge>
-            ))}
+            {delistedPlayers.map((p) => {
+              const ovr = getOverallRating(p)
+              return (
+                <Badge key={p.id} variant="outline" className="text-red-400 border-red-500/30">
+                  {p.firstName} {p.lastName}
+                  <span className="ml-1 text-muted-foreground">OVR {ovr}</span>
+                </Badge>
+              )
+            })}
           </div>
         </div>
       )}
 
       <div className="text-sm text-muted-foreground">
-        Select players from your list to delist. AI clubs have completed their delistings.
+        Select players from your list to delist. Sorted by overall rating (weakest first). AI clubs have completed their delistings.
+        Delisted players enter the unsigned pool and may be signed by any club during free agency.
       </div>
 
-      <div className="divide-y divide-border/50 max-h-[400px] overflow-y-auto">
-        {clubPlayers.map((p) => (
-          <div
-            key={p.id}
-            className="flex items-center justify-between py-2.5 pr-1"
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="min-w-0">
-                <p className="font-medium text-sm truncate">
-                  {p.firstName} {p.lastName}
-                  <span className="ml-1.5 text-muted-foreground font-normal">
-                    #{p.jerseyNumber}
-                  </span>
-                </p>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span>{p.position.primary}</span>
-                  <span>&middot;</span>
-                  <span>Age {p.age}</span>
-                  <span>&middot;</span>
-                  <span>{p.careerStats.gamesPlayed} gms</span>
-                  {p.contract.yearsRemaining > 0 && (
-                    <>
-                      <span>&middot;</span>
-                      <span>{p.contract.yearsRemaining}yr @ ${(p.contract.aav / 1000).toFixed(0)}k</span>
-                    </>
+      <div className="divide-y divide-border/50 max-h-[500px] overflow-y-auto">
+        {clubPlayers.map((p) => {
+          const ovr = getOverallRating(p)
+          const tier = getPlayerTier(ovr)
+          const stars = getStarRating(ovr)
+          const tags = getPlayerTags(p)
+          const line = POSITION_LINE[p.position.primary]
+
+          return (
+            <div
+              key={p.id}
+              className={`flex items-center justify-between py-2.5 pr-1 ${tierBorder(tier)}`}
+            >
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="font-medium text-sm truncate">
+                      {p.firstName} {p.lastName}
+                      <span className="ml-1.5 text-muted-foreground font-normal">
+                        #{p.jerseyNumber}
+                      </span>
+                    </p>
+                    <MiniStarDisplay stars={stars} />
+                    <span className={`text-xs font-semibold tabular-nums ${tierColor(tier)}`}>
+                      {ovr}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                    <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">
+                      {p.position.primary}
+                    </Badge>
+                    <span className="text-muted-foreground/60">{line}</span>
+                    <span>&middot;</span>
+                    <span>Age {p.age}</span>
+                    <span>&middot;</span>
+                    <span>{p.careerStats.gamesPlayed} gms</span>
+                    <span>&middot;</span>
+                    <span>{p.careerStats.goals} gls</span>
+                    {p.contract.yearsRemaining > 0 && (
+                      <>
+                        <span>&middot;</span>
+                        <span className="font-mono">{p.contract.yearsRemaining}yr / ${(p.contract.aav / 1000).toFixed(0)}k</span>
+                      </>
+                    )}
+                  </div>
+                  {tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {tags.map((tag) => (
+                        <Badge key={tag.key} variant="outline" className={`text-[9px] px-1 py-0 ${tagStyle(tag.key)}`}>
+                          {tag.label}
+                        </Badge>
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="flex-shrink-0 ml-2 h-7 text-xs"
+                onClick={() => onDelist(p.id)}
+              >
+                Delist
+              </Button>
             </div>
-            <Button
-              variant="destructive"
-              size="sm"
-              className="flex-shrink-0 ml-2 h-7 text-xs"
-              onClick={() => onDelist(p.id)}
-            >
-              Delist
-            </Button>
-          </div>
-        ))}
+          )
+        })}
         {clubPlayers.length === 0 && (
           <p className="text-center text-muted-foreground py-6 text-sm">
             No players available to delist.
@@ -504,76 +602,142 @@ function TradePeriodPanel() {
   )
 }
 
-function FreeAgencyPanel({
-  playerClubId,
+function UnsignedPoolPanel({
   players,
+  onSign,
 }: {
-  playerClubId: string
   players: Record<string, Player>
+  onSign: (playerId: string, years: number, aav: number) => { success: boolean; error?: string }
 }) {
-  const navigate = useNavigate()
+  const [posFilter, setPosFilter] = useState<string>('')
+  const [signError, setSignError] = useState<string | null>(null)
+  const [signSuccess, setSignSuccess] = useState<string | null>(null)
 
-  const expiringContracts = useMemo(
+  const unsignedPlayers = useMemo(
     () =>
-      Object.values(players)
-        .filter((p) => p.clubId === playerClubId && p.contract.yearsRemaining <= 1)
-        .sort((a, b) => b.contract.aav - a.contract.aav),
-    [players, playerClubId],
+      getUnsignedPool(players)
+        .filter((p) => posFilter === '' || POSITION_LINE[p.position.primary] === posFilter)
+        .sort((a, b) => getOverallRating(b) - getOverallRating(a)),
+    [players, posFilter],
   )
+
+  function handleSign(player: Player) {
+    const marketValue = calculatePlayerValue(player)
+    const years = player.age <= 24 ? 3 : player.age <= 28 ? 2 : 1
+    const result = onSign(player.id, years, marketValue)
+    if (result.success) {
+      setSignError(null)
+      setSignSuccess(`${player.firstName} ${player.lastName} signed!`)
+      setTimeout(() => setSignSuccess(null), 3000)
+    } else {
+      setSignError(result.error ?? 'Failed to sign player')
+      setSignSuccess(null)
+    }
+  }
 
   return (
     <div className="space-y-4">
-      <p className="text-muted-foreground">
-        Review players with expiring contracts and manage free agency signings.
-      </p>
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-medium text-cyan-400 uppercase tracking-wide">
+          Unsigned Player Pool ({unsignedPlayers.length})
+        </div>
+        <div className="flex gap-1">
+          {['', 'DEF', 'MID', 'FWD', 'RK'].map((pos) => (
+            <Button
+              key={pos || 'all'}
+              variant={posFilter === pos ? 'default' : 'outline'}
+              size="sm"
+              className="h-6 text-[10px] px-2"
+              onClick={() => setPosFilter(pos)}
+            >
+              {pos || 'All'}
+            </Button>
+          ))}
+        </div>
+      </div>
 
-      {expiringContracts.length > 0 ? (
-        <>
-          <div className="text-xs font-medium text-amber-400 uppercase tracking-wide">
-            Expiring Contracts ({expiringContracts.length})
-          </div>
-          <div className="divide-y divide-border/50 max-h-[250px] overflow-y-auto">
-            {expiringContracts.map((p) => (
-              <div key={p.id} className="flex items-center justify-between py-2.5">
-                <div>
-                  <p className="text-sm font-medium">
-                    {p.firstName} {p.lastName}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {p.position.primary} &middot; Age {p.age} &middot; {p.careerStats.gamesPlayed} gms
-                  </p>
-                </div>
-                <div className="text-right">
-                  <Badge variant="outline" className="text-amber-400 border-amber-500/30 font-mono text-xs">
-                    ${(p.contract.aav / 1000).toFixed(0)}k/yr
-                  </Badge>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                    {p.contract.isRestricted ? 'Restricted FA' : 'Unrestricted FA'}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </>
-      ) : (
-        <p className="text-sm text-muted-foreground py-4 text-center">
-          No expiring contracts on your list.
-        </p>
+      {signError && (
+        <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-2">
+          <AlertTriangleIcon className="h-3 w-3 text-red-400 flex-shrink-0" />
+          <p className="text-xs text-red-400">{signError}</p>
+        </div>
+      )}
+      {signSuccess && (
+        <div className="flex items-center gap-2 rounded-lg border border-green-500/30 bg-green-500/10 p-2">
+          <CheckCircle2 className="h-3 w-3 text-green-400 flex-shrink-0" />
+          <p className="text-xs text-green-400">{signSuccess}</p>
+        </div>
       )}
 
-      <div className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
-        <FileText className="h-8 w-8 text-amber-400 flex-shrink-0" />
-        <div className="flex-1">
-          <p className="font-medium">Contract Management</p>
-          <p className="text-sm text-muted-foreground">
-            Re-sign players or let them walk to free agency.
-          </p>
+      {unsignedPlayers.length === 0 ? (
+        <p className="text-sm text-muted-foreground py-4 text-center">
+          No unsigned players available.
+        </p>
+      ) : (
+        <div className="divide-y divide-border/50 max-h-[300px] overflow-y-auto">
+          {unsignedPlayers.map((p) => {
+            const ovr = getOverallRating(p)
+            const tier = getPlayerTier(ovr)
+            const stars = getStarRating(ovr)
+            const tags = getPlayerTags(p)
+            const marketValue = calculatePlayerValue(p)
+            const suggestedYears = p.age <= 24 ? 3 : p.age <= 28 ? 2 : 1
+
+            return (
+              <div
+                key={p.id}
+                className={`flex items-center justify-between py-2.5 pr-1 ${tierBorder(tier)}`}
+              >
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-sm truncate">
+                        {p.firstName} {p.lastName}
+                      </p>
+                      <MiniStarDisplay stars={stars} />
+                      <span className={`text-xs font-semibold tabular-nums ${tierColor(tier)}`}>
+                        {ovr}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                      <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">
+                        {p.position.primary}
+                      </Badge>
+                      <span>Age {p.age}</span>
+                      <span>&middot;</span>
+                      <span>{p.careerStats.gamesPlayed} gms</span>
+                      <span>&middot;</span>
+                      <span>{p.careerStats.goals} gls</span>
+                      <span>&middot;</span>
+                      <span className="font-mono text-cyan-400">
+                        ~{suggestedYears}yr / ${(marketValue / 1000).toFixed(0)}k
+                      </span>
+                    </div>
+                    {tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {tags.map((tag) => (
+                          <Badge key={tag.key} variant="outline" className={`text-[9px] px-1 py-0 ${tagStyle(tag.key)}`}>
+                            {tag.label}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-shrink-0 ml-2 h-7 text-xs text-cyan-400 border-cyan-500/30 hover:bg-cyan-500/10"
+                  onClick={() => handleSign(p)}
+                >
+                  <UserPlus className="mr-1 h-3 w-3" />
+                  Sign
+                </Button>
+              </div>
+            )
+          })}
         </div>
-        <Button onClick={() => navigate('/contracts')} className="flex-shrink-0">
-          Go to Contracts
-          <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-        </Button>
-      </div>
+      )}
     </div>
   )
 }
@@ -641,6 +805,162 @@ function DraftPanel({
           <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
         </Button>
       </div>
+    </div>
+  )
+}
+
+function VenueAllocationPanel() {
+  const offseasonState = useGameStore((s) => s.offseasonState)
+  const playerClubId = useGameStore((s) => s.playerClubId)
+  const clubs = useGameStore((s) => s.clubs)
+  const acceptVenueOffer = useGameStore((s) => s.acceptVenueOffer)
+  const rejectVenueOffer = useGameStore((s) => s.rejectVenueOffer)
+  const setSecondaryHomeGames = useGameStore((s) => s.setSecondaryHomeGames)
+
+  const offers = offseasonState?.venueOffers ?? []
+  const config = offseasonState?.venueConfig
+  const club = clubs[playerClubId]
+  const fanSat = club?.fanSatisfaction ?? 60
+
+  if (!config) {
+    return (
+      <div className="space-y-4">
+        <p className="text-muted-foreground">Venue allocations have been set automatically.</p>
+      </div>
+    )
+  }
+
+  const totalHome = config.homeGamesAtPrimary + config.homeGamesAtSecondary + config.soldHomeGames.length
+
+  return (
+    <div className="space-y-6">
+      <p className="text-muted-foreground">
+        Manage your home ground schedule for the upcoming season. You have {totalHome} home games to allocate.
+      </p>
+
+      {/* Home Ground Summary */}
+      <div className="rounded-lg border border-border/50 bg-muted/30 p-4 space-y-2">
+        <h4 className="font-medium text-sm flex items-center gap-2">
+          <MapPin className="h-4 w-4 text-primary" />
+          Home Ground Allocation
+        </h4>
+        <div className="grid grid-cols-3 gap-3 text-center text-sm">
+          <div className="rounded-md bg-background/50 p-2">
+            <div className="text-lg font-bold text-primary">{config.homeGamesAtPrimary}</div>
+            <div className="text-xs text-muted-foreground">Primary</div>
+          </div>
+          {config.secondaryVenueId && (
+            <div className="rounded-md bg-background/50 p-2">
+              <div className="text-lg font-bold text-amber-400">{config.homeGamesAtSecondary}</div>
+              <div className="text-xs text-muted-foreground">Secondary</div>
+            </div>
+          )}
+          <div className="rounded-md bg-background/50 p-2">
+            <div className="text-lg font-bold text-red-400">{config.soldHomeGames.length}</div>
+            <div className="text-xs text-muted-foreground">Sold Games</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Secondary Venue Slider */}
+      {config.secondaryVenueId && (
+        <div className="rounded-lg border border-border/50 bg-muted/30 p-4 space-y-3">
+          <h4 className="font-medium text-sm">Secondary Venue Games</h4>
+          <p className="text-xs text-muted-foreground">
+            Adjust how many games to play at your secondary venue (lower HGA but builds regional fan base).
+          </p>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-muted-foreground w-6">0</span>
+            <input
+              type="range"
+              min={0}
+              max={4}
+              value={config.homeGamesAtSecondary}
+              onChange={(e) => setSecondaryHomeGames(Number(e.target.value))}
+              className="flex-1 accent-primary"
+            />
+            <span className="text-sm text-muted-foreground w-6">4</span>
+          </div>
+          <div className="text-xs text-center text-muted-foreground">
+            {config.homeGamesAtSecondary} game{config.homeGamesAtSecondary !== 1 ? 's' : ''} at secondary venue
+          </div>
+        </div>
+      )}
+
+      {/* AFL Sold Game Offers */}
+      {offers.length > 0 && (
+        <div className="space-y-3">
+          <h4 className="font-medium text-sm">AFL Home Game Offers</h4>
+          <p className="text-xs text-muted-foreground">
+            The AFL is offering your club money to play home games at neutral venues.
+          </p>
+          {offers.map((offer) => (
+            <div
+              key={offer.id}
+              className="rounded-lg border border-border/50 bg-muted/30 p-4 space-y-3"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-medium text-sm">{offer.venueName}</div>
+                  <div className="text-xs text-muted-foreground">{offer.description}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 text-sm">
+                <span className="text-green-400 font-medium">
+                  +${(offer.payment / 1000).toFixed(0)}k
+                </span>
+                <span className="text-red-400 font-medium">
+                  {offer.fanPenalty} fan satisfaction
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-green-400 border-green-500/30 hover:bg-green-500/10"
+                  onClick={() => acceptVenueOffer(offer.id)}
+                >
+                  Accept
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-red-400 border-red-500/30 hover:bg-red-500/10"
+                  onClick={() => rejectVenueOffer(offer.id)}
+                >
+                  Reject
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Impact Preview */}
+      <div className="rounded-lg border border-border/50 bg-muted/30 p-4 space-y-2">
+        <h4 className="font-medium text-sm">Impact Preview</h4>
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <span className="text-muted-foreground">Sold Game Revenue:</span>
+            <span className="ml-2 text-green-400 font-medium">
+              ${config.soldHomeGames.reduce((sum, g) => sum + g.payment, 0).toLocaleString()}
+            </span>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Fan Satisfaction:</span>
+            <span className={cn(
+              'ml-2 font-medium',
+              fanSat >= 60 ? 'text-green-400' : fanSat >= 40 ? 'text-amber-400' : 'text-red-400',
+            )}>
+              {fanSat}/100
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <p className="text-xs text-muted-foreground italic">
+        Advance to confirm allocations. AI clubs will also finalize their venue schedules.
+      </p>
     </div>
   )
 }
@@ -1003,6 +1323,7 @@ function CurrentPhasePanel({
   ladder,
   onAdvance,
   onDelist,
+  onSign,
   onStartSeason,
   advanceError,
   canAdvance,
@@ -1023,6 +1344,7 @@ function CurrentPhasePanel({
   ladder: { clubId: string; wins: number; losses: number; draws: number; points: number; percentage: number }[]
   onAdvance: () => void
   onDelist: (playerId: string) => void
+  onSign: (playerId: string, years: number, aav: number) => { success: boolean; error?: string }
   onStartSeason: () => void
   advanceError: string | null
   canAdvance: boolean
@@ -1077,7 +1399,7 @@ function CurrentPhasePanel({
         )}
         {currentPhase === 'trade-period' && <TradePeriodPanel />}
         {currentPhase === 'free-agency' && (
-          <FreeAgencyPanel playerClubId={playerClubId} players={players} />
+          <FreeAgencyMarketPanel />
         )}
         {currentPhase === 'national-draft' && (
           <DraftPanel draftType="national" playerClubId={playerClubId} clubs={clubs} />
@@ -1085,7 +1407,11 @@ function CurrentPhasePanel({
         {currentPhase === 'rookie-draft' && (
           <DraftPanel draftType="rookie" playerClubId={playerClubId} clubs={clubs} />
         )}
+        {currentPhase === 'supplemental-signing' && (
+          <UnsignedPoolPanel players={players} onSign={onSign} />
+        )}
         {currentPhase === 'preseason' && <PreseasonPanel />}
+        {currentPhase === 'venue-allocation' && <VenueAllocationPanel />}
         {currentPhase === 'practice-matches' && (
           <PracticeMatchesPanel
             playerClubId={playerClubId}
@@ -1140,6 +1466,8 @@ export function OffseasonPage() {
   const offseasonState = useGameStore((s) => s.offseasonState)
   const advancePhase = useGameStore((s) => s.advanceOffseasonPhase)
   const delistPlayer = useGameStore((s) => s.delistPlayerOffseason)
+  const signUnsignedPlayer = useGameStore((s) => s.signUnsignedPlayer)
+  const signSupplementalPlayer = useGameStore((s) => s.signSupplementalPlayer)
   const startNewSeasonAction = useGameStore((s) => s.startNewSeasonAction)
 
   // Validation error state
@@ -1170,6 +1498,13 @@ export function OffseasonPage() {
     delistPlayer(playerId)
     setAdvanceError(null)
   }, [delistPlayer])
+
+  const handleSign = useCallback((playerId: string, years: number, aav: number) => {
+    if (offseasonState?.currentPhase === 'supplemental-signing') {
+      return signSupplementalPlayer(playerId, years, aav)
+    }
+    return signUnsignedPlayer(playerId, years, aav)
+  }, [signUnsignedPlayer, signSupplementalPlayer, offseasonState?.currentPhase])
 
   const handleStartSeason = useCallback(() => {
     startNewSeasonAction()
@@ -1213,6 +1548,9 @@ export function OffseasonPage() {
         </div>
       </div>
 
+      {/* Offseason Status Dashboard */}
+      <OffseasonStatusDashboard />
+
       {/* Two-column layout: 2/3 main panel, 1/3 timeline + news */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Current Phase Panel (2/3) */}
@@ -1226,6 +1564,7 @@ export function OffseasonPage() {
             ladder={ladder}
             onAdvance={handleAdvancePhase}
             onDelist={handleDelist}
+            onSign={handleSign}
             onStartSeason={handleStartSeason}
             advanceError={advanceError}
             canAdvance={canAdvance}

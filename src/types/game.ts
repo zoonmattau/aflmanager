@@ -11,6 +11,8 @@ import type { SeasonAwards, BrownlowRound } from './awards'
 import type { StateLeague, StateLeagueId } from './stateLeague'
 import type { OffseasonState } from '@/engine/season/offseasonFlow'
 import type { FinalsFormat } from './finals'
+import type { SeasonVenueState } from './venue'
+import type { NegotiationTracker } from './contract'
 
 export type GamePhase =
   | 'setup'           // Choosing club
@@ -131,9 +133,17 @@ export interface RealismSettings {
 
   // League Operations
   fixtureBlockbusterBias: boolean // Named matches get prime scheduling priority
+  fixtureRivalryScheduling: boolean // Guarantee traditional rivalries play twice per season
+  venueScheduling: boolean        // Shared venue allocation, sold games, dynamic home advantage
   coachingCarousel: boolean       // Poor-performing AI coaches get sacked
   boardPressure: boolean          // Board expectations affect job security
   aflHouseInterference: boolean   // AFL mandates priority picks & scheduling for struggling clubs
+  listSizeEnforcement: boolean    // Enforce senior (38) and rookie (6) list limits
+  mediaLeaks: boolean              // Player managers leak negotiations to media
+  negotiationDelays: boolean       // Multi-round delays (false = instant resolution)
+
+  // Awards
+  brownlowNight: boolean          // Votes hidden until Brownlow Night ceremony (Monday before GF)
 }
 
 export interface GameSettings {
@@ -216,12 +226,19 @@ export interface GameState {
   // Awards
   awards: SeasonAwards[]
   brownlowTracker: BrownlowRound[]
+  brownlowRevealed: boolean        // Whether Brownlow votes have been revealed this season
 
   // State leagues
   stateLeagues: Record<StateLeagueId, StateLeague> | null
 
   // Offseason pipeline
   offseasonState: OffseasonState | null
+
+  // Venue scheduling
+  venueState: SeasonVenueState | null
+
+  // Negotiation tracker
+  negotiations: NegotiationTracker | null
 }
 
 export interface CompletedTrade {

@@ -17,6 +17,8 @@ interface SimulateMatchInput {
   isFinal?: boolean
   finalType?: 'QF' | 'EF' | 'PF' | 'SF' | 'GF'
   matchRules?: MatchRulesSettings
+  venueHGA?: number
+  travelFatigue?: { home: number; away: number }
 }
 
 function getClubPlayers(players: Record<string, Player>, clubId: string): Player[] {
@@ -225,9 +227,12 @@ export function simulateMatch(input: SimulateMatchInput): Match {
   const homeMods = computeGameplanModifiers(homeGameplan ?? createDefaultGameplan())
   const awayMods = computeGameplanModifiers(awayGameplan ?? createDefaultGameplan())
 
-  // Home advantage ~3 rating points
-  const homeAdvantage = 3
-  const adjustedHomeRating = homeRating + homeAdvantage
+  // Home advantage: dynamic from venue system, or fallback to 3
+  const homeAdvantage = input.venueHGA ?? 3
+  const homeTravelPenalty = (input.travelFatigue?.home ?? 0) * 0.5
+  const awayTravelPenalty = (input.travelFatigue?.away ?? 0) * 0.5
+  const adjustedHomeRating = homeRating + homeAdvantage - homeTravelPenalty
+  const adjustedAwayRating = awayRating - awayTravelPenalty
 
   // Initialize stats
   const homeStats = initPlayerStats(homePlayers)
@@ -250,7 +255,7 @@ export function simulateMatch(input: SimulateMatchInput): Match {
 
     for (let p = 0; p < possessions; p++) {
       // Determine which team wins this possession
-      const homeChance = adjustedHomeRating / (adjustedHomeRating + awayRating)
+      const homeChance = adjustedHomeRating / (adjustedHomeRating + adjustedAwayRating)
       const homeWins = rng.chance(homeChance)
 
       const attackingPlayers = homeWins ? homePlayers : awayPlayers
