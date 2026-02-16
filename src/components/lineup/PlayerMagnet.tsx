@@ -7,6 +7,7 @@ export interface PlayerMagnetProps {
   player: Player
   slot?: string
   suitability: PositionSuitability
+  compact?: boolean
 }
 
 export function getPositionSuitability(
@@ -51,19 +52,22 @@ export function PlayerMagnet({ player, slot, suitability }: PlayerMagnetProps) {
     e.dataTransfer.setData('application/x-player-id', player.id)
   }
 
+  const position = player.position.primary
+
   return (
     <div
       draggable
       onDragStart={handleDragStart}
-      className={`flex flex-col items-center justify-center rounded-full border-2 ${borderClass} ${bgClass} cursor-grab active:cursor-grabbing select-none w-[54px] h-[54px] shrink-0`}
+      className={`flex items-center gap-1.5 rounded-md border-2 ${borderClass} ${bgClass} cursor-grab active:cursor-grabbing select-none w-[86px] h-[34px] px-1.5 shrink-0 shadow-sm`}
       title={`${player.firstName} ${player.lastName} (${player.position.primary})`}
     >
-      <span className="text-[10px] font-bold leading-none text-white">
+      <span className="text-[10px] font-bold leading-none text-white w-6 text-center">
         #{player.jerseyNumber}
       </span>
-      <span className="text-[9px] leading-tight text-zinc-200 truncate max-w-[48px] text-center">
-        {surname}
-      </span>
+      <div className="flex-1 min-w-0 leading-tight">
+        <span className="text-[9px] text-zinc-100 truncate block">{surname}</span>
+        <span className="text-[8px] text-zinc-300">{position}</span>
+      </div>
     </div>
   )
 }

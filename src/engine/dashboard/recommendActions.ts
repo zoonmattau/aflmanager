@@ -7,6 +7,7 @@ import { identifyExpiringContracts } from '@/engine/contracts/freeAgency'
 import { calculateClubSalaryTotal } from '@/engine/contracts/negotiation'
 import { resolveListConstraints, validateClubList } from '@/engine/rules/listRules'
 import { CAP_WARNING_THRESHOLD } from '@/engine/core/constants'
+import { isPlayerSuspended } from '@/engine/players/availability'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -313,13 +314,16 @@ function checkInjuredInLineup(
   severity: RecommendationSeverity,
 ): void {
   const lineupIds = new Set(Object.values(lineup))
-  const injured = Array.from(lineupIds).filter((id) => players[id]?.injury != null)
-  if (injured.length > 0) {
+  const unavailable = Array.from(lineupIds).filter((id) => {
+    const p = players[id]
+    return p?.injury != null || (p ? isPlayerSuspended(p) : false)
+  })
+  if (unavailable.length > 0) {
     recs.push({
       id: 'injured-in-lineup',
       type: 'injured-in-lineup',
-      title: `${injured.length} injured in lineup`,
-      description: 'You have injured players selected. Update your lineup.',
+      title: `${unavailable.length} unavailable in lineup`,
+      description: 'You have injured or suspended players selected. Update your lineup.',
       severity,
       linkTo: '/lineup',
     })

@@ -1,4 +1,5 @@
-import type { Player, PlayerPositionType } from '@/types/player'
+import type { LineupSlot, Player, PlayerPositionType } from '@/types/player'
+import { getRoleFitMultiplierForSlot } from '@/engine/player/roles'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -34,7 +35,9 @@ export function updateMoralePostMatch(
   selectedPlayerIds: Set<string>,
   clubId: string,
   won: boolean,
-  draw: boolean
+  draw: boolean,
+  leadershipBonus?: number,
+  cultureBuffer?: number,
 ): void {
   for (const player of Object.values(players)) {
     if (player.clubId !== clubId) continue
@@ -47,11 +50,23 @@ export function updateMoralePostMatch(
       } else if (draw) {
         player.morale += randInt(0, 1)
       } else {
-        // Lost
         player.morale -= randInt(1, 3)
       }
+
+      // Leadership bonus for selected players (not draws)
+      if (leadershipBonus !== undefined && !draw) {
+        player.morale += leadershipBonus
+      }
+
+      // Culture buffer: cushions losses, amplifies wins
+      if (cultureBuffer !== undefined && cultureBuffer !== 0) {
+        if (!won && !draw) {
+          player.morale += cultureBuffer
+        } else if (won) {
+          player.morale += Math.max(0, cultureBuffer)
+        }
+      }
     } else {
-      // Not selected – sitting on the sidelines
       const isYoung = player.age <= 21
 
       if (isYoung) {
@@ -61,30 +76,15 @@ export function updateMoralePostMatch(
       } else {
         player.morale -= randInt(1, 2)
       }
+
+      // Culture buffer for non-selected players (halved)
+      if (cultureBuffer !== undefined && cultureBuffer !== 0) {
+        player.morale += Math.round(cultureBuffer / 2)
+      }
     }
 
     player.morale = clampMorale(player.morale)
   }
-}
-
-// ---------------------------------------------------------------------------
-// Contract-related morale
-// ---------------------------------------------------------------------------
-
-/**
- * Adjusts a single player's morale based on their contract situation.
- *
- * - 1 year remaining & morale > 50: -1 (mild anxiety)
- * - 0 years remaining (out of contract): -5
- */
-export function updateMoraleContractStatus(player: Player): void {
-  if (player.contract.yearsRemaining === 0) {
-    player.morale -= 5
-  } else if (player.contract.yearsRemaining <= 1 && player.morale > 50) {
-    player.morale -= 1
-  }
-
-  player.morale = clampMorale(player.morale)
 }
 
 // ---------------------------------------------------------------------------
@@ -127,39 +127,48 @@ export function getMoraleModifier(morale: number): number {
 }
 
 // ---------------------------------------------------------------------------
-// Role dispute morale (out-of-position penalty)
+// Role dispute morale (out-of-position/out-of-role penalty)
 // ---------------------------------------------------------------------------
 
 /**
- * Apply morale penalties when a player is played out of position.
+ * Apply morale penalties when a player is played out of position and role.
  *
  * - Primary position match: no effect
  * - Secondary position match: -1 morale
  * - No match: -3 to -5 based on temperament
- *
- * When disabled (enabled = false), this is a no-op.
+ * - Role mismatch for assigned slot: additional -1 to -2
  */
 export function applyRoleDisputeMorale(
   player: Player,
   assignedPosition: PlayerPositionType,
   enabled: boolean,
+  assignedSlot?: LineupSlot,
 ): void {
   if (!enabled) return
 
-  // Primary position match — no penalty
   if (player.position.primary === assignedPosition) return
 
-  // Secondary position match — mild penalty
   if (player.position.secondary.includes(assignedPosition)) {
-    player.morale -= 1
+    let penalty = 1
+    if (assignedSlot) {
+      const roleFit = getRoleFitMultiplierForSlot(player.preferredRole, assignedSlot)
+      if (roleFit <= 0.9) penalty += 1
+    }
+    player.morale -= penalty
     player.morale = clampMorale(player.morale)
     return
   }
 
-  // No match — significant penalty based on temperament
-  // Higher temperament = more tolerant, lower penalty
-  const temperamentFactor = player.personality.temperament
-  const penalty = temperamentFactor >= 70 ? 3 : temperamentFactor >= 40 ? 4 : 5
+  const temperament = player.personality.temperament
+  let penalty = temperament >= 70 ? 3 : temperament >= 40 ? 4 : 5
+
+  if (assignedSlot) {
+    const roleFit = getRoleFitMultiplierForSlot(player.preferredRole, assignedSlot)
+    if (roleFit < 1) {
+      penalty += roleFit <= 0.9 ? 2 : 1
+    }
+  }
+
   player.morale -= penalty
   player.morale = clampMorale(player.morale)
 }

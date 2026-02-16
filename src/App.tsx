@@ -27,6 +27,8 @@ import { CalendarPage } from '@/pages/CalendarPage'
 import { ReservesPage } from '@/pages/ReservesPage'
 import { StateLeaguePage } from '@/pages/StateLeaguePage'
 import { BrownlowNightPage } from '@/pages/BrownlowNightPage'
+import { PlayerDevelopmentReportPage } from '@/pages/PlayerDevelopmentReportPage'
+import { InjuryReportPage } from '@/pages/InjuryReportPage'
 import { useGameStore } from '@/stores/gameStore'
 
 export default function App() {
@@ -69,6 +71,8 @@ export default function App() {
                 <Route path="/offseason" element={<OffseasonPage />} />
                 <Route path="/expansion" element={<ExpansionPage />} />
                 <Route path="/brownlow-night" element={<BrownlowNightPage />} />
+                <Route path="/development-report" element={<PlayerDevelopmentReportPage />} />
+                <Route path="/injury-report" element={<InjuryReportPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </AppLayout>

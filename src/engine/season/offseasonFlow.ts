@@ -17,6 +17,8 @@ import type { WeekSchedule } from '@/types/calendar'
 import type { TrainingFocus } from '@/engine/training/trainingEngine'
 import { recordDraftPick } from '@/engine/history/historyEngine'
 import { getCoachingImpact } from '@/engine/staff/staffEngine'
+import { autoSelectLeadership } from '@/engine/leadership/leadershipEngine'
+import { getCultureDevelopmentModifier } from '@/engine/culture/cultureEngine'
 
 import {
   processEndOfSeasonContracts,
@@ -355,19 +357,6 @@ function inferClubTrainingFocus(
   return 'game-sense'
 }
 
-function computeClubCultureModifier(
-  players: Record<string, Player>,
-  clubId: string,
-): number {
-  const roster = Object.values(players).filter((p) => p.clubId === clubId)
-  if (roster.length === 0) return 1
-  const avgMorale = roster.reduce((s, p) => s + p.morale, 0) / roster.length
-  const avgProfessionalism = roster.reduce((s, p) => s + p.personality.professionalism, 0) / roster.length
-  const avgTeamPlayer = roster.reduce((s, p) => s + p.personality.teamPlayer, 0) / roster.length
-  const score = (avgMorale * 0.35 + avgProfessionalism * 0.4 + avgTeamPlayer * 0.25) / 100
-  return Math.max(0.85, Math.min(1.2, 0.82 + score * 0.4))
-}
-
 function computeFacilityDevelopmentModifier(club: Club): number {
   const f = club.facilities
   const weighted = (
@@ -498,7 +487,7 @@ export function processSeasonEnd(
       ),
     )
     const facilitiesModifier = computeFacilityDevelopmentModifier(club)
-    const cultureModifier = computeClubCultureModifier(players, club.id)
+    const cultureModifier = getCultureDevelopmentModifier(club.culture)
     const trainingFocus = inferClubTrainingFocus(
       club,
       club.id === playerClubId ? weekSchedule : undefined,
@@ -1209,6 +1198,7 @@ export function processAIDraft(
       pick.clubId,
       currentYear,
       pick.pickNumber,
+      rng,
     )
 
     // Add player to the updated players record
@@ -1340,6 +1330,11 @@ export function processPreseason(
     player.fatigue = rng.nextInt(0, 10)
     player.form = rng.nextInt(40, 60)
     player.injury = null
+  }
+
+  // Re-select leadership for all clubs (roster may have changed during offseason)
+  for (const club of Object.values(clubs)) {
+    club.leadership = autoSelectLeadership(updatedPlayers, club.id)
   }
 
   return updatedPlayers

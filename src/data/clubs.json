@@ -31,13 +31,13 @@
     },
     "draftPicks": [],
     "gameplan": {
-      "offensiveStyle": "balanced",
+      "offensiveStyle": "attacking",
       "tempo": "medium",
       "aggression": "medium",
-      "kickInTactic": "set-up-short",
+      "kickInTactic": "set-up-long",
       "centreTactic": "balanced",
       "stoppageTactic": "balanced",
-      "defensiveLine": "zone",
+      "defensiveLine": "hold",
       "midfieldLine": "run",
       "forwardLine": "press",
       "ruckNomination": {
@@ -47,9 +47,10 @@
       },
       "rotations": "medium"
     },
+    "tacticalIdentity": "corridor-heavy",
     "aiPersonality": {
       "competitiveWindow": "balanced",
-      "draftPhilosophy": "best-available",
+      "draftPhilosophy": "positional-need",
       "riskTolerance": "moderate",
       "tradeActivity": "moderate"
     }
@@ -86,11 +87,11 @@
     },
     "draftPicks": [],
     "gameplan": {
-      "offensiveStyle": "balanced",
-      "tempo": "medium",
+      "offensiveStyle": "attacking",
+      "tempo": "fast",
       "aggression": "medium",
-      "kickInTactic": "set-up-short",
-      "centreTactic": "balanced",
+      "kickInTactic": "play-on-short",
+      "centreTactic": "spread",
       "stoppageTactic": "balanced",
       "defensiveLine": "zone",
       "midfieldLine": "run",
@@ -100,13 +101,14 @@
         "backupRuckId": null,
         "aroundTheGround": false
       },
-      "rotations": "medium"
+      "rotations": "high"
     },
+    "tacticalIdentity": "fast-movement",
     "aiPersonality": {
-      "competitiveWindow": "balanced",
+      "competitiveWindow": "win-now",
       "draftPhilosophy": "best-available",
-      "riskTolerance": "moderate",
-      "tradeActivity": "moderate"
+      "riskTolerance": "aggressive",
+      "tradeActivity": "active"
     }
   },
   {
@@ -142,25 +144,26 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium",
+      "aggression": "high",
       "kickInTactic": "set-up-short",
-      "centreTactic": "balanced",
-      "stoppageTactic": "balanced",
+      "centreTactic": "cluster",
+      "stoppageTactic": "cluster",
       "defensiveLine": "zone",
-      "midfieldLine": "run",
+      "midfieldLine": "press",
       "forwardLine": "press",
       "ruckNomination": {
         "primaryRuckId": null,
         "backupRuckId": null,
         "aroundTheGround": false
       },
-      "rotations": "medium"
+      "rotations": "low"
     },
+    "tacticalIdentity": "contested",
     "aiPersonality": {
-      "competitiveWindow": "balanced",
+      "competitiveWindow": "win-now",
       "draftPhilosophy": "best-available",
       "riskTolerance": "moderate",
-      "tradeActivity": "moderate"
+      "tradeActivity": "active"
     }
   },
   {
@@ -196,24 +199,25 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium",
+      "aggression": "high",
       "kickInTactic": "set-up-short",
-      "centreTactic": "balanced",
-      "stoppageTactic": "balanced",
+      "centreTactic": "cluster",
+      "stoppageTactic": "cluster",
       "defensiveLine": "zone",
-      "midfieldLine": "run",
+      "midfieldLine": "press",
       "forwardLine": "press",
       "ruckNomination": {
         "primaryRuckId": null,
         "backupRuckId": null,
         "aroundTheGround": false
       },
-      "rotations": "medium"
+      "rotations": "low"
     },
+    "tacticalIdentity": "contested",
     "aiPersonality": {
-      "competitiveWindow": "balanced",
-      "draftPhilosophy": "best-available",
-      "riskTolerance": "moderate",
+      "competitiveWindow": "win-now",
+      "draftPhilosophy": "positional-need",
+      "riskTolerance": "aggressive",
       "tradeActivity": "moderate"
     }
   },
@@ -248,13 +252,13 @@
     },
     "draftPicks": [],
     "gameplan": {
-      "offensiveStyle": "balanced",
+      "offensiveStyle": "attacking",
       "tempo": "medium",
       "aggression": "medium",
-      "kickInTactic": "set-up-short",
+      "kickInTactic": "set-up-long",
       "centreTactic": "balanced",
       "stoppageTactic": "balanced",
-      "defensiveLine": "zone",
+      "defensiveLine": "hold",
       "midfieldLine": "run",
       "forwardLine": "press",
       "ruckNomination": {
@@ -264,11 +268,12 @@
       },
       "rotations": "medium"
     },
+    "tacticalIdentity": "corridor-heavy",
     "aiPersonality": {
       "competitiveWindow": "balanced",
       "draftPhilosophy": "best-available",
-      "riskTolerance": "moderate",
-      "tradeActivity": "moderate"
+      "riskTolerance": "aggressive",
+      "tradeActivity": "active"
     }
   },
   {
@@ -303,14 +308,14 @@
     },
     "draftPicks": [],
     "gameplan": {
-      "offensiveStyle": "balanced",
-      "tempo": "medium",
+      "offensiveStyle": "defensive",
+      "tempo": "slow",
       "aggression": "medium",
       "kickInTactic": "set-up-short",
       "centreTactic": "balanced",
       "stoppageTactic": "balanced",
-      "defensiveLine": "zone",
-      "midfieldLine": "run",
+      "defensiveLine": "press",
+      "midfieldLine": "press",
       "forwardLine": "press",
       "ruckNomination": {
         "primaryRuckId": null,
@@ -319,9 +324,10 @@
       },
       "rotations": "medium"
     },
+    "tacticalIdentity": "defensive",
     "aiPersonality": {
       "competitiveWindow": "balanced",
-      "draftPhilosophy": "best-available",
+      "draftPhilosophy": "high-upside",
       "riskTolerance": "moderate",
       "tradeActivity": "moderate"
     }
@@ -361,11 +367,11 @@
       "tempo": "medium",
       "aggression": "medium",
       "kickInTactic": "set-up-short",
-      "centreTactic": "balanced",
-      "stoppageTactic": "balanced",
+      "centreTactic": "cluster",
+      "stoppageTactic": "cluster",
       "defensiveLine": "zone",
       "midfieldLine": "run",
-      "forwardLine": "press",
+      "forwardLine": "hold",
       "ruckNomination": {
         "primaryRuckId": null,
         "backupRuckId": null,
@@ -373,11 +379,12 @@
       },
       "rotations": "medium"
     },
+    "tacticalIdentity": "stoppage-focused",
     "aiPersonality": {
-      "competitiveWindow": "balanced",
+      "competitiveWindow": "win-now",
       "draftPhilosophy": "best-available",
-      "riskTolerance": "moderate",
-      "tradeActivity": "moderate"
+      "riskTolerance": "aggressive",
+      "tradeActivity": "active"
     }
   },
   {
@@ -412,11 +419,11 @@
     },
     "draftPicks": [],
     "gameplan": {
-      "offensiveStyle": "balanced",
-      "tempo": "medium",
+      "offensiveStyle": "attacking",
+      "tempo": "fast",
       "aggression": "medium",
-      "kickInTactic": "set-up-short",
-      "centreTactic": "balanced",
+      "kickInTactic": "play-on-short",
+      "centreTactic": "spread",
       "stoppageTactic": "balanced",
       "defensiveLine": "zone",
       "midfieldLine": "run",
@@ -426,13 +433,14 @@
         "backupRuckId": null,
         "aroundTheGround": false
       },
-      "rotations": "medium"
+      "rotations": "high"
     },
+    "tacticalIdentity": "fast-movement",
     "aiPersonality": {
-      "competitiveWindow": "balanced",
-      "draftPhilosophy": "best-available",
+      "competitiveWindow": "rebuilding",
+      "draftPhilosophy": "high-upside",
       "riskTolerance": "moderate",
-      "tradeActivity": "moderate"
+      "tradeActivity": "passive"
     }
   },
   {
@@ -469,23 +477,24 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium",
+      "aggression": "high",
       "kickInTactic": "set-up-short",
-      "centreTactic": "balanced",
-      "stoppageTactic": "balanced",
+      "centreTactic": "cluster",
+      "stoppageTactic": "cluster",
       "defensiveLine": "zone",
-      "midfieldLine": "run",
+      "midfieldLine": "press",
       "forwardLine": "press",
       "ruckNomination": {
         "primaryRuckId": null,
         "backupRuckId": null,
         "aroundTheGround": false
       },
-      "rotations": "medium"
+      "rotations": "low"
     },
+    "tacticalIdentity": "contested",
     "aiPersonality": {
       "competitiveWindow": "balanced",
-      "draftPhilosophy": "best-available",
+      "draftPhilosophy": "positional-need",
       "riskTolerance": "moderate",
       "tradeActivity": "moderate"
     }
@@ -522,11 +531,11 @@
     },
     "draftPicks": [],
     "gameplan": {
-      "offensiveStyle": "balanced",
-      "tempo": "medium",
+      "offensiveStyle": "attacking",
+      "tempo": "fast",
       "aggression": "medium",
-      "kickInTactic": "set-up-short",
-      "centreTactic": "balanced",
+      "kickInTactic": "play-on-short",
+      "centreTactic": "spread",
       "stoppageTactic": "balanced",
       "defensiveLine": "zone",
       "midfieldLine": "run",
@@ -536,13 +545,14 @@
         "backupRuckId": null,
         "aroundTheGround": false
       },
-      "rotations": "medium"
+      "rotations": "high"
     },
+    "tacticalIdentity": "fast-movement",
     "aiPersonality": {
       "competitiveWindow": "balanced",
       "draftPhilosophy": "best-available",
-      "riskTolerance": "moderate",
-      "tradeActivity": "moderate"
+      "riskTolerance": "aggressive",
+      "tradeActivity": "active"
     }
   },
   {
@@ -578,23 +588,24 @@
     "gameplan": {
       "offensiveStyle": "balanced",
       "tempo": "medium",
-      "aggression": "medium",
+      "aggression": "high",
       "kickInTactic": "set-up-short",
-      "centreTactic": "balanced",
-      "stoppageTactic": "balanced",
+      "centreTactic": "cluster",
+      "stoppageTactic": "cluster",
       "defensiveLine": "zone",
-      "midfieldLine": "run",
+      "midfieldLine": "press",
       "forwardLine": "press",
       "ruckNomination": {
         "primaryRuckId": null,
         "backupRuckId": null,
         "aroundTheGround": false
       },
-      "rotations": "medium"
+      "rotations": "low"
     },
+    "tacticalIdentity": "contested",
     "aiPersonality": {
-      "competitiveWindow": "balanced",
-      "draftPhilosophy": "best-available",
+      "competitiveWindow": "win-now",
+      "draftPhilosophy": "positional-need",
       "riskTolerance": "moderate",
       "tradeActivity": "moderate"
     }
@@ -631,14 +642,14 @@
     },
     "draftPicks": [],
     "gameplan": {
-      "offensiveStyle": "balanced",
-      "tempo": "medium",
+      "offensiveStyle": "defensive",
+      "tempo": "slow",
       "aggression": "medium",
       "kickInTactic": "set-up-short",
       "centreTactic": "balanced",
       "stoppageTactic": "balanced",
-      "defensiveLine": "zone",
-      "midfieldLine": "run",
+      "defensiveLine": "press",
+      "midfieldLine": "press",
       "forwardLine": "press",
       "ruckNomination": {
         "primaryRuckId": null,
@@ -647,11 +658,12 @@
       },
       "rotations": "medium"
     },
+    "tacticalIdentity": "defensive",
     "aiPersonality": {
-      "competitiveWindow": "balanced",
-      "draftPhilosophy": "best-available",
-      "riskTolerance": "moderate",
-      "tradeActivity": "moderate"
+      "competitiveWindow": "rebuilding",
+      "draftPhilosophy": "high-upside",
+      "riskTolerance": "conservative",
+      "tradeActivity": "passive"
     }
   },
   {
@@ -690,11 +702,11 @@
       "tempo": "medium",
       "aggression": "medium",
       "kickInTactic": "set-up-short",
-      "centreTactic": "balanced",
-      "stoppageTactic": "balanced",
+      "centreTactic": "cluster",
+      "stoppageTactic": "cluster",
       "defensiveLine": "zone",
       "midfieldLine": "run",
-      "forwardLine": "press",
+      "forwardLine": "hold",
       "ruckNomination": {
         "primaryRuckId": null,
         "backupRuckId": null,
@@ -702,9 +714,10 @@
       },
       "rotations": "medium"
     },
+    "tacticalIdentity": "stoppage-focused",
     "aiPersonality": {
-      "competitiveWindow": "balanced",
-      "draftPhilosophy": "best-available",
+      "competitiveWindow": "win-now",
+      "draftPhilosophy": "positional-need",
       "riskTolerance": "moderate",
       "tradeActivity": "moderate"
     }
@@ -740,14 +753,14 @@
     },
     "draftPicks": [],
     "gameplan": {
-      "offensiveStyle": "balanced",
-      "tempo": "medium",
+      "offensiveStyle": "defensive",
+      "tempo": "slow",
       "aggression": "medium",
       "kickInTactic": "set-up-short",
       "centreTactic": "balanced",
       "stoppageTactic": "balanced",
-      "defensiveLine": "zone",
-      "midfieldLine": "run",
+      "defensiveLine": "press",
+      "midfieldLine": "press",
       "forwardLine": "press",
       "ruckNomination": {
         "primaryRuckId": null,
@@ -756,11 +769,12 @@
       },
       "rotations": "medium"
     },
+    "tacticalIdentity": "defensive",
     "aiPersonality": {
-      "competitiveWindow": "balanced",
-      "draftPhilosophy": "best-available",
+      "competitiveWindow": "rebuilding",
+      "draftPhilosophy": "high-upside",
       "riskTolerance": "moderate",
-      "tradeActivity": "moderate"
+      "tradeActivity": "active"
     }
   },
   {
@@ -795,13 +809,13 @@
     },
     "draftPicks": [],
     "gameplan": {
-      "offensiveStyle": "balanced",
+      "offensiveStyle": "attacking",
       "tempo": "medium",
       "aggression": "medium",
-      "kickInTactic": "set-up-short",
+      "kickInTactic": "set-up-long",
       "centreTactic": "balanced",
       "stoppageTactic": "balanced",
-      "defensiveLine": "zone",
+      "defensiveLine": "hold",
       "midfieldLine": "run",
       "forwardLine": "press",
       "ruckNomination": {
@@ -811,6 +825,7 @@
       },
       "rotations": "medium"
     },
+    "tacticalIdentity": "corridor-heavy",
     "aiPersonality": {
       "competitiveWindow": "balanced",
       "draftPhilosophy": "best-available",
@@ -849,14 +864,14 @@
     },
     "draftPicks": [],
     "gameplan": {
-      "offensiveStyle": "balanced",
-      "tempo": "medium",
+      "offensiveStyle": "defensive",
+      "tempo": "slow",
       "aggression": "medium",
       "kickInTactic": "set-up-short",
       "centreTactic": "balanced",
       "stoppageTactic": "balanced",
-      "defensiveLine": "zone",
-      "midfieldLine": "run",
+      "defensiveLine": "press",
+      "midfieldLine": "press",
       "forwardLine": "press",
       "ruckNomination": {
         "primaryRuckId": null,
@@ -865,10 +880,11 @@
       },
       "rotations": "medium"
     },
+    "tacticalIdentity": "defensive",
     "aiPersonality": {
-      "competitiveWindow": "balanced",
-      "draftPhilosophy": "best-available",
-      "riskTolerance": "moderate",
+      "competitiveWindow": "win-now",
+      "draftPhilosophy": "positional-need",
+      "riskTolerance": "conservative",
       "tradeActivity": "moderate"
     }
   },
@@ -903,13 +919,13 @@
     },
     "draftPicks": [],
     "gameplan": {
-      "offensiveStyle": "balanced",
+      "offensiveStyle": "attacking",
       "tempo": "medium",
       "aggression": "medium",
-      "kickInTactic": "set-up-short",
+      "kickInTactic": "set-up-long",
       "centreTactic": "balanced",
       "stoppageTactic": "balanced",
-      "defensiveLine": "zone",
+      "defensiveLine": "hold",
       "midfieldLine": "run",
       "forwardLine": "press",
       "ruckNomination": {
@@ -919,11 +935,12 @@
       },
       "rotations": "medium"
     },
+    "tacticalIdentity": "corridor-heavy",
     "aiPersonality": {
-      "competitiveWindow": "balanced",
-      "draftPhilosophy": "best-available",
+      "competitiveWindow": "rebuilding",
+      "draftPhilosophy": "high-upside",
       "riskTolerance": "moderate",
-      "tradeActivity": "moderate"
+      "tradeActivity": "active"
     }
   },
   {
@@ -958,11 +975,11 @@
     },
     "draftPicks": [],
     "gameplan": {
-      "offensiveStyle": "balanced",
-      "tempo": "medium",
+      "offensiveStyle": "attacking",
+      "tempo": "fast",
       "aggression": "medium",
-      "kickInTactic": "set-up-short",
-      "centreTactic": "balanced",
+      "kickInTactic": "play-on-short",
+      "centreTactic": "spread",
       "stoppageTactic": "balanced",
       "defensiveLine": "zone",
       "midfieldLine": "run",
@@ -972,13 +989,14 @@
         "backupRuckId": null,
         "aroundTheGround": false
       },
-      "rotations": "medium"
+      "rotations": "high"
     },
+    "tacticalIdentity": "fast-movement",
     "aiPersonality": {
       "competitiveWindow": "balanced",
       "draftPhilosophy": "best-available",
-      "riskTolerance": "moderate",
-      "tradeActivity": "moderate"
+      "riskTolerance": "aggressive",
+      "tradeActivity": "active"
     }
   }
 ]

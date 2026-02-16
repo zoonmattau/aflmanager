@@ -1,6 +1,11 @@
 import type { SeededRNG } from '@/engine/core/rng'
 import type {
+  DraftClassProfile,
   DraftProspect,
+  DraftArchetype,
+  DraftRole,
+  DraftLinkedType,
+  HomeState,
   ScoutingRegion,
   ScoutingReport,
 } from '@/types/draft'
@@ -12,35 +17,31 @@ import type {
 } from '@/types/player'
 import { FIRST_NAMES, LAST_NAMES } from '@/data/names'
 import u18RegionsJson from '@/data/u18Regions.json'
+import sanflClubsJson from '@/data/sanflClubs.json'
+import waflClubsJson from '@/data/waflClubs.json'
+import tflClubsJson from '@/data/tflClubs.json'
+import ntflClubsJson from '@/data/ntflClubs.json'
+import clubsJson from '@/data/clubs.json'
 
-// ── Constants ────────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 /** Total number of prospects to generate per draft class. */
 const DRAFT_CLASS_SIZE = 80
 
 /** All 52 attribute keys on PlayerAttributes. */
 const ALL_ATTRIBUTE_KEYS: (keyof PlayerAttributes)[] = [
-  // Kicking (5)
   'kickingEfficiency', 'kickingDistance', 'setShot', 'dropPunt', 'snap',
-  // Handball (3)
   'handballEfficiency', 'handballDistance', 'handballReceive',
-  // Marking (4)
   'markingOverhead', 'markingLeading', 'markingContested', 'markingUncontested',
-  // Physical (7)
   'speed', 'acceleration', 'endurance', 'strength', 'agility', 'leap', 'recovery',
-  // Contested (4)
   'tackling', 'contested', 'clearance', 'hardness',
-  // Game Sense (6)
   'disposalDecision', 'fieldKicking', 'positioning', 'creativity', 'anticipation', 'composure',
-  // Offensive (5)
   'goalkicking', 'groundBallGet', 'insideForward', 'leadingPatterns', 'scoringInstinct',
-  // Defensive (5)
   'intercept', 'spoiling', 'oneOnOne', 'zonalAwareness', 'rebounding',
-  // Ruck (3)
   'hitouts', 'ruckCreative', 'followUp',
-  // Mental (7)
   'pressure', 'leadership', 'workRate', 'consistency', 'determination', 'teamPlayer', 'clutch',
-  // Set Pieces (3)
   'centreBounce', 'boundaryThrowIn', 'stoppage',
 ]
 
@@ -51,18 +52,14 @@ const CLUB_IDS: string[] = [
   'portadelaide', 'richmond', 'stjilda', 'sydney', 'westcoast', 'western-bulldogs',
 ]
 
-// ── Tier configuration ───────────────────────────────────────────────────────
-
 type ProspectTier = DraftProspect['tier']
 
 interface TierConfig {
   baseMin: number
   baseMax: number
   biasMax: number
-  /** Range for projectedPick within this tier (inclusive). */
   pickRangeMin: number
   pickRangeMax: number
-  /** Range for hidden potentialCeiling. */
   ceilingMin: number
   ceilingMax: number
 }
@@ -70,22 +67,22 @@ interface TierConfig {
 const TIER_CONFIG: Record<ProspectTier, TierConfig> = {
   elite: {
     baseMin: 55, baseMax: 75, biasMax: 85,
-    pickRangeMin: 1, pickRangeMax: 5,
+    pickRangeMin: 1, pickRangeMax: 6,
     ceilingMin: 80, ceilingMax: 95,
   },
   'first-round': {
     baseMin: 45, baseMax: 65, biasMax: 75,
-    pickRangeMin: 3, pickRangeMax: 18,
+    pickRangeMin: 3, pickRangeMax: 20,
     ceilingMin: 65, ceilingMax: 85,
   },
   'second-round': {
     baseMin: 35, baseMax: 55, biasMax: 65,
-    pickRangeMin: 19, pickRangeMax: 40,
+    pickRangeMin: 16, pickRangeMax: 42,
     ceilingMin: 55, ceilingMax: 75,
   },
   late: {
     baseMin: 25, baseMax: 45, biasMax: 55,
-    pickRangeMin: 35, pickRangeMax: 65,
+    pickRangeMin: 32, pickRangeMax: 65,
     ceilingMin: 40, ceilingMax: 65,
   },
   'rookie-list': {
@@ -95,19 +92,99 @@ const TIER_CONFIG: Record<ProspectTier, TierConfig> = {
   },
 }
 
-/**
- * Quality distribution targets.
- * Each entry is [tier, min, max] where min-max is the count range.
- */
-const TIER_DISTRIBUTION: [ProspectTier, number, number][] = [
-  ['elite', 3, 4],
-  ['first-round', 10, 12],
-  ['second-round', 20, 25],
-  ['late', 25, 30],
-  // Remainder fills rookie-list
-]
+interface ClassStrengthTuning {
+  strength: DraftClassProfile['strength']
+  weight: number
+  scoreMin: number
+  scoreMax: number
+  topEndMin: number
+  topEndMax: number
+  depthMin: number
+  depthMax: number
+  attributeShift: number
+  potentialShift: number
+  tierDistribution: {
+    elite: [number, number]
+    firstRound: [number, number]
+    secondRound: [number, number]
+    late: [number, number]
+  }
+}
 
-// ── Region & position weighting ──────────────────────────────────────────────
+const CLASS_STRENGTH_TUNINGS: ClassStrengthTuning[] = [
+  {
+    strength: 'weak',
+    weight: 0.18,
+    scoreMin: 30,
+    scoreMax: 49,
+    topEndMin: 2,
+    topEndMax: 4,
+    depthMin: 30,
+    depthMax: 46,
+    attributeShift: -4,
+    potentialShift: -5,
+    tierDistribution: {
+      elite: [1, 2],
+      firstRound: [7, 10],
+      secondRound: [17, 22],
+      late: [28, 34],
+    },
+  },
+  {
+    strength: 'average',
+    weight: 0.44,
+    scoreMin: 50,
+    scoreMax: 67,
+    topEndMin: 4,
+    topEndMax: 7,
+    depthMin: 47,
+    depthMax: 61,
+    attributeShift: 0,
+    potentialShift: 0,
+    tierDistribution: {
+      elite: [3, 4],
+      firstRound: [10, 12],
+      secondRound: [20, 25],
+      late: [25, 30],
+    },
+  },
+  {
+    strength: 'strong',
+    weight: 0.28,
+    scoreMin: 68,
+    scoreMax: 86,
+    topEndMin: 7,
+    topEndMax: 11,
+    depthMin: 62,
+    depthMax: 78,
+    attributeShift: 3,
+    potentialShift: 4,
+    tierDistribution: {
+      elite: [4, 6],
+      firstRound: [12, 15],
+      secondRound: [22, 28],
+      late: [21, 27],
+    },
+  },
+  {
+    strength: 'generational',
+    weight: 0.10,
+    scoreMin: 87,
+    scoreMax: 99,
+    topEndMin: 10,
+    topEndMax: 15,
+    depthMin: 72,
+    depthMax: 90,
+    attributeShift: 6,
+    potentialShift: 8,
+    tierDistribution: {
+      elite: [6, 8],
+      firstRound: [15, 19],
+      secondRound: [24, 30],
+      late: [16, 23],
+    },
+  },
+]
 
 interface WeightedEntry<T> {
   value: T
@@ -120,7 +197,8 @@ const REGION_WEIGHTS: WeightedEntry<ScoutingRegion>[] = [
   { value: 'WA', weight: 0.20 },
   { value: 'NSW/ACT', weight: 0.15 },
   { value: 'QLD', weight: 0.10 },
-  { value: 'TAS/NT', weight: 0.05 },
+  { value: 'TAS', weight: 0.03 },
+  { value: 'NT', weight: 0.02 },
 ]
 
 const POSITION_WEIGHTS: WeightedEntry<PlayerPositionType>[] = [
@@ -138,7 +216,6 @@ const POSITION_WEIGHTS: WeightedEntry<PlayerPositionType>[] = [
   { value: 'RK', weight: 0.10 },
 ]
 
-/** Attribute keys that receive a bias boost for each primary position. */
 const POSITION_BIAS_KEYS: Record<PlayerPositionType, (keyof PlayerAttributes)[]> = {
   BP: ['spoiling', 'oneOnOne', 'speed', 'zonalAwareness', 'intercept'],
   FB: ['intercept', 'spoiling', 'oneOnOne', 'markingContested', 'zonalAwareness'],
@@ -154,7 +231,6 @@ const POSITION_BIAS_KEYS: Record<PlayerPositionType, (keyof PlayerAttributes)[]>
   FF: ['goalkicking', 'scoringInstinct', 'insideForward', 'markingContested', 'snap'],
 }
 
-/** Secondary position affinities per primary position. */
 const SECONDARY_POSITION_MAP: Record<PlayerPositionType, PlayerPositionType[]> = {
   BP: ['FB', 'HBF'],
   FB: ['BP', 'CHB'],
@@ -170,7 +246,56 @@ const SECONDARY_POSITION_MAP: Record<PlayerPositionType, PlayerPositionType[]> =
   FF: ['CHF', 'FP'],
 }
 
-// ── Height / weight ranges per position ──────────────────────────────────────
+const ARCHETYPES_BY_POSITION: Record<PlayerPositionType, { archetype: DraftArchetype; role: DraftRole }[]> = {
+  BP: [
+    { archetype: 'lockdown-defender', role: 'shutdown' },
+    { archetype: 'rebound-defender', role: 'line-breaker' },
+  ],
+  FB: [
+    { archetype: 'lockdown-defender', role: 'shutdown' },
+    { archetype: 'intercept-defender', role: 'aerial-threat' },
+  ],
+  HBF: [
+    { archetype: 'rebound-defender', role: 'line-breaker' },
+    { archetype: 'intercept-defender', role: 'utility' },
+  ],
+  CHB: [
+    { archetype: 'intercept-defender', role: 'aerial-threat' },
+    { archetype: 'swingman', role: 'utility' },
+  ],
+  W: [
+    { archetype: 'two-way-wing', role: 'line-breaker' },
+    { archetype: 'outside-runner', role: 'utility' },
+  ],
+  IM: [
+    { archetype: 'inside-bull', role: 'ball-winner' },
+    { archetype: 'outside-runner', role: 'line-breaker' },
+  ],
+  OM: [
+    { archetype: 'outside-runner', role: 'line-breaker' },
+    { archetype: 'two-way-wing', role: 'utility' },
+  ],
+  RK: [
+    { archetype: 'tap-ruck', role: 'ruck-craft' },
+    { archetype: 'mobile-ruck', role: 'utility' },
+  ],
+  HFF: [
+    { archetype: 'lead-up-forward', role: 'ground-pressure' },
+    { archetype: 'small-pressure-forward', role: 'ground-pressure' },
+  ],
+  CHF: [
+    { archetype: 'lead-up-forward', role: 'contested-mark' },
+    { archetype: 'power-forward', role: 'aerial-threat' },
+  ],
+  FP: [
+    { archetype: 'small-pressure-forward', role: 'ground-pressure' },
+    { archetype: 'lead-up-forward', role: 'line-breaker' },
+  ],
+  FF: [
+    { archetype: 'power-forward', role: 'contested-mark' },
+    { archetype: 'lead-up-forward', role: 'aerial-threat' },
+  ],
+}
 
 interface PhysicalRange {
   heightMin: number
@@ -194,14 +319,68 @@ const POSITION_PHYSICALS: Record<PlayerPositionType, PhysicalRange> = {
   FF: { heightMin: 185, heightMax: 200, weightMin: 86, weightMax: 100 },
 }
 
-// ── Utilities ────────────────────────────────────────────────────────────────
+interface U18Region {
+  id: string
+  name: string
+  state: string
+}
 
-/** Clamp a value between min and max inclusive. */
+const U18_REGIONS = u18RegionsJson as U18Region[]
+
+const SANFL_CLUB_NAMES = (sanflClubsJson as Array<{ name: string }>).map((c) => c.name)
+const WAFL_CLUB_NAMES = (waflClubsJson as Array<{ name: string }>).map((c) => c.name)
+const TFL_CLUB_NAMES = (tflClubsJson as Array<{ name: string }>).map((c) => c.name)
+const NTFL_CLUB_NAMES = (ntflClubsJson as Array<{ name: string }>).map((c) => c.name)
+const VFL_CLUB_NAMES = (clubsJson as Array<{ name: string }>).map((c) => `${c.name} VFL`)
+
+const SCHOOL_SYSTEM_NAMES: Record<string, string[]> = {
+  APS: ['Scotch College', 'Xavier College', 'Melbourne Grammar', 'Carey Grammar', 'Wesley College'],
+  AGSV: ['Marcellin College', 'Penleigh and Essendon Grammar', "St Bernard's", "Assumption College", 'Ivanhoe Grammar'],
+  'APS SA': ['Prince Alfred College', "St Peter's College", 'Pembroke School', 'Scotch College Adelaide', 'Westminster School'],
+  'PSA WA': ['Hale School', 'Scotch College WA', 'Wesley College WA', 'Aquinas College WA', 'Christ Church Grammar'],
+  'GPS QLD': ['Brisbane Grammar', 'Brisbane State High', 'Nudgee College', 'TSS', 'Anglican Church Grammar'],
+  'GPS NSW': ['Scots College', 'Shore', 'Kings School', 'St Josephs College', 'Sydney Grammar'],
+  CAS: ['Barker College', 'Knox Grammar', 'Cranbrook School', 'Waverley College', "Aloysius College"],
+  CHS: ['Westfields Sports High', 'Matraville Sports High', 'Hunter Sports High', 'Illawarra Sports High', 'Narrabeen Sports High'],
+  'ACT School Sport': ['Marist College Canberra', 'Daramalan College', 'Radford College', 'Canberra Grammar', 'St Edmunds College'],
+  'Tasmanian Colleges': ['Guilford Young College', 'St Patricks College', 'The Hutchins School', 'Launceston College', 'Rosny College'],
+  'NT Schools': ['Essington School', 'Darwin High School', 'Kormilda College', 'Palmerston College', 'Nightcliff Middle School'],
+  'WA School Sport': ['Aquinas Academy', 'Swan Coastal College', 'Perth Central College', 'Joondalup Senior College', 'Rockingham Sports College'],
+  'SANFL Schools': ['Sacred Heart College', 'Henley High School', 'Golden Grove High School', 'Glenunga International', 'Immanuel College'],
+  AIC: ['St Peters Lutheran', 'Padua College', 'Marist College Ashgrove', 'St Edmunds College', 'Villanova College'],
+  'Local Club': ['Local Junior League'],
+}
+
+const SCHOOL_SYSTEMS_BY_STATE: Record<HomeState, string[]> = {
+  VIC: ['APS', 'AGSV', 'Local Club'],
+  SA: ['APS SA', 'SANFL Schools', 'Local Club'],
+  WA: ['PSA WA', 'WA School Sport', 'Local Club'],
+  NSW: ['GPS NSW', 'CAS', 'CHS', 'Local Club'],
+  ACT: ['ACT School Sport', 'GPS NSW', 'Local Club'],
+  QLD: ['GPS QLD', 'AIC', 'Local Club'],
+  TAS: ['Tasmanian Colleges', 'Local Club'],
+  NT: ['NT Schools', 'Local Club'],
+}
+
+const JUNIOR_CLUBS_BY_STATE: Record<HomeState, string[]> = {
+  VIC: ['Oakleigh Chargers Juniors', 'Sandringham Dragons Juniors', 'Dandenong Stingrays Juniors', 'Gippsland Power Juniors', 'Western Jets Juniors'],
+  SA: ['Norwood Juniors', 'Glenelg Juniors', 'Sturt Juniors', 'West Adelaide Juniors', 'Woodville-West Torrens Juniors'],
+  WA: ['East Fremantle Juniors', 'Claremont Juniors', 'Subiaco Juniors', 'South Fremantle Juniors', 'Swan Districts Juniors'],
+  NSW: ['Sydney Swans Academy', 'GWS Academy', 'Sydney University Juniors', 'East Coast Eagles Juniors', 'Northern Beaches Juniors'],
+  ACT: ['Ainslie Juniors', 'Belconnen Juniors', 'Eastlake Juniors', 'Tuggeranong Juniors', 'Queanbeyan Juniors'],
+  QLD: ['Brisbane Lions Academy', 'Gold Coast Suns Academy', 'Aspley Juniors', 'Morningside Juniors', 'Broadbeach Juniors'],
+  TAS: ['North Hobart Juniors', 'Clarence Juniors', 'Launceston Juniors', 'Glenorchy Juniors', 'Burnie Dockers Juniors'],
+  NT: ['Nightcliff Juniors', 'St Marys Juniors', 'Waratah Juniors', 'Darwin Buffaloes Juniors', 'Tiwi Bombers Juniors'],
+}
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
-/** Pick a value from a weighted array using the RNG. */
 function pickWeighted<T>(entries: WeightedEntry<T>[], rng: SeededRNG): T {
   const roll = rng.nextFloat(0, 1)
   let cumulative = 0
@@ -209,53 +388,63 @@ function pickWeighted<T>(entries: WeightedEntry<T>[], rng: SeededRNG): T {
     cumulative += entry.weight
     if (roll < cumulative) return entry.value
   }
-  // Fallback to last entry (handles floating-point edge case)
   return entries[entries.length - 1].value
 }
 
-// ── Attribute generation ─────────────────────────────────────────────────────
+function pickClassStrengthTuning(rng: SeededRNG): ClassStrengthTuning {
+  const weighted: WeightedEntry<ClassStrengthTuning>[] = CLASS_STRENGTH_TUNINGS.map((t) => ({ value: t, weight: t.weight }))
+  return pickWeighted(weighted, rng)
+}
 
-/**
- * Generate the full 52-attribute set for a prospect based on tier and position.
- * Attributes in the position's bias set get a boost toward biasMax;
- * all other attributes are drawn from the tier's base range.
- */
+function resolveClassProfile(year: number, rng: SeededRNG): { profile: DraftClassProfile; tuning: ClassStrengthTuning } {
+  const tuning = pickClassStrengthTuning(rng)
+  const topEnd = rng.nextInt(tuning.topEndMin, tuning.topEndMax)
+  const depth = rng.nextInt(tuning.depthMin, tuning.depthMax)
+  const profile: DraftClassProfile = {
+    year,
+    strength: tuning.strength,
+    strengthScore: rng.nextInt(tuning.scoreMin, tuning.scoreMax),
+    topEndTalent: topEnd,
+    depthRating: depth,
+  }
+  return { profile, tuning }
+}
+
 function generateAttributes(
   tier: ProspectTier,
   primaryPosition: PlayerPositionType,
   rng: SeededRNG,
+  classAttributeShift: number,
 ): PlayerAttributes {
   const config = TIER_CONFIG[tier]
   const biasKeys = new Set(POSITION_BIAS_KEYS[primaryPosition])
-
   const attrs = {} as Record<keyof PlayerAttributes, number>
 
   for (const key of ALL_ATTRIBUTE_KEYS) {
     if (biasKeys.has(key)) {
-      // Biased attribute: draw from a wider range that reaches up to biasMax
-      attrs[key] = rng.nextInt(config.baseMin, config.biasMax)
+      attrs[key] = clamp(rng.nextInt(config.baseMin, config.biasMax) + classAttributeShift, 20, 99)
     } else {
-      attrs[key] = rng.nextInt(config.baseMin, config.baseMax)
+      attrs[key] = clamp(rng.nextInt(config.baseMin, config.baseMax) + classAttributeShift, 15, 95)
     }
   }
 
   return attrs as PlayerAttributes
 }
 
-// ── Hidden attributes ────────────────────────────────────────────────────────
-
 function generateHiddenAttributes(
   tier: ProspectTier,
   rng: SeededRNG,
+  classPotentialShift: number,
 ): HiddenAttributes {
   const config = TIER_CONFIG[tier]
 
-  const potentialCeiling = rng.nextInt(config.ceilingMin, config.ceilingMax)
+  const potentialCeiling = clamp(rng.nextInt(config.ceilingMin, config.ceilingMax) + classPotentialShift, 30, 99)
   const developmentRate = Math.round(rng.nextFloat(0.6, 1.8) * 100) / 100
   const peakAgeStart = rng.nextInt(24, 28)
   const peakAgeEnd = peakAgeStart + rng.nextInt(3, 6)
   const declineRate = Math.round(rng.nextFloat(0.5, 1.8) * 100) / 100
   const injuryProneness = rng.nextInt(5, 80)
+  const durability = clamp(100 - injuryProneness + rng.nextInt(-12, 12), 20, 95)
   const bigGameModifier = rng.nextInt(-10, 10)
 
   return {
@@ -265,11 +454,10 @@ function generateHiddenAttributes(
     peakAgeEnd,
     declineRate,
     injuryProneness,
+    durability,
     bigGameModifier,
   }
 }
-
-// ── Personality ──────────────────────────────────────────────────────────────
 
 function generatePersonality(rng: SeededRNG): PlayerPersonality {
   return {
@@ -280,113 +468,247 @@ function generatePersonality(rng: SeededRNG): PlayerPersonality {
   }
 }
 
-// ── Pathway ──────────────────────────────────────────────────────────────────
-
-function determinePathway(
-  region: ScoutingRegion,
-  rng: SeededRNG,
-): DraftProspect['pathway'] {
+function determinePathway(region: ScoutingRegion, rng: SeededRNG): DraftProspect['pathway'] {
   if (region === 'VIC') {
-    // VIC is mainly Coates Talent League, small chance of APS
-    return rng.chance(0.15) ? 'APS' : 'Coates Talent League'
+    const roll = rng.nextFloat(0, 1)
+    if (roll < 0.55) return 'Coates Talent League'
+    if (roll < 0.85) return 'APS'
+    return 'School Football'
   }
+
   if (region === 'SA' || region === 'WA') {
-    // SA/WA are primarily State League pathways
-    return rng.chance(0.1) ? 'Coates Talent League' : 'State League'
+    const roll = rng.nextFloat(0, 1)
+    if (roll < 0.55) return 'State League'
+    if (roll < 0.8) return 'School Football'
+    return 'Coates Talent League'
   }
-  // NSW/ACT, QLD, TAS/NT: mixed pathways
+
   const roll = rng.nextFloat(0, 1)
-  if (roll < 0.35) return 'Coates Talent League'
-  if (roll < 0.65) return 'State League'
-  if (roll < 0.95) return 'APS'
+  if (roll < 0.4) return 'State League'
+  if (roll < 0.7) return 'School Football'
+  if (roll < 0.9) return 'Coates Talent League'
   return 'International'
 }
 
-// ── Secondary positions ──────────────────────────────────────────────────────
+function determineHomeState(region: ScoutingRegion, rng: SeededRNG): HomeState {
+  switch (region) {
+    case 'VIC':
+      return 'VIC'
+    case 'SA':
+      return 'SA'
+    case 'WA':
+      return 'WA'
+    case 'QLD':
+      return 'QLD'
+    case 'NSW/ACT':
+      return rng.chance(0.75) ? 'NSW' : 'ACT'
+    case 'TAS':
+      return 'TAS'
+    case 'NT':
+      return 'NT'
+  }
+}
 
-function pickSecondaryPositions(
-  primary: PlayerPositionType,
-  rng: SeededRNG,
-): PlayerPositionType[] {
+function pickSecondaryPositions(primary: PlayerPositionType, rng: SeededRNG): PlayerPositionType[] {
   const candidates = SECONDARY_POSITION_MAP[primary]
   if (candidates.length === 0) return []
-
-  // 1-2 secondary positions
   const count = rng.chance(0.4) ? 2 : 1
-  const shuffled = rng.shuffle(candidates)
-  return shuffled.slice(0, Math.min(count, shuffled.length))
+  return rng.shuffle(candidates).slice(0, Math.min(count, candidates.length))
 }
 
-// ── U18 region assignment ────────────────────────────────────────────────
-
-interface U18Region {
-  id: string
-  name: string
-  state: string
+function pickArchetypeAndRole(primary: PlayerPositionType, rng: SeededRNG): { archetype: DraftArchetype; role: DraftRole } {
+  const options = ARCHETYPES_BY_POSITION[primary]
+  return rng.pick(options)
 }
-
-const U18_REGIONS = u18RegionsJson as U18Region[]
 
 function assignU18Club(
   region: ScoutingRegion,
   pathway: DraftProspect['pathway'],
   rng: SeededRNG,
 ): string | null {
-  // Only Coates Talent League prospects get a U18 club assignment
   if (pathway !== 'Coates Talent League') return null
 
-  // Map scouting region to state codes used in u18Regions.json
   const stateMap: Record<ScoutingRegion, string[]> = {
-    'VIC': ['VIC'],
-    'SA': ['VIC'],      // SA prospects in CTL play in VIC-based regions
-    'WA': ['VIC'],      // Same
+    VIC: ['VIC'],
+    SA: ['VIC'],
+    WA: ['VIC'],
     'NSW/ACT': ['VIC'],
-    'QLD': ['VIC'],
-    'TAS/NT': ['TAS', 'VIC'],
+    QLD: ['VIC'],
+    TAS: ['TAS', 'VIC'],
+    NT: ['VIC'],
   }
 
   const validStates = stateMap[region]
   const candidates = U18_REGIONS.filter((r) => validStates.includes(r.state))
   if (candidates.length === 0) return null
-
   return rng.pick(candidates).id
 }
 
-// ── Single prospect generation ───────────────────────────────────────────────
+function pickNationalU18Team(homeState: HomeState, rng: SeededRNG): DraftProspect['background']['nationalU18Team'] {
+  switch (homeState) {
+    case 'VIC':
+      return rng.chance(0.55) ? 'VIC Metro' : 'VIC Country'
+    case 'SA':
+      return 'SA'
+    case 'WA':
+      return 'WA'
+    case 'NSW':
+    case 'ACT':
+      return rng.chance(0.72) ? 'NSW/ACT' : 'Allies'
+    case 'QLD':
+      return rng.chance(0.72) ? 'QLD' : 'Allies'
+    case 'TAS':
+      return rng.chance(0.7) ? 'Tasmania' : 'Allies'
+    case 'NT':
+      return rng.chance(0.65) ? 'NT' : 'Allies'
+  }
+}
+
+function pickSchoolSystem(homeState: HomeState, pathway: DraftProspect['pathway'], rng: SeededRNG): string {
+  const systems = SCHOOL_SYSTEMS_BY_STATE[homeState]
+  if (pathway === 'APS') {
+    const apsLike = systems.filter((s) => s.includes('APS') || s === 'AGSV' || s === 'PSA WA' || s === 'GPS QLD' || s === 'GPS NSW' || s === 'CAS')
+    if (apsLike.length > 0) return rng.pick(apsLike)
+  }
+  if (pathway === 'State League') {
+    const nonSchool = systems.filter((s) => s !== 'APS' && s !== 'AGSV')
+    return rng.pick(nonSchool.length > 0 ? nonSchool : systems)
+  }
+  return rng.pick(systems)
+}
+
+function pickSchoolName(schoolSystem: string, rng: SeededRNG): string {
+  const candidates = SCHOOL_SYSTEM_NAMES[schoolSystem] ?? ['Regional Football Program']
+  if (candidates.length === 1 && candidates[0] === 'Local Junior League') {
+    return `${rng.pick(['North', 'South', 'East', 'West', 'Central'])} District Football College`
+  }
+  return rng.pick(candidates)
+}
+
+function pickStateLeagueClub(homeState: HomeState, pathway: DraftProspect['pathway'], rng: SeededRNG): { league: DraftProspect['background']['stateLeague']; club: string | null } {
+  const prob =
+    pathway === 'State League' ? 0.9 :
+    pathway === 'Coates Talent League' ? 0.35 :
+    pathway === 'APS' || pathway === 'School Football' ? 0.25 :
+    0.12
+
+  if (!rng.chance(prob)) return { league: null, club: null }
+
+  switch (homeState) {
+    case 'SA':
+      return { league: 'SANFL', club: rng.pick(SANFL_CLUB_NAMES) }
+    case 'WA':
+      return { league: 'WAFL', club: rng.pick(WAFL_CLUB_NAMES) }
+    case 'TAS':
+      return { league: 'TFL', club: rng.pick(TFL_CLUB_NAMES) }
+    case 'NT':
+      return { league: 'NTFL', club: rng.pick(NTFL_CLUB_NAMES) }
+    default:
+      return { league: 'VFL', club: rng.pick(VFL_CLUB_NAMES) }
+  }
+}
+
+function buildBackground(
+  homeState: HomeState,
+  pathway: DraftProspect['pathway'],
+  region: ScoutingRegion,
+  rng: SeededRNG,
+): DraftProspect['background'] {
+  const schoolSystem = pickSchoolSystem(homeState, pathway, rng)
+  const schoolName = pickSchoolName(schoolSystem, rng)
+  const juniorClub = rng.pick(JUNIOR_CLUBS_BY_STATE[homeState])
+  const nationalU18Team = pickNationalU18Team(homeState, rng)
+  const stateLeague = pickStateLeagueClub(homeState, pathway, rng)
+
+  const matches = rng.nextInt(2, 5)
+  const disposalsPerGame = Math.round(rng.nextFloat(11, 27) * 10) / 10
+  const goalsPerGame = Math.round(rng.nextFloat(0, 2.4) * 10) / 10
+
+  const stateLeagueSummary = stateLeague.club
+    ? `and then played senior minutes with ${stateLeague.club} in the ${stateLeague.league}`
+    : 'before focusing on school and U18 football'
+
+  return {
+    schoolSystem,
+    schoolName,
+    juniorClub,
+    scoutingTournament: 'AFL National U18 Championships',
+    nationalU18Team,
+    nationalU18Stats: {
+      matches,
+      disposalsPerGame,
+      goalsPerGame,
+    },
+    stateLeague: stateLeague.league,
+    stateLeagueClub: stateLeague.club,
+    pathwaySummary: `${region} prospect from ${schoolName} (${schoolSystem}), developed at ${juniorClub}, represented ${nationalU18Team} at the U18s ${stateLeagueSummary}.`,
+  }
+}
+
+function buildTierPlan(tuning: ClassStrengthTuning, rng: SeededRNG): ProspectTier[] {
+  const prospects: ProspectTier[] = []
+
+  const eliteCount = rng.nextInt(tuning.tierDistribution.elite[0], tuning.tierDistribution.elite[1])
+  const firstRoundCount = rng.nextInt(tuning.tierDistribution.firstRound[0], tuning.tierDistribution.firstRound[1])
+  const secondRoundCount = rng.nextInt(tuning.tierDistribution.secondRound[0], tuning.tierDistribution.secondRound[1])
+  const lateCount = rng.nextInt(tuning.tierDistribution.late[0], tuning.tierDistribution.late[1])
+
+  for (let i = 0; i < eliteCount; i++) prospects.push('elite')
+  for (let i = 0; i < firstRoundCount; i++) prospects.push('first-round')
+  for (let i = 0; i < secondRoundCount; i++) prospects.push('second-round')
+  for (let i = 0; i < lateCount; i++) prospects.push('late')
+
+  while (prospects.length < DRAFT_CLASS_SIZE) {
+    prospects.push('rookie-list')
+  }
+
+  if (prospects.length > DRAFT_CLASS_SIZE) {
+    return prospects.slice(0, DRAFT_CLASS_SIZE)
+  }
+
+  return prospects
+}
 
 function generateProspect(
   index: number,
   year: number,
   tier: ProspectTier,
+  tuning: ClassStrengthTuning,
   rng: SeededRNG,
 ): DraftProspect {
   const firstName = rng.pick(FIRST_NAMES)
   const lastName = rng.pick(LAST_NAMES)
   const age = rng.nextInt(17, 19)
   const region = pickWeighted(REGION_WEIGHTS, rng)
+  const homeState = determineHomeState(region, rng)
   const primaryPosition = pickWeighted(POSITION_WEIGHTS, rng)
   const secondaryPositions = pickSecondaryPositions(primaryPosition, rng)
+  const { archetype, role } = pickArchetypeAndRole(primaryPosition, rng)
 
   const physicals = POSITION_PHYSICALS[primaryPosition]
   const height = rng.nextInt(physicals.heightMin, physicals.heightMax)
   const weight = rng.nextInt(physicals.weightMin, physicals.weightMax)
 
-  const trueAttributes = generateAttributes(tier, primaryPosition, rng)
-  const hiddenAttributes = generateHiddenAttributes(tier, rng)
+  const trueAttributes = generateAttributes(tier, primaryPosition, rng, tuning.attributeShift)
+  const hiddenAttributes = generateHiddenAttributes(tier, rng, tuning.potentialShift)
   const personality = generatePersonality(rng)
   const pathway = determinePathway(region, rng)
 
-  // Projected pick: based on tier range with a small jitter
   const config = TIER_CONFIG[tier]
   const basePick = rng.nextInt(config.pickRangeMin, config.pickRangeMax)
-  const jitter = rng.nextInt(-2, 2)
+  const jitter = rng.nextInt(-3, 3)
   const projectedPick = clamp(basePick + jitter, 1, DRAFT_CLASS_SIZE)
 
-  // ~5% chance of Father-Son / Academy link (gated by ngaAcademy realism setting at call site)
   const linkedClubId = rng.chance(0.05) ? rng.pick(CLUB_IDS) : null
-
-  // Assign U18 talent league club based on region and pathway
+  const linkedType: DraftLinkedType | null = linkedClubId
+    ? pickWeighted<DraftLinkedType>([
+      { value: 'father-son', weight: 0.45 },
+      { value: 'academy', weight: 0.35 },
+      { value: 'nga', weight: 0.20 },
+    ], rng)
+    : null
   const u18ClubId = assignU18Club(region, pathway, rng)
+  const background = buildBackground(homeState, pathway, region, rng)
 
   const scoutingReports: Record<string, ScoutingReport> = {}
 
@@ -396,10 +718,13 @@ function generateProspect(
     lastName,
     age,
     region,
+    homeState,
     position: {
       primary: primaryPosition,
       secondary: secondaryPositions,
     },
+    archetype,
+    role,
     height,
     weight,
     trueAttributes,
@@ -409,63 +734,43 @@ function generateProspect(
     projectedPick,
     tier,
     linkedClubId,
+    linkedType,
     pathway,
     u18ClubId,
+    background,
   }
 }
 
-// ── Public API ───────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+export function generateDraftClassWithProfile(
+  year: number,
+  rng: SeededRNG,
+): { prospects: DraftProspect[]; classProfile: DraftClassProfile } {
+  const { profile, tuning } = resolveClassProfile(year, rng)
+  const tierPlan = buildTierPlan(tuning, rng)
+
+  const prospects = tierPlan.map((tier, index) =>
+    generateProspect(index, year, tier, tuning, rng),
+  )
+
+  prospects.sort((a, b) => a.projectedPick - b.projectedPick)
+
+  return { prospects, classProfile: profile }
+}
 
 /**
- * Generate a full draft class for the given year.
- *
- * Produces ~80 prospects spread across quality tiers:
- * - 3-4 elite
- * - 10-12 first-round
- * - 20-25 second-round
- * - 25-30 late
- * - Remainder as rookie-list
- *
- * @param year - The draft year (e.g. 2026)
- * @param rng  - The seeded random number generator
- * @returns An array of draft prospects sorted by projectedPick
+ * Backward-compatible helper that returns only the prospect list.
  */
 export function generateDraftClass(
   year: number,
   rng: SeededRNG,
 ): DraftProspect[] {
-  const prospects: DraftProspect[] = []
-  let index = 0
-
-  // Generate prospects for each fixed-count tier
-  let remaining = DRAFT_CLASS_SIZE
-  for (const [tier, min, max] of TIER_DISTRIBUTION) {
-    const count = rng.nextInt(min, max)
-    for (let i = 0; i < count; i++) {
-      prospects.push(generateProspect(index, year, tier, rng))
-      index++
-    }
-    remaining -= count
-  }
-
-  // Fill the rest with rookie-list tier
-  for (let i = 0; i < remaining; i++) {
-    prospects.push(generateProspect(index, year, 'rookie-list', rng))
-    index++
-  }
-
-  // Sort by projected pick ascending (consensus ranking order)
-  prospects.sort((a, b) => a.projectedPick - b.projectedPick)
-
-  return prospects
+  return generateDraftClassWithProfile(year, rng).prospects
 }
 
-/**
- * Calculate a prospect's true overall rating as the average of all 52 attributes.
- *
- * @param prospect - The draft prospect to evaluate
- * @returns The arithmetic mean of all 52 attribute values (1-100 scale)
- */
 export function getProspectOverall(prospect: DraftProspect): number {
   let total = 0
   for (const key of ALL_ATTRIBUTE_KEYS) {
@@ -474,16 +779,6 @@ export function getProspectOverall(prospect: DraftProspect): number {
   return Math.round((total / ALL_ATTRIBUTE_KEYS.length) * 10) / 10
 }
 
-/**
- * Get a club's estimated overall rating for a prospect based on their scouting report.
- *
- * Computes the average of the midpoints of all scouted attribute ranges. If the
- * club has no scouting report for this prospect, returns null.
- *
- * @param prospect - The draft prospect to evaluate
- * @param clubId   - The club ID whose scouting data to use
- * @returns The estimated overall, or null if the club has no report
- */
 export function getProspectEstimatedOverall(
   prospect: DraftProspect,
   clubId: string,
@@ -499,8 +794,7 @@ export function getProspectEstimatedOverall(
   for (const key of rangeKeys) {
     const range = ranges[key]
     if (range) {
-      const midpoint = (range[0] + range[1]) / 2
-      total += midpoint
+      total += (range[0] + range[1]) / 2
     }
   }
 
@@ -508,13 +802,9 @@ export function getProspectEstimatedOverall(
 }
 
 /**
- * Apply draft variance (busts and late bloomers) to a draft class.
- *
- * When enabled:
- * - ~8% of elite/first-round prospects get potentialCeiling reduced by 15-25 (bust)
- * - ~5% of late/rookie-list prospects get potentialCeiling boosted by 15-25 (bloom)
- *
- * When disabled, returns prospects unchanged.
+ * Apply optional realism variance:
+ * - Top-end busts: reduced potential and slower development
+ * - Late bloomers: increased potential and faster development
  */
 export function applyDraftVariance(
   prospects: DraftProspect[],
@@ -530,25 +820,21 @@ export function applyDraftVariance(
     }
 
     if ((p.tier === 'elite' || p.tier === 'first-round') && rng.chance(0.08)) {
-      // Bust: reduce potential ceiling
       const reduction = rng.nextInt(15, 25)
       clone.hiddenAttributes.potentialCeiling = Math.max(30, clone.hiddenAttributes.potentialCeiling - reduction)
-    } else if ((p.tier === 'late' || p.tier === 'rookie-list') && rng.chance(0.05)) {
-      // Late bloomer: boost potential ceiling
+      clone.hiddenAttributes.developmentRate = Math.max(0.55, Math.round((clone.hiddenAttributes.developmentRate - rng.nextFloat(0.1, 0.35)) * 100) / 100)
+    } else if ((p.tier === 'late' || p.tier === 'rookie-list') && rng.chance(0.06)) {
       const boost = rng.nextInt(15, 25)
       clone.hiddenAttributes.potentialCeiling = Math.min(99, clone.hiddenAttributes.potentialCeiling + boost)
+      clone.hiddenAttributes.developmentRate = Math.min(2.0, Math.round((clone.hiddenAttributes.developmentRate + rng.nextFloat(0.12, 0.4)) * 100) / 100)
     }
 
     return clone
   })
 }
 
-/**
- * Strip NGA/Academy linked club IDs from all prospects.
- * Used when the ngaAcademy realism setting is disabled.
- */
 export function stripLinkedClubs(prospects: DraftProspect[]): DraftProspect[] {
   return prospects.map((p) =>
-    p.linkedClubId ? { ...p, linkedClubId: null } : p,
+    p.linkedClubId ? { ...p, linkedClubId: null, linkedType: null } : p,
   )
 }

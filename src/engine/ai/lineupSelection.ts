@@ -1,4 +1,6 @@
 import type { Player, PlayerPositionType, LineupSlot } from '@/types/player'
+import { getRoleFitMultiplierForSlot } from '@/engine/player/roles'
+import { isPlayerSuspended } from '@/engine/players/availability'
 
 // ---------------------------------------------------------------------------
 // Position codes that make up a full 22-player AFL lineup
@@ -70,30 +72,35 @@ function computeEffectiveRating(player: Player): number {
  * type. Uses the player's position ratings when available, falling back to
  * the generic effective rating.
  */
-function computeSuitability(player: Player, targetType: PlayerPositionType): number {
+function computeSuitability(
+  player: Player,
+  targetType: PlayerPositionType,
+  slot: LineupSlot,
+): number {
   const effectiveRating = computeEffectiveRating(player)
+  const roleFit = getRoleFitMultiplierForSlot(player.preferredRole, slot)
 
   // If the player's primary position matches the target, they are
   // inherently a better fit.
   if (player.position.primary === targetType) {
-    return effectiveRating
+    return effectiveRating * roleFit
   }
 
   // If the target type appears in the player's position ratings, apply
   // that rating as a scaling factor (0-100 mapped to 0.0-1.0).
   const posRating = player.position.ratings[targetType]
   if (posRating !== undefined) {
-    return effectiveRating * (posRating / 100)
+    return effectiveRating * (posRating / 100) * roleFit
   }
 
   // If the target type is a listed secondary position, give a moderate
   // discount (80% of effective rating).
   if (player.position.secondary.includes(targetType)) {
-    return effectiveRating * 0.8
+    return effectiveRating * 0.8 * roleFit
   }
 
   // Otherwise the player is out of position – heavy discount.
-  return effectiveRating * 0.5
+  return effectiveRating * 0.5 * roleFit
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +125,7 @@ export function selectBestLineup(
   const eligible = players
     .filter((p) => p.clubId === clubId)
     .filter((p) => p.injury === null)
+    .filter((p) => !isPlayerSuspended(p))
     .filter((p) => p.fitness >= 50)
 
   // Pre-compute effective ratings for every eligible player so we can sort
@@ -140,9 +148,9 @@ export function selectBestLineup(
     targetType: PlayerPositionType,
   ): boolean => {
     // Filter to unassigned candidates and sort by suitability descending
-    const available = candidates
+      const available = candidates
       .filter((p) => !assigned.has(p.id))
-      .map((p) => ({ player: p, score: computeSuitability(p, targetType) }))
+      .map((p) => ({ player: p, score: computeSuitability(p, targetType, slot) }))
       .sort((a, b) => b.score - a.score)
 
     if (available.length === 0) return false

@@ -76,6 +76,17 @@ export function processMatchResults(
         if (!player) continue
 
         // Ensure extended stat fields exist on old saves
+        if (player.seasonStats.uncontestedPossessions === undefined) {
+          player.seasonStats.uncontestedPossessions = 0
+        }
+        if (player.seasonStats.freesFor === undefined) {
+          player.seasonStats.freesFor = 0
+          player.seasonStats.freesAgainst = 0
+        }
+        if (player.seasonStats.aflFantasyPoints === undefined) {
+          player.seasonStats.aflFantasyPoints = 0
+          player.seasonStats.superCoachPoints = 0
+        }
         if (player.seasonStats.contestedMarks === undefined) {
           player.seasonStats.contestedMarks = 0
           player.seasonStats.scoreInvolvements = 0
@@ -86,6 +97,17 @@ export function processMatchResults(
           player.seasonStats.bounces = 0
           player.seasonStats.clangers = 0
           player.seasonStats.goalAssists = 0
+        }
+        if (player.careerStats.uncontestedPossessions === undefined) {
+          player.careerStats.uncontestedPossessions = 0
+        }
+        if (player.careerStats.freesFor === undefined) {
+          player.careerStats.freesFor = 0
+          player.careerStats.freesAgainst = 0
+        }
+        if (player.careerStats.aflFantasyPoints === undefined) {
+          player.careerStats.aflFantasyPoints = 0
+          player.careerStats.superCoachPoints = 0
         }
         if (player.careerStats.contestedMarks === undefined) {
           player.careerStats.contestedMarks = 0
@@ -100,9 +122,10 @@ export function processMatchResults(
         }
 
         const STAT_KEYS = [
-          'gamesPlayed', 'disposals', 'kicks', 'handballs', 'marks', 'tackles',
-          'goals', 'behinds', 'hitouts', 'contestedPossessions', 'clearances',
-          'insideFifties', 'rebound50s', 'contestedMarks', 'scoreInvolvements',
+          'gamesPlayed', 'aflFantasyPoints', 'superCoachPoints', 'disposals', 'kicks', 'handballs', 'marks', 'tackles',
+          'goals', 'behinds', 'hitouts', 'contestedPossessions', 'uncontestedPossessions',
+          'clearances', 'insideFifties', 'rebound50s', 'freesFor', 'freesAgainst',
+          'contestedMarks', 'scoreInvolvements',
           'metresGained', 'turnovers', 'intercepts', 'onePercenters', 'bounces',
           'clangers', 'goalAssists',
         ] as const
@@ -112,7 +135,11 @@ export function processMatchResults(
 
         for (const key of STAT_KEYS) {
           if (key === 'gamesPlayed') continue
-          const value = (stat as unknown as Record<string, number>)[key] ?? 0
+          const raw = (stat as unknown as Record<string, number>)[key]
+          const value =
+            key === 'uncontestedPossessions'
+              ? raw ?? (stat as unknown as { uncountestedPossessions?: number }).uncountestedPossessions ?? 0
+              : raw ?? 0
           ;(player.seasonStats as unknown as Record<string, number>)[key] += value
           ;(player.careerStats as unknown as Record<string, number>)[key] += value
         }

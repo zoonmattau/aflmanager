@@ -15,6 +15,9 @@ import {
   Newspaper,
   MailOpen,
   CheckCheck,
+  Handshake,
+  Sparkles,
+  Scale,
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -27,12 +30,14 @@ const CATEGORY_CONFIG: Record<NewsCategory, { icon: React.ElementType; color: st
   match:    { icon: Swords,          color: 'bg-blue-500/15 text-blue-400',   label: 'Match' },
   trade:    { icon: ArrowLeftRight,  color: 'bg-purple-500/15 text-purple-400', label: 'Trade' },
   injury:   { icon: AlertTriangle,   color: 'bg-red-500/15 text-red-400',    label: 'Injury' },
+  discipline:{ icon: Scale,          color: 'bg-orange-500/15 text-orange-400', label: 'Tribunal' },
   draft:    { icon: GraduationCap,   color: 'bg-green-500/15 text-green-400', label: 'Draft' },
   contract: { icon: FileText,        color: 'bg-amber-500/15 text-amber-400', label: 'Contract' },
+  milestone:{ icon: Sparkles,        color: 'bg-cyan-500/15 text-cyan-400',  label: 'Milestone' },
   general:  { icon: Newspaper,       color: 'bg-zinc-500/15 text-zinc-400',  label: 'General' },
 }
 
-const ALL_CATEGORIES: NewsCategory[] = ['match', 'trade', 'injury', 'draft', 'contract', 'general']
+const ALL_CATEGORIES: NewsCategory[] = ['match', 'trade', 'injury', 'discipline', 'draft', 'contract', 'milestone', 'general']
 
 // ---------------------------------------------------------------------------
 // News row
@@ -114,8 +119,18 @@ function NewsRow({
 export function InboxPage() {
   const newsLog = useGameStore((s) => s.newsLog)
   const markAllNewsRead = useGameStore((s) => s.markAllNewsRead)
+  const tradeInbox = useGameStore((s) => s.tradeInbox)
+  const respondToTradeOffer = useGameStore((s) => s.respondToTradeOffer)
+  const tribunalInbox = useGameStore((s) => s.tribunalInbox)
+  const respondToTribunalCase = useGameStore((s) => s.respondToTribunalCase)
+  const markTribunalCaseRead = useGameStore((s) => s.markTribunalCaseRead)
+  const clubs = useGameStore((s) => s.clubs)
+  const players = useGameStore((s) => s.players)
+  const playerClubId = useGameStore((s) => s.playerClubId)
   const [filter, setFilter] = useState<'all' | NewsCategory>('all')
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [tradeError, setTradeError] = useState<string | null>(null)
+  const [tribunalError, setTribunalError] = useState<string | null>(null)
 
   const sorted = useMemo(
     () => [...newsLog].reverse(),
@@ -137,6 +152,30 @@ export function InboxPage() {
     }
     return counts
   }, [newsLog])
+
+  const pendingTradeOffers = useMemo(
+    () => tradeInbox.filter((i) => i.offer.status === 'pending-user').slice(0, 4),
+    [tradeInbox],
+  )
+  const pendingTribunalCases = useMemo(
+    () => tribunalInbox.filter((c) => c.status === 'pending-user' && c.clubId === playerClubId).slice(0, 4),
+    [tribunalInbox, playerClubId],
+  )
+
+  const handleTradeDecision = (offerId: string, decision: 'accept' | 'reject' | 'counter') => {
+    const result = respondToTradeOffer(offerId, decision)
+    if (!result.success) setTradeError(result.error ?? 'Unable to process trade offer')
+    else setTradeError(null)
+  }
+
+  const handleTribunalDecision = (caseId: string, decision: 'accept' | 'challenge') => {
+    const result = respondToTribunalCase(caseId, decision)
+    if (!result.success) setTribunalError(result.error ?? 'Unable to process tribunal case')
+    else {
+      setTribunalError(null)
+      markTribunalCaseRead(caseId)
+    }
+  }
 
   return (
     <div className="space-y-6 p-6">
@@ -183,6 +222,96 @@ export function InboxPage() {
           })}
         </TabsList>
       </Tabs>
+
+      {pendingTradeOffers.length > 0 && (
+        <Card>
+          <CardContent className="py-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <Handshake className="h-4 w-4 text-primary" />
+              <p className="font-semibold text-sm">Trade Inbox</p>
+              <Badge variant="secondary">{pendingTradeOffers.length} pending</Badge>
+            </div>
+            {tradeError && (
+              <p className="text-xs text-red-400">{tradeError}</p>
+            )}
+            <div className="space-y-2">
+              {pendingTradeOffers.map((item) => {
+                const incoming = item.offer.playerMoves
+                  .filter((m) => m.toClubId === playerClubId)
+                  .map((m) => players[m.playerId])
+                  .filter(Boolean)
+                return (
+                  <div key={item.id} className="rounded-md border p-3 space-y-2">
+                    <p className="text-sm font-medium">
+                      {item.offer.clubsInvolved.map((cid) => clubs[cid]?.abbreviation ?? cid).join(' / ')}
+                    </p>
+                    <p className="text-xs text-muted-foreground">{item.offer.message}</p>
+                    {incoming.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Incoming: {incoming.map((p) => `${p!.firstName} ${p!.lastName}`).join(', ')}
+                      </p>
+                    )}
+                    <div className="flex justify-end gap-2">
+                      <Button size="sm" variant="outline" onClick={() => handleTradeDecision(item.id, 'reject')}>Reject</Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleTradeDecision(item.id, 'counter')}
+                        disabled={item.offer.clubsInvolved.length > 2}
+                      >
+                        Counter
+                      </Button>
+                      <Button size="sm" onClick={() => handleTradeDecision(item.id, 'accept')}>Accept</Button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {pendingTribunalCases.length > 0 && (
+        <Card>
+          <CardContent className="py-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <Scale className="h-4 w-4 text-orange-500" />
+              <p className="font-semibold text-sm">Tribunal Inbox</p>
+              <Badge variant="secondary">{pendingTribunalCases.length} pending</Badge>
+            </div>
+            {tribunalError && (
+              <p className="text-xs text-red-400">{tribunalError}</p>
+            )}
+            <div className="space-y-2">
+              {pendingTribunalCases.map((caseItem) => {
+                const player = players[caseItem.playerId]
+                return (
+                  <div key={caseItem.id} className="rounded-md border p-3 space-y-2">
+                    <p className="text-sm font-medium">
+                      {player ? `${player.firstName} ${player.lastName}` : caseItem.playerId}
+                    </p>
+                    <p className="text-xs text-muted-foreground">{caseItem.incidentSummary}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Recommended sanction: {caseItem.recommendedWeeks} week{caseItem.recommendedWeeks === 1 ? '' : 's'}.
+                    </p>
+                    <p className="text-xs text-orange-500">
+                      Decision deadline: before your next simulated match.
+                    </p>
+                    <div className="flex justify-end gap-2">
+                      <Button size="sm" variant="outline" onClick={() => handleTribunalDecision(caseItem.id, 'accept')}>
+                        Accept
+                      </Button>
+                      <Button size="sm" onClick={() => handleTribunalDecision(caseItem.id, 'challenge')}>
+                        Challenge
+                      </Button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* News list */}
       {filtered.length === 0 ? (

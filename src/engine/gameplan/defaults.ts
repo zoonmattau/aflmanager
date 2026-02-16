@@ -1,4 +1,5 @@
-import type { ClubGameplan } from '@/types/club'
+import type { ClubGameplan, TacticalIdentity } from '@/types/club'
+import { getAlignedGameplan } from '@/engine/core/tacticalIdentity'
 
 /**
  * Returns a ClubGameplan with sensible default values.
@@ -22,4 +23,10 @@ export function createDefaultGameplan(): ClubGameplan {
     },
     rotations: 'medium',
   }
+}
+
+export function createIdentityAlignedGameplan(identity: TacticalIdentity): ClubGameplan {
+  const base = createDefaultGameplan()
+  const overrides = getAlignedGameplan(identity)
+  return { ...base, ...overrides }
 }

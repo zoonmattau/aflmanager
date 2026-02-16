@@ -144,6 +144,8 @@ export function MatchDayPage() {
         homeClubId: fixture.homeClubId,
         awayClubId: fixture.awayClubId,
         venue: fixture.venue,
+        venueId: fixture.venueId,
+        matchDay: fixture.matchDay,
         round: currentRound,
         players,
         clubs,
@@ -475,6 +477,9 @@ function MatchResultView({
                 <TableRow>
                   <TableHead>Player</TableHead>
                   <TableHead className="text-center">D</TableHead>
+                  <TableHead className="text-center">MIN</TableHead>
+                  <TableHead className="text-center">AF</TableHead>
+                  <TableHead className="text-center">SC</TableHead>
                   <TableHead className="text-center">K</TableHead>
                   <TableHead className="text-center">HB</TableHead>
                   <TableHead className="text-center">M</TableHead>
@@ -482,8 +487,14 @@ function MatchResultView({
                   <TableHead className="text-center">G</TableHead>
                   <TableHead className="text-center">B</TableHead>
                   <TableHead className="text-center">CP</TableHead>
+                  <TableHead className="text-center">UP</TableHead>
                   <TableHead className="text-center">CL</TableHead>
+                  <TableHead className="text-center">I50</TableHead>
+                  <TableHead className="text-center">R50</TableHead>
                   <TableHead className="text-center">HO</TableHead>
+                  <TableHead className="text-center">INT</TableHead>
+                  <TableHead className="text-center">SI</TableHead>
+                  <TableHead className="text-center">GA</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -498,6 +509,9 @@ function MatchResultView({
                           {player.firstName.charAt(0)}. {player.lastName}
                         </TableCell>
                         <TableCell className="text-center">{stat.disposals}</TableCell>
+                        <TableCell className="text-center">{stat.minutesPlayed}</TableCell>
+                        <TableCell className="text-center font-medium">{stat.aflFantasyPoints ?? 0}</TableCell>
+                        <TableCell className="text-center font-medium">{stat.superCoachPoints ?? 0}</TableCell>
                         <TableCell className="text-center">{stat.kicks}</TableCell>
                         <TableCell className="text-center">{stat.handballs}</TableCell>
                         <TableCell className="text-center">{stat.marks}</TableCell>
@@ -509,10 +523,16 @@ function MatchResultView({
                           {stat.behinds > 0 ? stat.behinds : ''}
                         </TableCell>
                         <TableCell className="text-center">{stat.contestedPossessions}</TableCell>
+                        <TableCell className="text-center">{stat.uncontestedPossessions ?? stat.uncountestedPossessions ?? 0}</TableCell>
                         <TableCell className="text-center">{stat.clearances}</TableCell>
+                        <TableCell className="text-center">{stat.insideFifties}</TableCell>
+                        <TableCell className="text-center">{stat.rebound50s}</TableCell>
                         <TableCell className="text-center">
                           {stat.hitouts > 0 ? stat.hitouts : ''}
                         </TableCell>
+                        <TableCell className="text-center">{stat.intercepts}</TableCell>
+                        <TableCell className="text-center">{stat.scoreInvolvements}</TableCell>
+                        <TableCell className="text-center">{stat.goalAssists}</TableCell>
                       </TableRow>
                     )
                   })}

@@ -1,4 +1,5 @@
 import type { SeededRNG } from '@/engine/core/rng'
+import type { TrainingFocus } from '@/engine/training/trainingEngine'
 import type { Player, PlayerAttributes } from '@/types/player'
 import { MIN_ATTRIBUTE, MAX_ATTRIBUTE } from '@/engine/core/constants'
 
@@ -67,6 +68,87 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
+export interface OffseasonDevelopmentContext {
+  speedMultiplier?: number
+  coachingModifier?: number
+  facilitiesModifier?: number
+  cultureModifier?: number
+  trainingFocus?: TrainingFocus | null
+  randomness?: number // 0.5-1.5 where 1 is baseline
+}
+
+type DevelopmentPhase = 'growth' | 'peak' | 'decline'
+
+const FOCUS_ATTRIBUTE_MAP: Partial<Record<TrainingFocus, (keyof PlayerAttributes)[]>> = {
+  kicking: ['kickingEfficiency', 'kickingDistance', 'setShot', 'dropPunt', 'snap'],
+  handball: ['handballEfficiency', 'handballDistance', 'handballReceive'],
+  marking: ['markingOverhead', 'markingLeading', 'markingContested', 'markingUncontested'],
+  physical: ['speed', 'acceleration', 'endurance', 'strength', 'agility', 'leap', 'recovery'],
+  contested: ['tackling', 'contested', 'clearance', 'hardness'],
+  'game-sense': ['disposalDecision', 'fieldKicking', 'positioning', 'creativity', 'anticipation', 'composure'],
+  offensive: ['goalkicking', 'groundBallGet', 'insideForward', 'leadingPatterns', 'scoringInstinct'],
+  defensive: ['intercept', 'spoiling', 'oneOnOne', 'zonalAwareness', 'rebounding'],
+  ruck: ['hitouts', 'ruckCreative', 'followUp'],
+  mental: ['pressure', 'leadership', 'workRate', 'consistency', 'determination', 'teamPlayer', 'clutch'],
+  'set-pieces': ['centreBounce', 'boundaryThrowIn', 'stoppage'],
+  'match-fitness': ['endurance', 'recovery', 'workRate', 'tackling'],
+  recovery: ['recovery', 'composure', 'workRate'],
+}
+
+function getFocusedAttributeMultiplier(
+  key: keyof PlayerAttributes,
+  trainingFocus: TrainingFocus | null | undefined,
+): number {
+  if (!trainingFocus) return 1
+  const focused = FOCUS_ATTRIBUTE_MAP[trainingFocus]
+  if (!focused || focused.length === 0) return 1
+  return focused.includes(key) ? 1.14 : 0.96
+}
+
+function getAttributeAverage(player: Player): number {
+  const values = Object.values(player.attributes)
+  const total = values.reduce((sum, v) => sum + v, 0)
+  return total / values.length
+}
+
+function getAgePhase(
+  age: number,
+  peakAgeStart: number,
+  peakAgeEnd: number,
+): DevelopmentPhase {
+  if (age < peakAgeStart) return 'growth'
+  if (age <= peakAgeEnd) return 'peak'
+  return 'decline'
+}
+
+function resolvePeakWindowVariance(player: Player, rng: SeededRNG): void {
+  if (!rng.chance(0.16)) return
+
+  const shift = rng.nextInt(-1, 1)
+  const windowAdj = rng.nextInt(-1, 1)
+  const h = player.hiddenAttributes
+
+  const nextStart = clamp(h.peakAgeStart + shift, 22, 31)
+  const minEnd = nextStart + 2
+  const nextEnd = clamp(h.peakAgeEnd + shift + windowAdj, minEnd, 35)
+  h.peakAgeStart = nextStart
+  h.peakAgeEnd = nextEnd
+}
+
+function resolvePotentialVariance(player: Player, rng: SeededRNG): void {
+  const h = player.hiddenAttributes
+  const age = player.age
+  if (age <= 23 && rng.chance(0.08)) {
+    h.potentialCeiling = clamp(h.potentialCeiling + rng.nextInt(1, 4), 40, 99)
+    h.developmentRate = clamp(h.developmentRate + rng.nextFloat(0.03, 0.12), 0.5, 2.0)
+    return
+  }
+  if (age >= 29 && rng.chance(0.06)) {
+    h.potentialCeiling = clamp(h.potentialCeiling - rng.nextInt(1, 3), 35, 99)
+    h.declineRate = clamp(h.declineRate + rng.nextFloat(0.03, 0.12), 0.5, 2.0)
+  }
+}
+
 /**
  * Get the age-based development factor for a growing player.
  * Younger players develop faster.
@@ -91,64 +173,101 @@ function getDeclineAgeFactor(yearsPostPeak: number): number {
  * Develop a player for one offseason cycle, mutating the player in place.
  * Intended to be called inside an Immer draft.
  *
- * Applies age-based attribute growth, peak fluctuation, or decline depending
- * on the player's current age relative to their hidden peak window.
+ * Applies age-curve growth/peak/decline with potential caps, plus club-context
+ * multipliers from coaching/facilities/culture/training focus.
  */
-export function developPlayer(player: Player, rng: SeededRNG, speedMultiplier?: number): void {
-  const { age, hiddenAttributes } = player
-  const { peakAgeStart, peakAgeEnd, developmentRate, declineRate, potentialCeiling } = hiddenAttributes
+export function developPlayer(
+  player: Player,
+  rng: SeededRNG,
+  context?: OffseasonDevelopmentContext,
+): void {
+  const { hiddenAttributes } = player
+  resolvePeakWindowVariance(player, rng)
+  resolvePotentialVariance(player, rng)
 
-  if (age < peakAgeStart) {
-    // ── Growing phase ──────────────────────────────────────────────────
+  const { age } = player
+  const {
+    peakAgeStart,
+    peakAgeEnd,
+    developmentRate,
+    declineRate,
+    potentialCeiling,
+  } = hiddenAttributes
+
+  const phase = getAgePhase(age, peakAgeStart, peakAgeEnd)
+  const speedMul = context?.speedMultiplier ?? 1
+  const coachingMul = clamp(context?.coachingModifier ?? 1, 0.75, 1.3)
+  const facilitiesMul = clamp(context?.facilitiesModifier ?? 1, 0.8, 1.25)
+  const cultureMul = clamp(context?.cultureModifier ?? 1, 0.85, 1.2)
+  const randomness = clamp(context?.randomness ?? 1, 0.5, 1.5)
+
+  const avgOverall = getAttributeAverage(player)
+  const capHeadroom = clamp((potentialCeiling - avgOverall) / 24, -0.4, 1.2)
+  const capPressureMul = phase === 'growth'
+    ? clamp(0.65 + capHeadroom, 0.2, 1.35)
+    : 1
+
+  const globalDevMultiplier = speedMul * coachingMul * facilitiesMul * cultureMul * randomness
+
+  if (phase === 'growth') {
     const ageFactor = getGrowthAgeFactor(age)
-
     for (const key of ALL_ATTRIBUTE_KEYS) {
       const isPhysical = PHYSICAL_ATTRIBUTES.includes(key)
       const isMental = MENTAL_ATTRIBUTES.includes(key)
-
-      // Young players get a physical bonus, slight mental penalty
-      let typeMultiplier = 1.0
+      let typeMultiplier = 1
       if (age <= 21) {
-        if (isPhysical) typeMultiplier = 1.3
-        else if (isMental) typeMultiplier = 0.8
+        if (isPhysical) typeMultiplier = 1.22
+        else if (isMental) typeMultiplier = 0.9
       }
 
-      const growth = rng.nextFloat(0, 3) * developmentRate * ageFactor * typeMultiplier * (speedMultiplier ?? 1.0)
-      const currentValue = player.attributes[key]
+      const focusedMul = getFocusedAttributeMultiplier(key, context?.trainingFocus)
+      const growth = rng.nextFloat(0.15, 1.7) *
+        developmentRate *
+        ageFactor *
+        typeMultiplier *
+        focusedMul *
+        capPressureMul *
+        globalDevMultiplier
 
-      // Cap growth so attributes don't exceed the potential ceiling
-      const newValue = clamp(
-        currentValue + growth,
-        MIN_ATTRIBUTE,
-        Math.min(MAX_ATTRIBUTE, potentialCeiling),
-      )
-      player.attributes[key] = Math.round(newValue * 10) / 10
+      const cap = Math.min(MAX_ATTRIBUTE, potentialCeiling + (isMental ? 2 : 0))
+      const next = clamp(player.attributes[key] + growth, MIN_ATTRIBUTE, cap)
+      player.attributes[key] = Math.round(next * 10) / 10
     }
-  } else if (age >= peakAgeStart && age <= peakAgeEnd) {
-    // ── Peak phase ─────────────────────────────────────────────────────
-    // Small random fluctuations only
+    return
+  }
+
+  if (phase === 'peak') {
+    const stability = clamp(1.15 - (Math.abs(globalDevMultiplier - 1) * 0.5), 0.75, 1.25)
     for (const key of ALL_ATTRIBUTE_KEYS) {
-      const fluctuation = rng.nextFloat(-2, 2)
-      const currentValue = player.attributes[key]
-      const newValue = clamp(currentValue + fluctuation, MIN_ATTRIBUTE, MAX_ATTRIBUTE)
-      player.attributes[key] = Math.round(newValue * 10) / 10
+      const focusedMul = getFocusedAttributeMultiplier(key, context?.trainingFocus)
+      const drift = rng.nextFloat(-1.2, 1.2) * stability * focusedMul
+      const next = clamp(player.attributes[key] + drift, MIN_ATTRIBUTE, MAX_ATTRIBUTE)
+      player.attributes[key] = Math.round(next * 10) / 10
     }
-  } else {
-    // ── Declining phase ────────────────────────────────────────────────
-    const yearsPostPeak = age - peakAgeEnd
-    const ageFactor = getDeclineAgeFactor(yearsPostPeak)
+    return
+  }
 
-    for (const key of ALL_ATTRIBUTE_KEYS) {
-      const isMental = MENTAL_ATTRIBUTES.includes(key)
+  const yearsPostPeak = age - peakAgeEnd
+  const ageFactor = getDeclineAgeFactor(yearsPostPeak)
+  const declineVariance = clamp(rng.nextFloat(0.88, 1.24) * (2 - randomness), 0.7, 1.45)
+  for (const key of ALL_ATTRIBUTE_KEYS) {
+    const isMental = MENTAL_ATTRIBUTES.includes(key)
+    const isPhysical = PHYSICAL_ATTRIBUTES.includes(key)
+    const mentalProtection = isMental ? 0.4 : 1
+    const physicalPenalty = isPhysical ? 1.15 : 1
+    const focusedMul = getFocusedAttributeMultiplier(key, context?.trainingFocus)
+    const trainingProtection = focusedMul > 1 ? 0.92 : 1.03
+    const loss = rng.nextFloat(0.12, 1.65) *
+      declineRate *
+      ageFactor *
+      declineVariance *
+      mentalProtection *
+      physicalPenalty *
+      trainingProtection *
+      clamp(2 - coachingMul * facilitiesMul * cultureMul, 0.75, 1.35)
 
-      // Mental attributes decline at only 30% the rate of other attributes
-      const typeMultiplier = isMental ? 0.3 : 1.0
-
-      const loss = rng.nextFloat(0, 3) * declineRate * ageFactor * typeMultiplier
-      const currentValue = player.attributes[key]
-      const newValue = clamp(currentValue - loss, MIN_ATTRIBUTE, MAX_ATTRIBUTE)
-      player.attributes[key] = Math.round(newValue * 10) / 10
-    }
+    const next = clamp(player.attributes[key] - loss, MIN_ATTRIBUTE, MAX_ATTRIBUTE)
+    player.attributes[key] = Math.round(next * 10) / 10
   }
 }
 

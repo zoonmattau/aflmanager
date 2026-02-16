@@ -117,6 +117,7 @@ export interface HiddenAttributes {
   peakAgeEnd: number             // typically 28-32
   declineRate: number            // 0.5-2.0, multiplier on decline speed
   injuryProneness: number        // 1-100, higher = more prone
+  durability: number             // 1-100, higher = lower injury chance and faster recovery
   bigGameModifier: number        // -10 to +10, adjustment in finals/big games
 }
 
@@ -125,6 +126,58 @@ export interface PlayerPersonality {
   loyalty: number       // 1-100
   professionalism: number // 1-100
   temperament: number   // 1-100
+}
+
+export type PlayerPreferredRole =
+  | 'inside-mid'
+  | 'outside-mid'
+  | 'wing-runner'
+  | 'lockdown-defender'
+  | 'intercept-defender'
+  | 'rebound-defender'
+  | 'pressure-forward'
+  | 'key-forward'
+  | 'small-forward'
+  | 'ruck'
+  | 'utility'
+
+export type AgentArchetype =
+  | 'loyal'
+  | 'greedy'
+  | 'premiership-chaser'
+  | 'homebody'
+  | 'mercenary'
+  | 'risk-averse'
+
+export type PlayerArchetype =
+  | 'ball-winner'
+  | 'line-breaker'
+  | 'aerial-interceptor'
+  | 'stopper'
+  | 'rebounder'
+  | 'forward-pressure'
+  | 'target-mark'
+  | 'crumber'
+  | 'tap-specialist'
+  | 'mobile-ruck'
+  | 'two-way-utility'
+  | 'intercept-defender'
+  | 'lockdown-defender'
+  | 'rebound-defender'
+  | 'inside-bull'
+  | 'outside-runner'
+  | 'two-way-wing'
+  | 'tap-ruck'
+  | 'lead-up-forward'
+  | 'power-forward'
+  | 'small-pressure-forward'
+  | 'swingman'
+
+export interface PlayerTradeRequest {
+  active: boolean
+  requestedAt: string
+  nominatedClubIds: string[]
+  reason: 'unhappy' | 'role' | 'contender' | 'home-state' | 'money'
 }
 
 export interface PlayerContract {
@@ -140,10 +193,50 @@ export interface PlayerContract {
 export interface PlayerInjury {
   type: string
   weeksRemaining: number
+  initialWeeks?: number
+  severity?: 'minor' | 'moderate' | 'major' | 'severe'
+  occurredOn?: string
+  recurrenceRisk?: number
+  recoveryProgress?: number      // 0-100 progress to next week recovered
+  gamesMissed?: number
+  recurring?: boolean
+  bodyRegion?: 'soft-tissue' | 'joint' | 'concussion' | 'structural' | 'impact'
+}
+
+export interface PlayerInjuryHistoryEntry {
+  type: string
+  occurredOn: string
+  recoveredOn?: string
+  initialWeeks: number
+  gamesMissed: number
+  recurring: boolean
+  severity: 'minor' | 'moderate' | 'major' | 'severe'
+  bodyRegion: 'soft-tissue' | 'joint' | 'concussion' | 'structural' | 'impact'
+}
+
+export interface PlayerSuspension {
+  reason: string
+  incidentType: string
+  issuedOn: string
+  totalWeeks: number
+  weeksRemaining: number
+  severity: 'low' | 'medium' | 'high' | 'severe'
+}
+
+export interface PlayerSuspensionHistoryEntry {
+  reason: string
+  incidentType: string
+  issuedOn: string
+  weeks: number
+  severity: 'low' | 'medium' | 'high' | 'severe'
+  challenged: boolean
+  outcome: 'upheld' | 'reduced' | 'increased' | 'dismissed' | 'expired'
 }
 
 export interface PlayerCareerStats {
   gamesPlayed: number
+  aflFantasyPoints: number
+  superCoachPoints: number
   goals: number
   behinds: number
   disposals: number
@@ -153,9 +246,12 @@ export interface PlayerCareerStats {
   tackles: number
   hitouts: number
   contestedPossessions: number
+  uncontestedPossessions: number
   clearances: number
   insideFifties: number
   rebound50s: number
+  freesFor: number
+  freesAgainst: number
   // Extended stats
   contestedMarks: number
   scoreInvolvements: number
@@ -166,6 +262,16 @@ export interface PlayerCareerStats {
   bounces: number
   clangers: number
   goalAssists: number
+}
+
+export interface MoraleFactors {
+  teamSuccess: number
+  homeState: number
+  contractStatus: number
+  underpayment: number
+  roleSatisfaction: number
+  culture: number
+  meanReversion: number
 }
 
 export interface Player {
@@ -179,11 +285,16 @@ export interface Player {
   height: number                 // cm
   weight: number                 // kg
   position: PlayerPosition
+  preferredRole: PlayerPreferredRole
+  archetype: PlayerArchetype
   attributes: PlayerAttributes
   hiddenAttributes: HiddenAttributes
   personality: PlayerPersonality
+  agentArchetype?: AgentArchetype
+  homeState?: string
   contract: PlayerContract
   morale: number                 // 1-100
+  moraleFactors?: MoraleFactors
   fitness: number                // 1-100
   fatigue: number                // 0-100
   form: number                   // 1-100
@@ -194,4 +305,8 @@ export interface Player {
   draftPick: number | null       // null for undrafted/rookie listed
   careerStats: PlayerCareerStats
   seasonStats: PlayerCareerStats
+  injuryHistory: PlayerInjuryHistoryEntry[]
+  suspension?: PlayerSuspension | null
+  suspensionHistory?: PlayerSuspensionHistoryEntry[]
+  tradeRequest?: PlayerTradeRequest | null
 }

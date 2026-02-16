@@ -41,11 +41,13 @@ import {
   TrendingUp,
   TrendingDown,
   Minus,
+  Bell,
 } from 'lucide-react'
 import { gradeTradeRetrospective } from '@/engine/history/summaryEngine'
 import type { TradeGradeLetter } from '@/engine/history/summaryEngine'
-import { validateTradeCapImpact, validateListSize } from '@/engine/salary/salaryCapEngine'
 import { getPackageTradeValue } from '@/engine/trades/tradeValuation'
+import type { TradeInboxItem } from '@/types/trade'
+import { getDemandAdjustedValue } from '@/engine/trades/tradeNegotiationEngine'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -92,17 +94,6 @@ function getBalanceBgColor(balance: 'fair' | 'slight' | 'lopsided'): string {
     case 'lopsided':
       return 'bg-red-500'
   }
-}
-
-function calculateAcceptanceChance(
-  yourValue: number,
-  theirValue: number,
-): number {
-  if (theirValue === 0) return 0
-  const ratio = yourValue / theirValue
-  if (ratio >= 0.9) return 0.7 + Math.min((ratio - 0.9) * 2, 0.25)
-  if (ratio >= 0.8) return 0.3 + ((ratio - 0.8) / 0.1) * 0.2
-  return 0.1 + Math.max(0, ratio - 0.5) * 0.33
 }
 
 // ---------------------------------------------------------------------------
@@ -530,10 +521,8 @@ function MakeTradeTab() {
   const playerClubId = useGameStore((s) => s.playerClubId)
   const players = useGameStore((s) => s.players)
   const clubs = useGameStore((s) => s.clubs)
-  const currentDate = useGameStore((s) => s.currentDate)
-  const settings = useGameStore((s) => s.settings)
-  const updatePlayer = useGameStore((s) => s.updatePlayer)
-  const addNewsItem = useGameStore((s) => s.addNewsItem)
+  const tradeBlock = useGameStore((s) => s.tradeBlock)
+  const proposeTradeOffer = useGameStore((s) => s.proposeTradeOffer)
 
   const [partnerId, setPartnerId] = useState<string>('')
   const [capError, setCapError] = useState<string | null>(null)
@@ -592,22 +581,20 @@ function MakeTradeTab() {
 
   const currentYear = new Date().getFullYear()
   const yourValue = useMemo(
-    () => getPackageTradeValue(
-      sendPlayers.map((p) => p.id),
-      [],
-      players,
-      currentYear,
-    ),
-    [sendPlayers, players, currentYear],
+    () => sendPlayers.reduce((sum, p) => {
+      const base = getPackageTradeValue([p.id], [], players, currentYear)
+      const demand = tradeBlock.listings[p.id]?.demandScore ?? 0
+      return sum + getDemandAdjustedValue(base, demand)
+    }, 0),
+    [sendPlayers, players, currentYear, tradeBlock.listings],
   )
   const theirValue = useMemo(
-    () => getPackageTradeValue(
-      receivePlayers.map((p) => p.id),
-      [],
-      players,
-      currentYear,
-    ),
-    [receivePlayers, players, currentYear],
+    () => receivePlayers.reduce((sum, p) => {
+      const base = getPackageTradeValue([p.id], [], players, currentYear)
+      const demand = tradeBlock.listings[p.id]?.demandScore ?? 0
+      return sum + getDemandAdjustedValue(base, demand)
+    }, 0),
+    [receivePlayers, players, currentYear, tradeBlock.listings],
   )
 
   const handlePartnerChange = useCallback((clubId: string) => {
@@ -668,151 +655,39 @@ function MakeTradeTab() {
 
     setCapError(null)
 
-    // --- Salary cap validation ---
-    if (settings.salaryCap) {
-      const allPlayers = Object.values(players)
-      const incomingSalaries = receivePlayers.map((p) => p.contract.yearByYear[0] ?? 0)
-      const outgoingSalaries = sendPlayers.map((p) => p.contract.yearByYear[0] ?? 0)
+    const sentSnapshot = sendPlayers.map((p) => ({ ...p }))
+    const receivedSnapshot = receivePlayers.map((p) => ({ ...p }))
+    const result = proposeTradeOffer(
+      partnerId,
+      sendPlayers.map((p) => p.id),
+      receivePlayers.map((p) => p.id),
+    )
 
-      const capResult = validateTradeCapImpact(
-        allPlayers,
-        playerClubId,
-        incomingSalaries,
-        outgoingSalaries,
-        settings.salaryCapAmount,
-        settings.realism.softCapSpending,
-      )
-
-      if (!capResult.allowed) {
-        setCapError(capResult.reason ?? 'Trade would breach salary cap')
-        setTradeResult('rejected')
-        setRejectionMessage(capResult.reason ?? 'Trade would breach salary cap')
-        return
-      }
+    if (!result.success) {
+      setTradeResult('rejected')
+      setRejectionMessage(result.error ?? 'Trade was rejected.')
+      setCapError(result.error ?? null)
+      return
     }
 
-    // --- List size validation ---
-    if (settings.realism.listSizeEnforcement) {
-      const allPlayers = Object.values(players)
-      const netSenior = receivePlayers.filter((p) => !p.isRookie).length - sendPlayers.filter((p) => !p.isRookie).length
-      const netRookie = receivePlayers.filter((p) => p.isRookie).length - sendPlayers.filter((p) => p.isRookie).length
-
-      if (netSenior > 0) {
-        for (let i = 0; i < netSenior; i++) {
-          const listResult = validateListSize(
-            allPlayers,
-            playerClubId,
-            settings.listRules.seniorListSize,
-            settings.listRules.rookieListSize,
-            { type: 'add-senior' },
-          )
-          if (!listResult.allowed) {
-            setCapError(listResult.reason ?? 'Trade would exceed list size')
-            setTradeResult('rejected')
-            setRejectionMessage(listResult.reason ?? 'Trade would exceed senior list size')
-            return
-          }
-        }
-      }
-      if (netRookie > 0) {
-        for (let i = 0; i < netRookie; i++) {
-          const listResult = validateListSize(
-            allPlayers,
-            playerClubId,
-            settings.listRules.seniorListSize,
-            settings.listRules.rookieListSize,
-            { type: 'add-rookie' },
-          )
-          if (!listResult.allowed) {
-            setCapError(listResult.reason ?? 'Trade would exceed list size')
-            setTradeResult('rejected')
-            setRejectionMessage(listResult.reason ?? 'Trade would exceed rookie list size')
-            return
-          }
-        }
-      }
-    }
-
-    const acceptance = calculateAcceptanceChance(yourValue, theirValue)
-    const roll = Math.random()
-
-    const myAbbr = myClub?.abbreviation ?? 'You'
-    const theirAbbr = partnerClub.abbreviation
-
-    if (roll < acceptance) {
-      // Trade accepted -- snapshot players before mutating
-      const sentSnapshot = sendPlayers.map((p) => ({ ...p }))
-      const receivedSnapshot = receivePlayers.map((p) => ({ ...p }))
-
-      // Swap club IDs
-      for (const p of sendPlayers) {
-        updatePlayer(p.id, { clubId: partnerId })
-      }
-      for (const p of receivePlayers) {
-        updatePlayer(p.id, { clubId: playerClubId })
-      }
-
-      // Build news
-      const sentNames = sendPlayers
-        .map((p) => `${p.firstName} ${p.lastName}`)
-        .join(', ')
-      const receivedNames = receivePlayers
-        .map((p) => `${p.firstName} ${p.lastName}`)
-        .join(', ')
-
-      addNewsItem({
-        id: crypto.randomUUID(),
-        date: currentDate,
-        headline: `Trade: ${myAbbr} and ${theirAbbr} complete deal`,
-        body: `${myAbbr} sends ${sentNames} to ${theirAbbr} in exchange for ${receivedNames}.`,
-        category: 'trade',
-        clubIds: [playerClubId, partnerId],
-        playerIds: [
-          ...sendPlayers.map((p) => p.id),
-          ...receivePlayers.map((p) => p.id),
-        ],
-      })
-
+    if (result.accepted) {
       setTradeResult('accepted')
       setCompletedTradeSent(sentSnapshot)
       setCompletedTradeReceived(receivedSnapshot)
       setShowCompletedDialog(true)
-
-      // Reset selections
       setSendIds(new Set())
       setReceiveIds(new Set())
-    } else {
-      // Trade rejected
-      const deficit = theirValue - yourValue
-      const pctShort =
-        theirValue > 0
-          ? Math.round(((theirValue - yourValue) / theirValue) * 100)
-          : 0
-
-      let message = `${theirAbbr} have rejected the trade.`
-      if (deficit > 0) {
-        message += ` They felt the package was approximately ${formatPoints(deficit)} (${pctShort}%) short in value. Consider adding more to your offer.`
-      } else {
-        message += ` Despite a fair value, they decided to hold onto their players at this time.`
-      }
-
-      setTradeResult('rejected')
-      setRejectionMessage(message)
+      return
     }
+
+    setTradeResult('rejected')
+    setRejectionMessage('Counteroffer received. Check the Trade Inbox tab to continue negotiations.')
   }, [
     sendPlayers,
     receivePlayers,
     partnerClub,
-    yourValue,
-    theirValue,
-    myClub,
     partnerId,
-    playerClubId,
-    currentDate,
-    updatePlayer,
-    addNewsItem,
-    settings,
-    players,
+    proposeTradeOffer,
   ])
 
   const handleResetTrade = useCallback(() => {
@@ -1028,6 +903,274 @@ function MakeTradeTab() {
 }
 
 // ---------------------------------------------------------------------------
+// Trade Inbox Tab
+// ---------------------------------------------------------------------------
+
+function formatOfferTitle(item: TradeInboxItem, clubs: Record<string, import('@/types/club').Club>): string {
+  return item.offer.clubsInvolved
+    .map((cid) => clubs[cid]?.abbreviation ?? cid)
+    .join(' / ')
+}
+
+function TradeInboxTab() {
+  const playerClubId = useGameStore((s) => s.playerClubId)
+  const clubs = useGameStore((s) => s.clubs)
+  const players = useGameStore((s) => s.players)
+  const tradeInbox = useGameStore((s) => s.tradeInbox)
+  const respondToTradeOffer = useGameStore((s) => s.respondToTradeOffer)
+  const markTradeOfferRead = useGameStore((s) => s.markTradeOfferRead)
+  const generateTradeInboxOffersAction = useGameStore((s) => s.generateTradeInboxOffersAction)
+  const [error, setError] = useState<string | null>(null)
+
+  const sorted = useMemo(
+    () => [...tradeInbox].sort((a, b) => b.offer.createdAt.localeCompare(a.offer.createdAt)),
+    [tradeInbox],
+  )
+
+  const pending = sorted.filter((item) => item.offer.status === 'pending-user')
+
+  const handleRespond = (offerId: string, decision: 'accept' | 'reject' | 'counter') => {
+    const result = respondToTradeOffer(offerId, decision)
+    if (!result.success) {
+      setError(result.error ?? 'Unable to process response')
+    } else {
+      setError(null)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm text-muted-foreground">
+            Active negotiations from AI clubs. Accept, reject, or send a counter.
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {pending.length} pending offer{pending.length === 1 ? '' : 's'}
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => generateTradeInboxOffersAction()}>
+          <RefreshCw className="h-4 w-4 mr-1" />
+          Generate Offers
+        </Button>
+      </div>
+
+      {error && (
+        <div className="rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-300">
+          {error}
+        </div>
+      )}
+
+      {sorted.length === 0 ? (
+        <Card>
+          <CardContent className="py-10 text-center">
+            <p className="text-muted-foreground">No trade offers in your inbox.</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {sorted.map((item) => {
+            const incoming = item.offer.playerMoves
+              .map((m) => ({ move: m, player: players[m.playerId] }))
+              .filter((x) => x.move.toClubId === playerClubId && x.player)
+            const outgoing = item.offer.playerMoves
+              .map((m) => ({ move: m, player: players[m.playerId] }))
+              .filter((x) => x.move.fromClubId === playerClubId && x.player)
+            const isPending = item.offer.status === 'pending-user'
+
+            return (
+              <Card
+                key={item.id}
+                className={!item.read ? 'border-blue-500/60' : ''}
+                onClick={() => markTradeOfferRead(item.id)}
+              >
+                <CardContent className="py-4 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <p className="font-semibold text-sm">{formatOfferTitle(item, clubs)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {item.offer.clubsInvolved.length > 2 ? 'Multi-club trade' : 'Two-club trade'} · {item.offer.createdAt}
+                        {item.offer.expiresAt ? ` · expires ${item.offer.expiresAt}` : ''}
+                      </p>
+                    </div>
+                    <Badge variant={isPending ? 'default' : 'secondary'}>
+                      {item.offer.status}
+                    </Badge>
+                  </div>
+
+                  <p className="text-sm text-muted-foreground">{item.offer.message}</p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">You Receive</p>
+                      {incoming.length === 0 ? (
+                        <p className="text-muted-foreground text-xs">No direct incoming players</p>
+                      ) : (
+                        incoming.map(({ player }) => (
+                          <p key={player!.id}>
+                            {player!.firstName} {player!.lastName} ({player!.position.primary})
+                          </p>
+                        ))
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">You Send</p>
+                      {outgoing.length === 0 ? (
+                        <p className="text-muted-foreground text-xs">No direct outgoing players</p>
+                      ) : (
+                        outgoing.map(({ player }) => (
+                          <p key={player!.id}>
+                            {player!.firstName} {player!.lastName} ({player!.position.primary})
+                          </p>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {isPending && (
+                    <div className="flex justify-end gap-2">
+                      <Button variant="outline" size="sm" onClick={() => handleRespond(item.id, 'reject')}>
+                        Reject
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleRespond(item.id, 'counter')}
+                        disabled={item.offer.clubsInvolved.length > 2}
+                      >
+                        Counter
+                      </Button>
+                      <Button size="sm" onClick={() => handleRespond(item.id, 'accept')}>
+                        Accept
+                      </Button>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Trade Block Tab
+// ---------------------------------------------------------------------------
+
+function TradeBlockTab() {
+  const playerClubId = useGameStore((s) => s.playerClubId)
+  const players = useGameStore((s) => s.players)
+  const clubs = useGameStore((s) => s.clubs)
+  const currentYear = useGameStore((s) => s.currentYear)
+  const tradeBlock = useGameStore((s) => s.tradeBlock)
+  const setPlayerTradeAvailability = useGameStore((s) => s.setPlayerTradeAvailability)
+  const clearPlayerTradeAvailability = useGameStore((s) => s.clearPlayerTradeAvailability)
+
+  const myPlayers = useMemo(
+    () => Object.values(players)
+      .filter((p) => p.clubId === playerClubId)
+      .sort((a, b) => a.lastName.localeCompare(b.lastName)),
+    [players, playerClubId],
+  )
+
+  const listingByPlayer = tradeBlock.listings
+  const recentEnquiries = useMemo(
+    () => tradeBlock.enquiries
+      .filter((e) => e.toClubId === playerClubId)
+      .slice()
+      .reverse()
+      .slice(0, 12),
+    [tradeBlock.enquiries, playerClubId],
+  )
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Player Availability</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {myPlayers.map((p) => {
+            const listing = listingByPlayer[p.id]
+            const baseValue = getPackageTradeValue([p.id], [], players, currentYear)
+            const demandScore = listing?.demandScore ?? 0
+            const adjustedValue = getDemandAdjustedValue(baseValue, demandScore)
+            const enquiries = listing?.enquiryCount ?? 0
+            return (
+              <div key={p.id} className="rounded-md border p-2.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div>
+                    <p className="text-sm font-medium">
+                      #{p.jerseyNumber} {p.firstName} {p.lastName} ({p.position.primary})
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Base {formatPoints(baseValue)} · Market {formatPoints(adjustedValue)} · Demand {demandScore.toFixed(2)} · Enquiries {enquiries}
+                    </p>
+                  </div>
+                  <div className="flex gap-1.5 flex-wrap">
+                    <Button
+                      size="sm"
+                      variant={listing?.availability === 'available' ? 'default' : 'outline'}
+                      onClick={() => setPlayerTradeAvailability(p.id, 'available')}
+                    >
+                      Available
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={listing?.availability === 'reluctant' ? 'default' : 'outline'}
+                      onClick={() => setPlayerTradeAvailability(p.id, 'reluctant')}
+                    >
+                      Reluctant
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={listing?.availability === 'salary-dump' ? 'default' : 'outline'}
+                      onClick={() => setPlayerTradeAvailability(p.id, 'salary-dump')}
+                    >
+                      Salary Dump
+                    </Button>
+                    {listing && (
+                      <Button size="sm" variant="ghost" onClick={() => clearPlayerTradeAvailability(p.id)}>
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Bell className="h-4 w-4" />
+            Club Enquiries
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {recentEnquiries.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No club enquiries yet. List players to attract interest.</p>
+          ) : (
+            recentEnquiries.map((e) => (
+              <div key={e.id} className="rounded-md border p-2 text-sm">
+                <p className="font-medium">
+                  {clubs[e.fromClubId]?.abbreviation ?? e.fromClubId} enquired about {players[e.playerId]?.firstName} {players[e.playerId]?.lastName}
+                </p>
+                <p className="text-xs text-muted-foreground">{e.date} · {e.interest} interest</p>
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Trade History Tab
 // ---------------------------------------------------------------------------
 
@@ -1195,77 +1338,158 @@ function generateRumours(
   players: Record<string, Player>,
   clubs: Record<string, import('@/types/club').Club>,
   playerClubId: string,
-): Array<{ id: string; headline: string; body: string; playerId: string; clubId: string }> {
-  const allPlayers = Object.values(players).filter(
-    (p) => p.clubId !== '' && p.clubId !== playerClubId,
-  )
+  currentDate: string,
+  tradeBlock: import('@/types/trade').TradeBlockState,
+): Array<{ id: string; headline: string; body: string; playerId: string; clubId: string; confidence: 'low' | 'medium' | 'high' }> {
+  const allPlayers = Object.values(players).filter((p) => p.clubId !== '' && p.clubId !== playerClubId && p.clubId !== 'retired')
   const allClubs = Object.values(clubs)
 
-  // Find candidates: low morale or expiring contracts
-  const candidates = allPlayers.filter(
-    (p) =>
-      p.morale < 50 ||
-      p.contract.yearsRemaining <= 1 ||
-      (p.form < 40 && p.age < 28),
-  )
+  const hash = (input: string): number => {
+    let h = 2166136261
+    for (let i = 0; i < input.length; i++) {
+      h ^= input.charCodeAt(i)
+      h = Math.imul(h, 16777619)
+    }
+    return h >>> 0
+  }
+  const seeded = (seed: string) => (hash(seed) % 10000) / 10000
 
-  // If not enough candidates, add some random ones
-  const pool =
-    candidates.length >= 5
-      ? candidates
-      : [...candidates, ...allPlayers.slice(0, 10)]
+  const getPositionalNeeds = (clubId: string): Set<string> => {
+    const counts = new Map<string, number>()
+    for (const p of Object.values(players)) {
+      if (p.clubId !== clubId) continue
+      counts.set(p.position.primary, (counts.get(p.position.primary) ?? 0) + 1)
+    }
+    const needs = new Set<string>()
+    for (const pos of ['BP', 'FB', 'HBF', 'CHB', 'W', 'IM', 'OM', 'RK', 'HFF', 'CHF', 'FP', 'FF']) {
+      if ((counts.get(pos) ?? 0) < 3) needs.add(pos)
+    }
+    return needs
+  }
 
-  // Shuffle and pick 3-5
-  const shuffled = [...pool].sort(() => Math.random() - 0.5)
-  const count = 3 + Math.floor(Math.random() * 3) // 3-5
-  const selected = shuffled.slice(0, count)
+  type Candidate = {
+    player: Player
+    sourceClubId: string
+    destClubId: string
+    score: number
+    confidence: 'low' | 'medium' | 'high'
+    reason: string
+  }
 
-  const templates = [
-    (pName: string, fromClub: string, toClub: string) => ({
-      headline: `${pName} linked with move to ${toClub}`,
-      body: `Sources close to ${fromClub} suggest ${pName} is exploring a potential move to ${toClub}. The player is reportedly unsettled and seeking a fresh start.`,
-    }),
-    (pName: string, fromClub: string, toClub: string) => ({
-      headline: `${toClub} circling ${pName}`,
-      body: `${toClub} have expressed interest in ${fromClub}'s ${pName}, with initial discussions believed to have taken place between the clubs.`,
-    }),
-    (pName: string, fromClub: string, toClub: string) => ({
-      headline: `${pName} on the radar of multiple clubs`,
-      body: `${fromClub}'s ${pName} has attracted attention from ${toClub} and at least one other club. A deal could be done before the trade deadline.`,
-    }),
-    (pName: string, fromClub: string, toClub: string) => ({
-      headline: `Trade whispers: ${pName} to ${toClub}?`,
-      body: `Rumours are swirling that ${pName} could be headed to ${toClub} after a difficult stretch at ${fromClub}. The player's contract situation makes a move feasible.`,
-    }),
-    (pName: string, fromClub: string, toClub: string) => ({
-      headline: `${fromClub} could part ways with ${pName}`,
-      body: `${fromClub} are believed to be open to offers for ${pName}, with ${toClub} identified as a potential landing spot. The player has ${Math.floor(Math.random() * 2) + 1} year(s) remaining on their deal.`,
-    }),
-  ]
+  const candidates: Candidate[] = []
 
-  return selected.map((player) => {
-    const fromClub = clubs[player.clubId]
-    // Pick a random destination club that isn't the player's current club
-    const destOptions = allClubs.filter(
-      (c) => c.id !== player.clubId,
-    )
-    const destClub =
-      destOptions[Math.floor(Math.random() * destOptions.length)]
+  for (const player of allPlayers) {
+    const sourceClub = clubs[player.clubId]
+    if (!sourceClub) continue
 
-    const template = templates[Math.floor(Math.random() * templates.length)]
+    const listing = tradeBlock.listings[player.id]
+    const enquiries = tradeBlock.enquiries.filter((e) => e.playerId === player.id)
+    const enquiryByClub = new Map<string, number>()
+    for (const e of enquiries) {
+      enquiryByClub.set(e.fromClubId, (enquiryByClub.get(e.fromClubId) ?? 0) + (e.interest === 'high' ? 3 : e.interest === 'medium' ? 2 : 1))
+    }
+
+    const destinationOptions = allClubs
+      .filter((c) => c.id !== player.clubId)
+      .map((c) => {
+        const needs = getPositionalNeeds(c.id)
+        const fitNeed = needs.has(player.position.primary) ? 18 : 0
+        const enquiryWeight = (enquiryByClub.get(c.id) ?? 0) * 7
+        const requestMatch = player.tradeRequest?.active && player.tradeRequest.nominatedClubIds.includes(c.id) ? 24 : 0
+        const capNeed = c.finances.currentSpend > 0 && player.contract.aav > 700_000 ? 4 : 0
+        const seedNoise = seeded(`${currentDate}-${player.id}-${c.id}`)
+        const weight = fitNeed + enquiryWeight + requestMatch + capNeed + seedNoise * 6
+        return { clubId: c.id, weight, fitNeed, enquiryWeight, requestMatch }
+      })
+      .sort((a, b) => b.weight - a.weight)
+
+    if (destinationOptions.length === 0) continue
+    const topDest = destinationOptions[0]
+
+    let score = 0
+    const reasons: string[] = []
+    if (player.tradeRequest?.active) {
+      score += 38
+      reasons.push('active trade request')
+    }
+    if (listing?.active) {
+      score += listing.availability === 'salary-dump' ? 30 : listing.availability === 'reluctant' ? 14 : 24
+      score += (listing.demandScore ?? 0) * 8
+      reasons.push('on the trade block')
+    }
+    if (player.contract.yearsRemaining <= 1) {
+      score += 18
+      reasons.push('expiring contract')
+    }
+    if (player.morale < 45) {
+      score += 16
+      reasons.push('low morale')
+    }
+    if (topDest.fitNeed > 0) {
+      score += topDest.fitNeed
+      reasons.push('destination list need')
+    }
+    if (topDest.enquiryWeight > 0) {
+      score += topDest.enquiryWeight
+      reasons.push('documented enquiry interest')
+    }
+    if (topDest.requestMatch > 0) {
+      reasons.push('nominated destination')
+    }
+
+    const volatility = seeded(`${currentDate}-vol-${player.id}`)
+    score += Math.round((volatility - 0.5) * 8)
+
+    if (score < 34) continue
+
+    const confidence: 'low' | 'medium' | 'high' =
+      score >= 74 ? 'high' : score >= 50 ? 'medium' : 'low'
+
+    candidates.push({
+      player,
+      sourceClubId: player.clubId,
+      destClubId: topDest.clubId,
+      score,
+      confidence,
+      reason: reasons.slice(0, 3).join(', '),
+    })
+  }
+
+  const picked = candidates
+    .sort((a, b) => b.score - a.score)
+    .filter((c, idx) => {
+      const chance = c.confidence === 'high' ? 0.92 : c.confidence === 'medium' ? 0.78 : 0.58
+      const roll = seeded(`${currentDate}-rumour-${c.player.id}-${idx}`)
+      return roll <= chance
+    })
+    .slice(0, 6)
+
+  return picked.map((entry, idx) => {
+    const player = entry.player
+    const sourceClub = clubs[entry.sourceClubId]
+    const destClub = clubs[entry.destClubId]
     const playerName = `${player.firstName} ${player.lastName}`
-    const { headline, body } = template(
-      playerName,
-      fromClub?.abbreviation ?? 'Unknown',
-      destClub?.abbreviation ?? 'Unknown',
-    )
+
+    const headline =
+      entry.confidence === 'high'
+        ? `${destClub?.abbreviation ?? 'Rival club'} pushing hard for ${playerName}`
+        : entry.confidence === 'medium'
+          ? `${playerName} linked to ${destClub?.abbreviation ?? 'a move'}`
+          : `${playerName} quietly monitored by ${destClub?.abbreviation ?? 'rivals'}`
+
+    const body = entry.confidence === 'high'
+      ? `${sourceClub?.abbreviation ?? 'His club'} and ${destClub?.abbreviation ?? 'the destination club'} are believed to be discussing frameworks around ${playerName}. Drivers: ${entry.reason}. The rumour is strong, but a deal is not guaranteed.`
+      : entry.confidence === 'medium'
+        ? `League chatter links ${playerName} to ${destClub?.abbreviation ?? 'another club'} due to ${entry.reason}. It is a plausible fit, though talks may not advance.`
+        : `${destClub?.abbreviation ?? 'A rival club'} has done background work on ${playerName}. The fit relates to ${entry.reason}, but this currently projects as speculative noise more than an active deal.`
 
     return {
-      id: crypto.randomUUID(),
+      id: `${currentDate}-${player.id}-${idx}`,
       headline,
       body,
       playerId: player.id,
-      clubId: destClub?.id ?? '',
+      clubId: entry.destClubId,
+      confidence: entry.confidence,
     }
   })
 }
@@ -1274,27 +1498,19 @@ function RumoursTab() {
   const players = useGameStore((s) => s.players)
   const clubs = useGameStore((s) => s.clubs)
   const playerClubId = useGameStore((s) => s.playerClubId)
+  const currentDate = useGameStore((s) => s.currentDate)
+  const tradeBlock = useGameStore((s) => s.tradeBlock)
 
-  const [rumours, setRumours] = useState(() =>
-    generateRumours(players, clubs, playerClubId),
+  const rumours = useMemo(() =>
+    generateRumours(players, clubs, playerClubId, currentDate, tradeBlock),
+    [players, clubs, playerClubId, currentDate, tradeBlock],
   )
-
-  const handleRefresh = useCallback(() => {
-    setRumours(generateRumours(players, clubs, playerClubId))
-  }, [players, clubs, playerClubId])
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          The latest trade whispers from around the league. Take these with a
-          grain of salt.
-        </p>
-        <Button variant="outline" size="sm" onClick={handleRefresh}>
-          <RefreshCw className="h-4 w-4 mr-1" />
-          Refresh Rumours
-        </Button>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        Rumours update automatically as market conditions change. High-confidence rumours are grounded in real demand and needs, but not every rumour becomes a completed trade.
+      </p>
 
       {rumours.length === 0 ? (
         <Card>
@@ -1325,6 +1541,12 @@ function RumoursTab() {
                         <p className="text-sm text-muted-foreground">
                           {rumour.body}
                         </p>
+                        <Badge
+                          variant={rumour.confidence === 'high' ? 'default' : rumour.confidence === 'medium' ? 'secondary' : 'outline'}
+                          className="text-[10px]"
+                        >
+                          {rumour.confidence} confidence
+                        </Badge>
                         <div className="flex items-center gap-2 pt-1 flex-wrap">
                           {player && (
                             <Badge variant="secondary" className="text-xs">
@@ -1443,10 +1665,30 @@ export function TradePage() {
       {/* Tabs */}
       <Tabs defaultValue="make-trade">
         <TabsList>
+          <TabsTrigger value="inbox">Trade Inbox</TabsTrigger>
+          <TabsTrigger value="trade-block">Trade Block</TabsTrigger>
           <TabsTrigger value="make-trade">Make a Trade</TabsTrigger>
           <TabsTrigger value="history">Trade History</TabsTrigger>
           <TabsTrigger value="rumours">Rumours</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="inbox">
+          {tradePeriodOpen ? (
+            <TradeInboxTab />
+          ) : (
+            <Card>
+              <CardContent className="py-4">
+                <p className="text-sm text-muted-foreground">
+                  Trade inbox remains available year-round, but new offers are mostly generated during the trade period.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="trade-block">
+          <TradeBlockTab />
+        </TabsContent>
 
         <TabsContent value="make-trade">
           {tradePeriodOpen ? (

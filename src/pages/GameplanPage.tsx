@@ -1,23 +1,59 @@
+import { useMemo, useState } from 'react'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Switch } from '@/components/ui/switch'
+import { Button } from '@/components/ui/button'
 import { Settings } from 'lucide-react'
 import type { ClubGameplan } from '@/types/club'
 import type { Player } from '@/types/player'
+import { applyGameplanAdjustment } from '@/engine/coaching/tacticalAdjustments'
+import { createDefaultGameplan } from '@/engine/gameplan/defaults'
 
 export function GameplanPage() {
   const playerClubId = useGameStore((s) => s.playerClubId)
   const clubs = useGameStore((s) => s.clubs)
   const players = useGameStore((s) => s.players)
+  const season = useGameStore((s) => s.season)
+  const currentRound = useGameStore((s) => s.currentRound)
+  const weeklyGameplans = useGameStore((s) => s.weeklyGameplans)
   const updateGameplan = useGameStore((s) => s.updateGameplan)
+  const updateWeeklyGameplanAdjustment = useGameStore((s) => s.updateWeeklyGameplanAdjustment)
+  const clearWeeklyGameplanAdjustment = useGameStore((s) => s.clearWeeklyGameplanAdjustment)
+  const generateWeeklyCounterGameplanForUser = useGameStore((s) => s.generateWeeklyCounterGameplanForUser)
 
   const club = clubs[playerClubId]
-  const gameplan = club?.gameplan
+  const gameplan = club?.gameplan ?? createDefaultGameplan()
 
-  if (!gameplan) return null
+  const round = season.rounds[currentRound]
+  const userFixture = round?.fixtures.find(
+    (f) => f.homeClubId === playerClubId || f.awayClubId === playerClubId,
+  )
+  const opponentClubId = userFixture
+    ? userFixture.homeClubId === playerClubId ? userFixture.awayClubId : userFixture.homeClubId
+    : null
+  const opponent = opponentClubId ? clubs[opponentClubId] : null
+
+  const weeklyEntry = weeklyGameplans[playerClubId]
+  const weeklyOverrides =
+    weeklyEntry && weeklyEntry.round === currentRound
+      ? weeklyEntry.overrides
+      : null
+  const weeklyGameplan = useMemo(
+    () => applyGameplanAdjustment(gameplan, weeklyOverrides),
+    [gameplan, weeklyOverrides],
+  )
+  const [editWeekly, setEditWeekly] = useState(Boolean(weeklyOverrides))
+  const activePlan = editWeekly ? weeklyGameplan : gameplan
+  const updatePlan = (updates: Partial<ClubGameplan>) => {
+    if (editWeekly) {
+      updateWeeklyGameplanAdjustment(updates)
+    } else {
+      updateGameplan(updates)
+    }
+  }
 
   // Get ruckmen from the player's club for ruck nomination
   const clubPlayers = Object.values(players).filter(
@@ -38,6 +74,59 @@ export function GameplanPage() {
           </p>
         </div>
       </div>
+
+      <Card>
+        <CardHeader className="py-3">
+          <CardTitle className="text-base">Weekly Tactical Adjustment</CardTitle>
+          <CardDescription>
+            {opponent
+              ? `Set a one-week plan for Round ${currentRound + 1} vs ${opponent.name}.`
+              : 'No opponent this round (bye or offseason).'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-2">
+          <Button
+            variant={editWeekly ? 'default' : 'outline'}
+            size="sm"
+            disabled={!opponent}
+            onClick={() => setEditWeekly((v) => !v)}
+          >
+            {editWeekly ? 'Editing Weekly Plan' : 'Edit Season Base Plan'}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!opponent}
+            onClick={() => {
+              generateWeeklyCounterGameplanForUser()
+              setEditWeekly(true)
+            }}
+          >
+            Auto Counter Opponent
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!weeklyOverrides}
+            onClick={() => {
+              clearWeeklyGameplanAdjustment()
+              setEditWeekly(false)
+            }}
+          >
+            Clear Weekly Plan
+          </Button>
+          {weeklyOverrides && (
+            <p className="text-xs text-muted-foreground">
+              Weekly override active for this round.
+            </p>
+          )}
+          {opponent && (
+            <p className="text-xs text-muted-foreground">
+              Opponent style: {opponent.gameplan.offensiveStyle}, {opponent.gameplan.tempo} tempo, {opponent.gameplan.aggression} aggression.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="general">
         <TabsList>
@@ -60,9 +149,9 @@ export function GameplanPage() {
               <CardContent>
                 <Label htmlFor="offensive-style">Style</Label>
                 <Select
-                  value={gameplan.offensiveStyle}
+                  value={activePlan.offensiveStyle}
                   onValueChange={(v) =>
-                    updateGameplan({ offensiveStyle: v as ClubGameplan['offensiveStyle'] })
+                    updatePlan({ offensiveStyle: v as ClubGameplan['offensiveStyle'] })
                   }
                 >
                   <SelectTrigger id="offensive-style">
@@ -93,9 +182,9 @@ export function GameplanPage() {
               <CardContent>
                 <Label htmlFor="tempo">Tempo</Label>
                 <Select
-                  value={gameplan.tempo}
+                  value={activePlan.tempo}
                   onValueChange={(v) =>
-                    updateGameplan({ tempo: v as ClubGameplan['tempo'] })
+                    updatePlan({ tempo: v as ClubGameplan['tempo'] })
                   }
                 >
                   <SelectTrigger id="tempo">
@@ -126,9 +215,9 @@ export function GameplanPage() {
               <CardContent>
                 <Label htmlFor="aggression">Level</Label>
                 <Select
-                  value={gameplan.aggression}
+                  value={activePlan.aggression}
                   onValueChange={(v) =>
-                    updateGameplan({ aggression: v as ClubGameplan['aggression'] })
+                    updatePlan({ aggression: v as ClubGameplan['aggression'] })
                   }
                 >
                   <SelectTrigger id="aggression">
@@ -164,9 +253,9 @@ export function GameplanPage() {
               <CardContent>
                 <Label htmlFor="kick-in">Tactic</Label>
                 <Select
-                  value={gameplan.kickInTactic}
+                  value={activePlan.kickInTactic}
                   onValueChange={(v) =>
-                    updateGameplan({ kickInTactic: v as ClubGameplan['kickInTactic'] })
+                    updatePlan({ kickInTactic: v as ClubGameplan['kickInTactic'] })
                   }
                 >
                   <SelectTrigger id="kick-in">
@@ -200,9 +289,9 @@ export function GameplanPage() {
               <CardContent>
                 <Label htmlFor="centre">Setup</Label>
                 <Select
-                  value={gameplan.centreTactic}
+                  value={activePlan.centreTactic}
                   onValueChange={(v) =>
-                    updateGameplan({ centreTactic: v as ClubGameplan['centreTactic'] })
+                    updatePlan({ centreTactic: v as ClubGameplan['centreTactic'] })
                   }
                 >
                   <SelectTrigger id="centre">
@@ -233,9 +322,9 @@ export function GameplanPage() {
               <CardContent>
                 <Label htmlFor="stoppage">Setup</Label>
                 <Select
-                  value={gameplan.stoppageTactic}
+                  value={activePlan.stoppageTactic}
                   onValueChange={(v) =>
-                    updateGameplan({ stoppageTactic: v as ClubGameplan['stoppageTactic'] })
+                    updatePlan({ stoppageTactic: v as ClubGameplan['stoppageTactic'] })
                   }
                 >
                   <SelectTrigger id="stoppage">
@@ -271,9 +360,9 @@ export function GameplanPage() {
               <CardContent>
                 <Label htmlFor="def-line">Style</Label>
                 <Select
-                  value={gameplan.defensiveLine}
+                  value={activePlan.defensiveLine}
                   onValueChange={(v) =>
-                    updateGameplan({ defensiveLine: v as ClubGameplan['defensiveLine'] })
+                    updatePlan({ defensiveLine: v as ClubGameplan['defensiveLine'] })
                   }
                 >
                   <SelectTrigger id="def-line">
@@ -307,9 +396,9 @@ export function GameplanPage() {
               <CardContent>
                 <Label htmlFor="mid-line">Style</Label>
                 <Select
-                  value={gameplan.midfieldLine}
+                  value={activePlan.midfieldLine}
                   onValueChange={(v) =>
-                    updateGameplan({ midfieldLine: v as ClubGameplan['midfieldLine'] })
+                    updatePlan({ midfieldLine: v as ClubGameplan['midfieldLine'] })
                   }
                 >
                   <SelectTrigger id="mid-line">
@@ -343,9 +432,9 @@ export function GameplanPage() {
               <CardContent>
                 <Label htmlFor="fwd-line">Style</Label>
                 <Select
-                  value={gameplan.forwardLine}
+                  value={activePlan.forwardLine}
                   onValueChange={(v) =>
-                    updateGameplan({ forwardLine: v as ClubGameplan['forwardLine'] })
+                    updatePlan({ forwardLine: v as ClubGameplan['forwardLine'] })
                   }
                 >
                   <SelectTrigger id="fwd-line">
@@ -385,11 +474,11 @@ export function GameplanPage() {
                 <div>
                   <Label htmlFor="primary-ruck">Primary Ruck</Label>
                   <Select
-                    value={gameplan.ruckNomination.primaryRuckId ?? 'none'}
+                    value={activePlan.ruckNomination.primaryRuckId ?? 'none'}
                     onValueChange={(v) =>
-                      updateGameplan({
+                      updatePlan({
                         ruckNomination: {
-                          ...gameplan.ruckNomination,
+                          ...activePlan.ruckNomination,
                           primaryRuckId: v === 'none' ? null : v,
                         },
                       })
@@ -411,11 +500,11 @@ export function GameplanPage() {
                 <div>
                   <Label htmlFor="backup-ruck">Backup Ruck</Label>
                   <Select
-                    value={gameplan.ruckNomination.backupRuckId ?? 'none'}
+                    value={activePlan.ruckNomination.backupRuckId ?? 'none'}
                     onValueChange={(v) =>
-                      updateGameplan({
+                      updatePlan({
                         ruckNomination: {
-                          ...gameplan.ruckNomination,
+                          ...activePlan.ruckNomination,
                           backupRuckId: v === 'none' ? null : v,
                         },
                       })
@@ -427,8 +516,7 @@ export function GameplanPage() {
                     <SelectContent>
                       <SelectItem value="none">None</SelectItem>
                       {ruckmen
-                        .filter(
-                          (p: Player) => p.id !== gameplan.ruckNomination.primaryRuckId,
+                        .filter((p: Player) => p.id !== activePlan.ruckNomination.primaryRuckId,
                         )
                         .map((p: Player) => (
                           <SelectItem key={p.id} value={p.id}>
@@ -441,11 +529,11 @@ export function GameplanPage() {
                 <div className="flex items-center gap-3 pt-2">
                   <Switch
                     id="around-ground"
-                    checked={gameplan.ruckNomination.aroundTheGround}
+                    checked={activePlan.ruckNomination.aroundTheGround}
                     onCheckedChange={(checked: boolean) =>
-                      updateGameplan({
+                      updatePlan({
                         ruckNomination: {
-                          ...gameplan.ruckNomination,
+                          ...activePlan.ruckNomination,
                           aroundTheGround: checked,
                         },
                       })
@@ -468,9 +556,9 @@ export function GameplanPage() {
               <CardContent>
                 <Label htmlFor="rotations">Frequency</Label>
                 <Select
-                  value={gameplan.rotations}
+                  value={activePlan.rotations}
                   onValueChange={(v) =>
-                    updateGameplan({ rotations: v as ClubGameplan['rotations'] })
+                    updatePlan({ rotations: v as ClubGameplan['rotations'] })
                   }
                 >
                   <SelectTrigger id="rotations">
@@ -503,75 +591,75 @@ export function GameplanPage() {
           <p className="text-sm text-muted-foreground">
             Your {club?.name} will play a{' '}
             <span className="font-semibold text-foreground">
-              {gameplan.offensiveStyle}
+              {activePlan.offensiveStyle}
             </span>{' '}
             style at{' '}
-            <span className="font-semibold text-foreground">{gameplan.tempo}</span>{' '}
+            <span className="font-semibold text-foreground">{activePlan.tempo}</span>{' '}
             tempo with{' '}
-            <span className="font-semibold text-foreground">{gameplan.aggression}</span>{' '}
+            <span className="font-semibold text-foreground">{activePlan.aggression}</span>{' '}
             aggression.
           </p>
           <p className="text-sm text-muted-foreground">
             Kick-ins:{' '}
-            <span className="font-semibold text-foreground">{gameplan.kickInTactic}</span>
+            <span className="font-semibold text-foreground">{activePlan.kickInTactic}</span>
             {' | '}Centre:{' '}
-            <span className="font-semibold text-foreground">{gameplan.centreTactic}</span>
+            <span className="font-semibold text-foreground">{activePlan.centreTactic}</span>
             {' | '}Stoppages:{' '}
-            <span className="font-semibold text-foreground">{gameplan.stoppageTactic}</span>
+            <span className="font-semibold text-foreground">{activePlan.stoppageTactic}</span>
           </p>
           <p className="text-sm text-muted-foreground">
             Defence:{' '}
-            <span className="font-semibold text-foreground">{gameplan.defensiveLine}</span>
+            <span className="font-semibold text-foreground">{activePlan.defensiveLine}</span>
             {' | '}Midfield:{' '}
-            <span className="font-semibold text-foreground">{gameplan.midfieldLine}</span>
+            <span className="font-semibold text-foreground">{activePlan.midfieldLine}</span>
             {' | '}Forward:{' '}
-            <span className="font-semibold text-foreground">{gameplan.forwardLine}</span>
+            <span className="font-semibold text-foreground">{activePlan.forwardLine}</span>
           </p>
           <p className="text-sm text-muted-foreground">
             Rotations:{' '}
-            <span className="font-semibold text-foreground">{gameplan.rotations}</span>
-            {gameplan.ruckNomination.aroundTheGround && (
+            <span className="font-semibold text-foreground">{activePlan.rotations}</span>
+            {activePlan.ruckNomination.aroundTheGround && (
               <span className="ml-2 text-xs">(Ruck goes around the ground)</span>
             )}
           </p>
 
           {/* Tactical tips */}
-          {gameplan.offensiveStyle === 'attacking' && (
+          {activePlan.offensiveStyle === 'attacking' && (
             <p className="text-xs text-muted-foreground mt-2">
               + Higher scoring chance, more inside 50s. - More vulnerable on counter-attack.
             </p>
           )}
-          {gameplan.offensiveStyle === 'defensive' && (
+          {activePlan.offensiveStyle === 'defensive' && (
             <p className="text-xs text-muted-foreground mt-2">
               + Stronger defensively, better rebound. - Lower scoring output.
             </p>
           )}
-          {gameplan.tempo === 'fast' && (
+          {activePlan.tempo === 'fast' && (
             <p className="text-xs text-muted-foreground mt-1">
               + More possessions per quarter. - Higher fatigue accumulation.
             </p>
           )}
-          {gameplan.aggression === 'high' && (
+          {activePlan.aggression === 'high' && (
             <p className="text-xs text-muted-foreground mt-1">
               + More contested possessions and tackles. - Higher injury risk.
             </p>
           )}
-          {gameplan.kickInTactic === 'play-on-long' && (
+          {activePlan.kickInTactic === 'play-on-long' && (
             <p className="text-xs text-muted-foreground mt-1">
               + More inside 50 entries. - Slightly less accurate.
             </p>
           )}
-          {gameplan.centreTactic === 'cluster' && (
+          {activePlan.centreTactic === 'cluster' && (
             <p className="text-xs text-muted-foreground mt-1">
               + Better contested possession. - Fewer uncontested possessions.
             </p>
           )}
-          {gameplan.defensiveLine === 'press' && (
+          {activePlan.defensiveLine === 'press' && (
             <p className="text-xs text-muted-foreground mt-1">
               + More tackles and pressure. - Risk of giving up goals on turnovers.
             </p>
           )}
-          {gameplan.forwardLine === 'press' && (
+          {activePlan.forwardLine === 'press' && (
             <p className="text-xs text-muted-foreground mt-1">
               + Better contested marks up forward. - Requires high work rate.
             </p>
@@ -581,3 +669,4 @@ export function GameplanPage() {
     </div>
   )
 }
+

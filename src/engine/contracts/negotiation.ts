@@ -1,6 +1,7 @@
 import type { Player, PlayerAttributes } from '@/types/player'
 import type { SeededRNG } from '@/engine/core/rng'
 import { MINIMUM_SALARY } from '@/engine/core/constants'
+import { getArchetypeContractModifiers } from '@/engine/player/agentPersonality'
 
 // ---------------------------------------------------------------------------
 // Exported interfaces
@@ -196,7 +197,7 @@ export function generateContractDemand(
   player: Player,
   currentClubId: string,
   rng: SeededRNG,
-  options?: { playerLoyaltyEnabled?: boolean },
+  options?: { playerLoyaltyEnabled?: boolean; clubIsContender?: boolean; isHomeState?: boolean },
 ): ContractDemand {
   const baseValue = calculatePlayerValue(player)
   const loyaltyEnabled = options?.playerLoyaltyEnabled !== false
@@ -209,7 +210,8 @@ export function generateContractDemand(
   // Loyalty: only applies if player is at the club making the offer
   // 1-100 → multiplier 1.0 – 0.85 (higher loyalty = bigger discount)
   const isAtCurrentClub = player.clubId === currentClubId
-  const loyaltyMultiplier = loyaltyEnabled && isAtCurrentClub
+  // Mercenaries never get loyalty discount
+  const loyaltyMultiplier = loyaltyEnabled && isAtCurrentClub && player.agentArchetype !== 'mercenary'
     ? 1.0 - (player.personality.loyalty / 100) * 0.15
     : 1.0
 
@@ -218,10 +220,20 @@ export function generateContractDemand(
     ? 1.0 + ((50 - player.morale) / 50) * 0.15
     : 1.0
 
+  // --- Archetype modifiers (stacks with personality) ---
+  const archetypeModifiers = player.agentArchetype
+    ? getArchetypeContractModifiers(
+        player.agentArchetype,
+        isAtCurrentClub,
+        options?.clubIsContender ?? false,
+        options?.isHomeState ?? false,
+      )
+    : { salaryMultiplier: 1, yearsAdjust: 0 }
+
   const aavWanted = roundSalary(
     Math.max(
       MINIMUM_SALARY,
-      baseValue * ambitionMultiplier * loyaltyMultiplier * moralePenalty,
+      baseValue * ambitionMultiplier * loyaltyMultiplier * moralePenalty * archetypeModifiers.salaryMultiplier,
     ),
   )
 
@@ -234,6 +246,7 @@ export function generateContractDemand(
   } else {
     yearsWanted = rng.nextInt(1, 3)
   }
+  yearsWanted = Math.max(1, Math.min(6, yearsWanted + archetypeModifiers.yearsAdjust))
 
   // --- Escalation ---
   const escalationRate = rng.nextFloat(0.03, 0.05)
@@ -272,7 +285,7 @@ export function evaluateOffer(
   offer: ContractOffer,
   currentClubId: string,
   rng: SeededRNG,
-  options?: { playerLoyaltyEnabled?: boolean },
+  options?: { playerLoyaltyEnabled?: boolean; clubIsContender?: boolean; isHomeState?: boolean },
 ): NegotiationResult {
   const demand = generateContractDemand(player, currentClubId, rng, options)
   const loyaltyEnabled = options?.playerLoyaltyEnabled !== false
@@ -306,7 +319,18 @@ export function evaluateOffer(
 
   // Loyalty bonus for staying at current club
   const isStaying = offer.clubId === currentClubId
-  if (isStaying && loyaltyEnabled) {
+  if (isStaying && loyaltyEnabled && player.agentArchetype !== 'mercenary') {
+    acceptanceProbability = Math.min(0.99, acceptanceProbability + 0.10)
+  }
+
+  // Archetype acceptance modifiers
+  if (player.agentArchetype === 'loyal' && isStaying) {
+    acceptanceProbability = Math.min(0.99, acceptanceProbability + 0.05)
+  }
+  if (player.agentArchetype === 'premiership-chaser' && options?.clubIsContender) {
+    acceptanceProbability = Math.min(0.99, acceptanceProbability + 0.10)
+  }
+  if (player.agentArchetype === 'homebody' && options?.isHomeState) {
     acceptanceProbability = Math.min(0.99, acceptanceProbability + 0.10)
   }
 

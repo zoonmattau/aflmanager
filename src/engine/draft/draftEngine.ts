@@ -10,6 +10,8 @@ import {
   mapDraftProspectToPreferredRole,
   roleNeedsByClub,
 } from '@/engine/player/roles'
+import { deriveAgentArchetype } from '@/engine/player/agentPersonality'
+import { getTacticalDraftPreferences } from '@/engine/core/tacticalIdentity'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -178,6 +180,16 @@ function estimateProspectValueForClub(
 }
 
 function identityArchetypeBonus(club: Club, prospect: DraftProspect): number {
+  if (club.tacticalIdentity) {
+    const prefs = getTacticalDraftPreferences(club.tacticalIdentity)
+    let bonus = 0
+    if (prefs.preferredRoles.includes(prospect.role)) bonus += 5
+    if (prefs.preferredArchetypes.includes(prospect.archetype)) bonus += 3
+    const inferredRole = mapDraftProspectToPreferredRole(prospect)
+    if (prefs.preferredPlayerRoles.includes(inferredRole)) bonus += 2
+    return Math.min(10, bonus)
+  }
+  // Fallback for saves without identity
   const style = club.gameplan.offensiveStyle
   if (style === 'attacking') {
     if (prospect.role === 'line-breaker' || prospect.role === 'aerial-threat') return 4
@@ -756,6 +768,7 @@ export function convertProspectToPlayer(
   clubId: string,
   draftYear: number,
   draftPick: number,
+  rng?: SeededRNG,
 ): Player {
   const preferredRole = mapDraftProspectToPreferredRole(prospect)
   return {
@@ -783,6 +796,8 @@ export function convertProspectToPlayer(
     attributes: { ...prospect.trueAttributes },
     hiddenAttributes: { ...prospect.hiddenAttributes },
     personality: { ...prospect.personality },
+    agentArchetype: rng ? deriveAgentArchetype(prospect.personality, rng) : undefined,
+    homeState: prospect.homeState,
     contract: {
       yearsRemaining: 2,
       aav: MINIMUM_SALARY,

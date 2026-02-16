@@ -1238,6 +1238,27 @@ export function NewGamePage() {
                       </div>
                       <div className="flex items-center justify-between">
                         <div>
+                          <Label className="text-zinc-200">Nominated Destinations</Label>
+                          <p className="text-xs text-zinc-500">Trade-requesting players nominate destination clubs</p>
+                        </div>
+                        <Switch checked={settings.realism.nominatedTradeDestinations} onCheckedChange={(val) => updateRealism('nominatedTradeDestinations', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-zinc-200">Reduced Nominated Leverage</Label>
+                          <p className="text-xs text-zinc-500">When a player nominates a club, return can be discounted</p>
+                        </div>
+                        <Switch checked={settings.realism.reducedNominatedLeverage} onCheckedChange={(val) => updateRealism('reducedNominatedLeverage', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-zinc-200">Players Refuse Trades</Label>
+                          <p className="text-xs text-zinc-500">Players can refuse moves to clubs they do not want</p>
+                        </div>
+                        <Switch checked={settings.realism.playersRefuseTrades} onCheckedChange={(val) => updateRealism('playersRefuseTrades', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
                           <Label className="text-zinc-200">Player Role Disputes</Label>
                           <p className="text-xs text-zinc-500">Players lose morale when played out of position</p>
                         </div>
@@ -1284,6 +1305,13 @@ export function NewGamePage() {
                           <p className="text-xs text-zinc-500">Father-Son and Academy matching bid system</p>
                         </div>
                         <Switch checked={settings.realism.ngaAcademy} onCheckedChange={(val) => updateRealism('ngaAcademy', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-zinc-200">Zone Matching Rules</Label>
+                          <p className="text-xs text-zinc-500">Apply academy/NGA zone eligibility to matching bids</p>
+                        </div>
+                        <Switch checked={settings.realism.ngaAcademyZoneMatching} onCheckedChange={(val) => updateRealism('ngaAcademyZoneMatching', val)} />
                       </div>
                     </div>
                   </div>

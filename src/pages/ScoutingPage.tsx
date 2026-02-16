@@ -30,7 +30,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 // Constants
 // ---------------------------------------------------------------------------
 
-const ALL_REGIONS: ScoutingRegion[] = ['VIC', 'SA', 'WA', 'NSW/ACT', 'QLD', 'TAS/NT']
+const ALL_REGIONS: ScoutingRegion[] = ['VIC', 'SA', 'WA', 'NSW/ACT', 'QLD', 'TAS', 'NT']
 
 const TIER_OPTIONS = ['elite', 'first-round', 'second-round', 'late', 'rookie-list'] as const
 
@@ -42,7 +42,7 @@ const TIER_LABELS: Record<string, string> = {
   'rookie-list': 'Rookie List',
 }
 
-const MAX_SCOUTS = 4
+const MAX_SCOUTS = 6
 
 type SortKey = 'confidence' | 'overallEstimate' | 'projectedPick'
 
@@ -247,6 +247,35 @@ function ProspectExpandedRow({
             {TIER_LABELS[prospect.tier] ?? prospect.tier}
           </Badge>
         </div>
+        <div>
+          <span className="text-muted-foreground">Home State:</span>{' '}
+          <span className="font-medium">{prospect.homeState}</span>
+        </div>
+        <div>
+          <span className="text-muted-foreground">Archetype:</span>{' '}
+          <span className="font-medium">{prospect.archetype}</span>
+        </div>
+        <div>
+          <span className="text-muted-foreground">Role:</span>{' '}
+          <span className="font-medium">{prospect.role}</span>
+        </div>
+        {report && (
+          <div>
+            <span className="text-muted-foreground">Potential:</span>{' '}
+            <span className="font-medium">
+              {report.potentialRange
+                ? `${Math.round(report.potentialRange[0])}-${Math.round(report.potentialRange[1])}`
+                : '?'}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="text-sm rounded-md border bg-muted/25 p-3">
+        <p className="font-medium">Pathway Background</p>
+        <p className="text-muted-foreground">
+          {prospect.background.pathwaySummary}
+        </p>
       </div>
 
       {report ? (
@@ -355,10 +384,13 @@ function MyScoutsTab({
                         </Badge>
                       )}
                     </div>
-                    <div className="mt-1.5">
-                      <ScoutSkillBar skill={scout.skill} />
-                    </div>
+                  <div className="mt-1.5">
+                    <ScoutSkillBar skill={scout.skill} />
                   </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Spec M/F/D/R/C: {scout.specialtyRatings.midfield}/{scout.specialtyRatings.forward}/{scout.specialtyRatings.defense}/{scout.specialtyRatings.ruck}/{scout.specialtyRatings.character}
+                  </p>
+                </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <RegionAssignSelect
                       currentRegion={scout.assignedRegion}
@@ -680,12 +712,13 @@ function ProspectReportsTab({
                     Est. OVR{sortIndicator('overallEstimate')}
                   </TableHead>
                   <TableHead className="px-3 text-center">Sessions</TableHead>
+                  <TableHead className="px-3 text-center">Pot.</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filtered.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                       No prospects match your filters.
                     </TableCell>
                   </TableRow>
@@ -759,10 +792,15 @@ function ProspectReportsTab({
                           <TableCell className="px-3 text-center tabular-nums">
                             {report ? report.sessionsCompleted : '--'}
                           </TableCell>
+                          <TableCell className="px-3 text-center font-mono">
+                            {report?.potentialRange
+                              ? `${Math.round(report.potentialRange[0])}-${Math.round(report.potentialRange[1])}`
+                              : '?'}
+                          </TableCell>
                         </TableRow>
                         {isExpanded && (
                           <TableRow>
-                            <TableCell colSpan={8} className="p-0 bg-muted/30">
+                            <TableCell colSpan={9} className="p-0 bg-muted/30">
                               <ProspectExpandedRow
                                 prospect={prospect}
                                 report={report ?? null}
@@ -843,7 +881,7 @@ function SummaryCards({
           <p className="text-xs text-muted-foreground">Regions Covered</p>
           <p className="text-2xl font-bold">
             {regionsCovered}{' '}
-            <span className="text-sm font-normal text-muted-foreground">/ 6</span>
+            <span className="text-sm font-normal text-muted-foreground">/ 7</span>
           </p>
         </CardContent>
       </Card>
@@ -885,62 +923,44 @@ export function ScoutingPage() {
   const draft = useGameStore((s) => s.draft)
   const playerClubId = useGameStore((s) => s.playerClubId)
   const clubs = useGameStore((s) => s.clubs)
+  const hireScoutAction = useGameStore((s) => s.hireScoutAction)
+  const fireScoutAction = useGameStore((s) => s.fireScoutAction)
+  const assignScoutRegionAction = useGameStore((s) => s.assignScoutRegionAction)
+  const runScoutingSessionAction = useGameStore((s) => s.runScoutingSessionAction)
 
   const club = clubs[playerClubId]
 
-  // Local state for scout management (store actions not wired yet)
-  const [localScouts, setLocalScouts] = useState<Scout[]>(() => [...scouts])
-
-  // Keep local scouts in sync if global scouts change (e.g., on mount)
-  // We use the store as initial value but manage locally from there.
   const myScouts = useMemo(
-    () => localScouts.filter((s) => s.clubId === playerClubId),
-    [localScouts, playerClubId],
+    () => scouts.filter((s) => s.clubId === playerClubId),
+    [scouts, playerClubId],
   )
 
   const availableScouts = useMemo(
-    () => localScouts.filter((s) => s.clubId === ''),
-    [localScouts],
+    () => scouts.filter((s) => s.clubId === ''),
+    [scouts],
   )
 
   const prospects = draft?.prospects ?? null
 
   const handleAssignRegion = useCallback(
     (scoutId: string, region: ScoutingRegion | null) => {
-      setLocalScouts((prev) =>
-        prev.map((s) => (s.id === scoutId ? { ...s, assignedRegion: region } : s)),
-      )
+      assignScoutRegionAction(scoutId, region)
     },
-    [],
+    [assignScoutRegionAction],
   )
 
   const handleFireScout = useCallback(
     (scoutId: string) => {
-      const scout = localScouts.find((s) => s.id === scoutId)
-      if (scout) {
-        // eslint-disable-next-line no-alert
-        alert(
-          `Fire scout: ${scout.firstName} ${scout.lastName}\n\n(Store actions not yet implemented. This will be wired up when scout actions are added to the game store.)`,
-        )
-      }
-      setLocalScouts((prev) =>
-        prev.map((s) =>
-          s.id === scoutId ? { ...s, clubId: '', assignedRegion: null } : s,
-        ),
-      )
+      fireScoutAction(scoutId)
     },
-    [localScouts],
+    [fireScoutAction],
   )
 
   const handleHireScout = useCallback(
     (scoutId: string) => {
-      setLocalScouts((prev) =>
-        prev.map((s) =>
-          s.id === scoutId ? { ...s, clubId: playerClubId } : s,
-        ),
-      )
+      hireScoutAction(scoutId)
     },
-    [playerClubId],
+    [hireScoutAction],
   )
 
   return (
@@ -961,6 +981,15 @@ export function ScoutingPage() {
       />
 
       <Separator />
+
+      <div className="flex items-center gap-2">
+        <Button size="sm" onClick={() => runScoutingSessionAction()} disabled={!draft}>
+          Run Scouting Session
+        </Button>
+        <p className="text-xs text-muted-foreground">
+          Scouting sessions narrow uncertainty in overall and potential based on scout region/specialty fit.
+        </p>
+      </div>
 
       {/* Tabs */}
       <Tabs defaultValue="scouts">

@@ -10,7 +10,7 @@ import {
   Play, FastForward, ChevronLeft, ChevronRight, ArrowRight,
   Plus, Moon, X,
   Users, ClipboardList, Shield, BarChart3, Gamepad2,
-  Swords, ArrowLeftRight, AlertTriangle, GraduationCap, FileText, Newspaper,
+  Swords, ArrowLeftRight, AlertTriangle, GraduationCap, FileText, Newspaper, Sparkles, Scale,
   CheckCheck,
 } from 'lucide-react'
 import type { Match } from '@/types/match'
@@ -145,8 +145,10 @@ const NEWS_CATEGORY_CONFIG: Record<NewsCategory, { icon: React.ElementType; colo
   match:    { icon: Swords,          color: 'bg-blue-500/15 text-blue-400',   label: 'Match' },
   trade:    { icon: ArrowLeftRight,  color: 'bg-purple-500/15 text-purple-400', label: 'Trade' },
   injury:   { icon: AlertTriangle,   color: 'bg-red-500/15 text-red-400',    label: 'Injury' },
+  discipline:{ icon: Scale,          color: 'bg-orange-500/15 text-orange-400', label: 'Tribunal' },
   draft:    { icon: GraduationCap,   color: 'bg-green-500/15 text-green-400', label: 'Draft' },
   contract: { icon: FileText,        color: 'bg-amber-500/15 text-amber-400', label: 'Contract' },
+  milestone:{ icon: Sparkles,        color: 'bg-cyan-500/15 text-cyan-400',  label: 'Milestone' },
   general:  { icon: Newspaper,       color: 'bg-zinc-500/15 text-zinc-400',  label: 'General' },
 }
 

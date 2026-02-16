@@ -17,6 +17,12 @@ import type {
   HiddenAttributes,
 } from '@/types/player'
 import { FIRST_NAMES, LAST_NAMES } from './names'
+import {
+  mapPrimaryPositionToPreferredRole,
+  pickArchetypeForRole,
+} from '@/engine/player/roles'
+import { deriveAgentArchetype } from '@/engine/player/agentPersonality'
+import { getClubState } from '@/engine/venues/venueEngine'
 
 // ---------------------------------------------------------------------------
 // Types internal to generation
@@ -417,7 +423,7 @@ function generateAttributes(
 /**
  * Generate hidden attributes for a player.
  */
-function generateHiddenAttributes(rng: SeededRNG, age: number, _isRookie: boolean): HiddenAttributes {
+function generateHiddenAttributes(rng: SeededRNG, age: number): HiddenAttributes {
   // Younger players tend to have higher potential ceilings
   const agePotentialBonus = age <= 21 ? rng.nextInt(10, 25) : age <= 24 ? rng.nextInt(0, 15) : 0
   const basePotential = rng.nextInt(45, 80) + agePotentialBonus
@@ -432,6 +438,7 @@ function generateHiddenAttributes(rng: SeededRNG, age: number, _isRookie: boolea
     peakAgeEnd: peakEnd,
     declineRate: Math.round(rng.nextFloat(0.5, 1.8) * 100) / 100,
     injuryProneness: rng.nextInt(10, 65),
+    durability: rng.nextInt(35, 95),
     bigGameModifier: rng.nextInt(-8, 8),
   }
 }
@@ -544,6 +551,7 @@ function generateCareerStats(
 
   const contestedPerGame = rng.nextFloat(5, 12)
   const contestedPossessions = Math.round(gamesPlayed * contestedPerGame)
+  const uncontestedPossessions = Math.max(0, disposals - contestedPossessions)
 
   const clearancesPerGame = primary === 'IM' || primary === 'OM'
     ? rng.nextFloat(3, 7)
@@ -559,6 +567,8 @@ function generateCareerStats(
     ? rng.nextFloat(2, 5)
     : rng.nextFloat(0.2, 1.5)
   const rebound50s = Math.round(gamesPlayed * rebound50sPerGame)
+  const freesFor = Math.round(gamesPlayed * rng.nextFloat(0.8, 2.4))
+  const freesAgainst = Math.round(gamesPlayed * rng.nextFloat(0.6, 2.1))
 
   // Extended stats (derived from base stats)
   const contestedMarks = Math.round(marks * rng.nextFloat(0.15, 0.35))
@@ -574,9 +584,25 @@ function generateCareerStats(
     : Math.round(gamesPlayed * rng.nextFloat(0, 0.5))
   const clangers = Math.round(disposals * rng.nextFloat(0.05, 0.12))
   const goalAssists = Math.round(gamesPlayed * rng.nextFloat(0.3, 1.5))
+  const aflFantasyPoints = Math.round(
+    kicks * 3 +
+    handballs * 2 +
+    marks * 3 +
+    tackles * 4 +
+    hitoutsTotal +
+    goals * 6 +
+    behinds +
+    freesFor -
+    freesAgainst * 3,
+  )
+  const superCoachPoints = Math.round(
+    gamesPlayed * rng.nextFloat(70, 102),
+  )
 
   return {
     gamesPlayed,
+    aflFantasyPoints,
+    superCoachPoints,
     goals,
     behinds,
     disposals,
@@ -586,9 +612,12 @@ function generateCareerStats(
     tackles,
     hitouts: hitoutsTotal,
     contestedPossessions,
+    uncontestedPossessions,
     clearances,
     insideFifties,
     rebound50s,
+    freesFor,
+    freesAgainst,
     contestedMarks,
     scoreInvolvements,
     metresGained,
@@ -604,6 +633,8 @@ function generateCareerStats(
 function emptyStats(): PlayerCareerStats {
   return {
     gamesPlayed: 0,
+    aflFantasyPoints: 0,
+    superCoachPoints: 0,
     goals: 0,
     behinds: 0,
     disposals: 0,
@@ -613,9 +644,12 @@ function emptyStats(): PlayerCareerStats {
     tackles: 0,
     hitouts: 0,
     contestedPossessions: 0,
+    uncontestedPossessions: 0,
     clearances: 0,
     insideFifties: 0,
     rebound50s: 0,
+    freesFor: 0,
+    freesAgainst: 0,
     contestedMarks: 0,
     scoreInvolvements: 0,
     metresGained: 0,
@@ -714,10 +748,15 @@ export function generatePlayers(clubId: string, seed?: number): Player[] {
     const attributes = generateAttributes(rng, age, tmpl.biases, isRookie)
 
     // --- Hidden ---
-    const hiddenAttributes = generateHiddenAttributes(rng, age, isRookie)
+    const hiddenAttributes = generateHiddenAttributes(rng, age)
 
     // --- Personality ---
     const personality = generatePersonality(rng)
+
+    // --- Agent archetype & home state ---
+    const agentArchetype = deriveAgentArchetype(personality, rng)
+    const clubState = getClubState(clubId)
+    const homeState = rng.chance(0.55) ? clubState : rng.pick(['VIC', 'SA', 'WA', 'NSW', 'QLD', 'TAS', 'NT'])
 
     // --- Contract ---
     const contract = generateContract(rng, age, isRookie)
@@ -747,9 +786,16 @@ export function generatePlayers(clubId: string, seed?: number): Player[] {
       height,
       weight,
       position,
+      preferredRole: mapPrimaryPositionToPreferredRole(position.primary),
+      archetype: pickArchetypeForRole(
+        mapPrimaryPositionToPreferredRole(position.primary),
+        rng.next(),
+      ),
       attributes,
       hiddenAttributes,
       personality,
+      agentArchetype,
+      homeState,
       contract,
       morale,
       fitness,
@@ -762,6 +808,7 @@ export function generatePlayers(clubId: string, seed?: number): Player[] {
       draftPick,
       careerStats,
       seasonStats,
+      injuryHistory: [],
     }
 
     players.push(player)

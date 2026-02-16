@@ -32,13 +32,14 @@ export const navGroups: NavGroup[] = [
     label: 'Team',
     icon: Users,
     defaultTo: '/squad',
-    matchPaths: ['/squad', '/lineup', '/gameplan', '/training', '/reserves'],
+    matchPaths: ['/squad', '/lineup', '/gameplan', '/training', '/reserves', '/injury-report'],
     items: [
       { to: '/squad', label: 'Squad' },
       { to: '/lineup', label: 'Lineup' },
       { to: '/gameplan', label: 'Gameplan' },
       { to: '/training', label: 'Training' },
       { to: '/reserves', label: 'Reserves' },
+      { to: '/injury-report', label: 'Injuries' },
     ],
   },
   {
@@ -46,7 +47,7 @@ export const navGroups: NavGroup[] = [
     label: 'Season',
     icon: Swords,
     defaultTo: '/match',
-    matchPaths: ['/match', '/ladder', '/league', '/calendar', '/state-leagues', '/offseason'],
+    matchPaths: ['/match', '/ladder', '/league', '/calendar', '/state-leagues', '/offseason', '/development-report'],
     items: [
       { to: '/match', label: 'Match Day' },
       { to: '/ladder', label: 'Ladder' },
@@ -54,6 +55,7 @@ export const navGroups: NavGroup[] = [
       { to: '/calendar', label: 'Calendar' },
       { to: '/state-leagues', label: 'State Leagues' },
       { to: '/offseason', label: 'Offseason' },
+      { to: '/development-report', label: 'Dev Report' },
     ],
   },
   {

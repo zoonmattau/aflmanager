@@ -12,6 +12,8 @@ import {
 } from '@tanstack/react-table'
 import { useGameStore } from '@/stores/gameStore'
 import type { Player } from '@/types/player'
+import type { ClubLeadership } from '@/types/club'
+import { getLeadershipScore, getTeamLeadershipRating } from '@/engine/leadership/leadershipEngine'
 import {
   getOverallRating,
   getStarRating,
@@ -40,7 +42,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { ArrowUpDown, Star, StarHalf } from 'lucide-react'
+import { ArrowUpDown, Shield, Star, StarHalf } from 'lucide-react'
 
 const columnHelper = createColumnHelper<Player>()
 
@@ -78,6 +80,7 @@ function tierBorder(tier: PlayerTier): string {
 function tagStyle(key: PlayerTagKey): string {
   switch (key) {
     case 'injured': return 'bg-red-500/15 text-red-600 border-red-500/30'
+    case 'suspended': return 'bg-orange-500/15 text-orange-600 border-orange-500/30'
     case 'expiring': return 'bg-amber-500/15 text-amber-600 border-amber-500/30'
     case 'unhappy': return 'bg-orange-500/15 text-orange-600 border-orange-500/30'
     case 'high-potential': return 'bg-blue-500/15 text-blue-600 border-blue-500/30'
@@ -117,9 +120,11 @@ const columns = [
   columnHelper.accessor((row) => `${row.firstName} ${row.lastName}`, {
     id: 'name',
     header: 'Name',
-    cell: (info) => (
-      <NameCell playerId={info.row.original.id} name={info.getValue()} />
-    ),
+    cell: (info) => {
+      const meta = info.table.options.meta as { leadershipRoleMap?: Record<string, 'C' | 'VC' | 'LG'> } | undefined
+      const role = meta?.leadershipRoleMap?.[info.row.original.id]
+      return <NameCell playerId={info.row.original.id} name={info.getValue()} leadershipRole={role} />
+    },
     size: 180,
   }),
   columnHelper.accessor((row) => getOverallRating(row), {
@@ -146,6 +151,126 @@ const columns = [
     header: 'Pos',
     cell: (info) => <Badge variant="outline">{info.getValue()}</Badge>,
     size: 60,
+  }),
+  columnHelper.accessor((row) => row.careerStats.gamesPlayed, {
+    id: 'games',
+    header: 'GP S/C',
+    cell: (info) => {
+      const p = info.row.original
+      return (
+        <span className="tabular-nums text-xs">
+          {p.seasonStats.gamesPlayed}/{p.careerStats.gamesPlayed}
+        </span>
+      )
+    },
+    size: 70,
+  }),
+  columnHelper.accessor((row) => row.seasonStats.disposals, {
+    id: 's_disp',
+    header: 'S Disp',
+    cell: (info) => {
+      const p = info.row.original
+      const gp = Math.max(1, p.seasonStats.gamesPlayed)
+      const avg = p.seasonStats.gamesPlayed > 0 ? p.seasonStats.disposals / gp : 0
+      return (
+        <span className="tabular-nums text-xs">
+          {p.seasonStats.disposals}
+          <span className="text-muted-foreground"> ({avg.toFixed(1)})</span>
+        </span>
+      )
+    },
+    size: 86,
+  }),
+  columnHelper.accessor((row) => row.seasonStats.goals, {
+    id: 's_goals',
+    header: 'S Gls',
+    cell: (info) => {
+      const p = info.row.original
+      const gp = Math.max(1, p.seasonStats.gamesPlayed)
+      const avg = p.seasonStats.gamesPlayed > 0 ? p.seasonStats.goals / gp : 0
+      return (
+        <span className="tabular-nums text-xs">
+          {p.seasonStats.goals}
+          <span className="text-muted-foreground"> ({avg.toFixed(1)})</span>
+        </span>
+      )
+    },
+    size: 80,
+  }),
+  columnHelper.accessor((row) => row.seasonStats.tackles, {
+    id: 's_tackles',
+    header: 'S Tck',
+    cell: (info) => {
+      const p = info.row.original
+      const gp = Math.max(1, p.seasonStats.gamesPlayed)
+      const avg = p.seasonStats.gamesPlayed > 0 ? p.seasonStats.tackles / gp : 0
+      return (
+        <span className="tabular-nums text-xs">
+          {p.seasonStats.tackles}
+          <span className="text-muted-foreground"> ({avg.toFixed(1)})</span>
+        </span>
+      )
+    },
+    size: 80,
+  }),
+  columnHelper.accessor((row) => row.seasonStats.aflFantasyPoints, {
+    id: 's_af',
+    header: 'S AF',
+    cell: (info) => {
+      const p = info.row.original
+      const gp = Math.max(1, p.seasonStats.gamesPlayed)
+      const avg = p.seasonStats.gamesPlayed > 0 ? p.seasonStats.aflFantasyPoints / gp : 0
+      return (
+        <span className="tabular-nums text-xs">
+          {p.seasonStats.aflFantasyPoints}
+          <span className="text-muted-foreground"> ({avg.toFixed(1)})</span>
+        </span>
+      )
+    },
+    size: 86,
+  }),
+  columnHelper.accessor((row) => row.seasonStats.superCoachPoints, {
+    id: 's_sc',
+    header: 'S SC',
+    cell: (info) => {
+      const p = info.row.original
+      const gp = Math.max(1, p.seasonStats.gamesPlayed)
+      const avg = p.seasonStats.gamesPlayed > 0 ? p.seasonStats.superCoachPoints / gp : 0
+      return (
+        <span className="tabular-nums text-xs">
+          {p.seasonStats.superCoachPoints}
+          <span className="text-muted-foreground"> ({avg.toFixed(1)})</span>
+        </span>
+      )
+    },
+    size: 86,
+  }),
+  columnHelper.accessor((row) => row.careerStats.goals, {
+    id: 'c_goals',
+    header: 'C Gls',
+    cell: (info) => <span className="tabular-nums text-xs">{info.getValue()}</span>,
+    size: 62,
+  }),
+  columnHelper.accessor((row) => row.injury?.weeksRemaining ?? 0, {
+    id: 'injury',
+    header: 'Status',
+    cell: (info) => {
+      const p = info.row.original
+      if ((p.suspension?.weeksRemaining ?? 0) > 0) {
+        return (
+          <Badge variant="outline" className="text-[10px] border-orange-500/30 bg-orange-500/15 text-orange-700">
+            Suspended ({p.suspension?.weeksRemaining ?? 0}w)
+          </Badge>
+        )
+      }
+      if (!p.injury) return <span className="text-xs text-muted-foreground">Fit</span>
+      return (
+        <Badge variant="outline" className="text-[10px] border-red-500/30 bg-red-500/15 text-red-600">
+          {p.injury.type} ({p.injury.weeksRemaining}w)
+        </Badge>
+      )
+    },
+    size: 140,
   }),
   columnHelper.accessor(
     (row) => getPlayerTags(row).length,
@@ -268,15 +393,26 @@ const columns = [
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function NameCell({ playerId, name }: { playerId: string; name: string }) {
+function NameCell({ playerId, name, leadershipRole }: { playerId: string; name: string; leadershipRole?: 'C' | 'VC' | 'LG' }) {
   const navigate = useNavigate()
   return (
-    <button
-      className="font-medium text-left hover:underline hover:text-primary cursor-pointer"
-      onClick={() => navigate(`/player/${playerId}`)}
-    >
-      {name}
-    </button>
+    <div className="flex items-center gap-1.5">
+      <button
+        className="font-medium text-left hover:underline hover:text-primary cursor-pointer"
+        onClick={() => navigate(`/player/${playerId}`)}
+      >
+        {name}
+      </button>
+      {leadershipRole === 'C' && (
+        <Badge variant="outline" className="text-[9px] px-1 py-0 bg-amber-500/15 text-amber-600 border-amber-500/30">C</Badge>
+      )}
+      {leadershipRole === 'VC' && (
+        <Badge variant="outline" className="text-[9px] px-1 py-0 bg-blue-500/15 text-blue-600 border-blue-500/30">VC</Badge>
+      )}
+      {leadershipRole === 'LG' && (
+        <Badge variant="outline" className="text-[9px] px-1 py-0 bg-slate-500/15 text-slate-500 border-slate-500/30">LG</Badge>
+      )}
+    </div>
   )
 }
 
@@ -284,13 +420,14 @@ function NameCell({ playerId, name }: { playerId: string; name: string }) {
 // Quick filters
 // ---------------------------------------------------------------------------
 
-type QuickFilter = 'all' | 'stars' | 'worst' | 'expiring' | 'must-re-sign'
+type QuickFilter = 'all' | 'stars' | 'worst' | 'expiring' | 'injured' | 'must-re-sign'
 
 const QUICK_FILTERS: { key: QuickFilter; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'stars', label: 'Stars' },
   { key: 'worst', label: 'Worst' },
   { key: 'expiring', label: 'Expiring' },
+  { key: 'injured', label: 'Injured' },
   { key: 'must-re-sign', label: 'Must Re-Sign' },
 ]
 
@@ -308,10 +445,35 @@ export function SquadPage() {
 
   const clubId = routeClubId ?? playerClubId
   const club = clubs[clubId]
+  const leadership = club?.leadership
   const clubPlayers = useMemo(
     () => Object.values(players).filter((p) => p.clubId === clubId),
     [players, clubId]
   )
+
+  // Build a map of playerId -> leadership role for badge display
+  const leadershipRoleMap = useMemo(() => {
+    const map: Record<string, 'C' | 'VC' | 'LG'> = {}
+    if (!leadership) return map
+    if (leadership.captainId) map[leadership.captainId] = 'C'
+    if (leadership.viceCaptainId) map[leadership.viceCaptainId] = 'VC'
+    for (const id of leadership.leadershipGroupIds) {
+      map[id] = 'LG'
+    }
+    return map
+  }, [leadership])
+
+  // Leadership card data
+  const leadershipCardData = useMemo(() => {
+    if (!leadership) return null
+    const captain = leadership.captainId ? players[leadership.captainId] : null
+    const vc = leadership.viceCaptainId ? players[leadership.viceCaptainId] : null
+    const group = leadership.leadershipGroupIds
+      .map(id => players[id])
+      .filter(Boolean)
+    const teamRating = getTeamLeadershipRating(clubPlayers, leadership)
+    return { captain, vc, group, teamRating }
+  }, [leadership, players, clubPlayers])
 
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
@@ -340,6 +502,9 @@ export function SquadPage() {
       case 'expiring':
         result = result.filter((p) => p.contract.yearsRemaining === 1)
         break
+      case 'injured':
+        result = result.filter((p) => p.injury !== null)
+        break
       case 'must-re-sign':
         result = result.filter(
           (p) => p.contract.yearsRemaining === 1 && getOverallRating(p) >= 65,
@@ -367,6 +532,7 @@ export function SquadPage() {
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     onGlobalFilterChange: setGlobalFilter,
+    meta: { leadershipRoleMap },
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -383,6 +549,58 @@ export function SquadPage() {
           </p>
         </div>
       </div>
+
+      {/* Leadership card */}
+      {leadershipCardData && (
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Shield className="h-4 w-4 text-amber-500" />
+              <h3 className="font-semibold text-sm">Leadership Group</h3>
+              <Badge variant="outline" className="ml-auto text-xs">
+                Team Rating: {leadershipCardData.teamRating}
+              </Badge>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+              {leadershipCardData.captain && (
+                <div className="flex flex-col">
+                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Captain</span>
+                  <span className="font-medium">
+                    {leadershipCardData.captain.firstName} {leadershipCardData.captain.lastName}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {leadershipCardData.captain.position.primary} &middot; Age {leadershipCardData.captain.age} &middot; LS {getLeadershipScore(leadershipCardData.captain)}
+                  </span>
+                </div>
+              )}
+              {leadershipCardData.vc && (
+                <div className="flex flex-col">
+                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Vice-Captain</span>
+                  <span className="font-medium">
+                    {leadershipCardData.vc.firstName} {leadershipCardData.vc.lastName}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {leadershipCardData.vc.position.primary} &middot; Age {leadershipCardData.vc.age} &middot; LS {getLeadershipScore(leadershipCardData.vc)}
+                  </span>
+                </div>
+              )}
+              {leadershipCardData.group.length > 0 && (
+                <div className="col-span-2 flex flex-col">
+                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Leadership Group</span>
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                    {leadershipCardData.group.map((p) => (
+                      <span key={p.id} className="text-xs">
+                        {p.firstName} {p.lastName}
+                        <span className="text-muted-foreground"> ({p.position.primary}, LS {getLeadershipScore(p)})</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2">

@@ -8,55 +8,43 @@ export interface OppositionOverlayProps {
   oppositionClubId: string
   players: Record<string, Player>
   clubs: Record<string, Club>
+  slotPositions: Array<{ slot: LineupSlot; top: number; left: number }>
 }
 
-// ---------------------------------------------------------------------------
-// Mirror mapping: opposition's defending positions map to your attacking area
-// and vice versa. Interchange is hidden for the opposition overlay.
-// ---------------------------------------------------------------------------
-
-interface MirrorSlotPos {
-  slot: LineupSlot
-  top: number
-  left: number
+const OPPOSITE_SLOT: Record<LineupSlot, LineupSlot> = {
+  LBP: 'RFP',
+  FB: 'FF',
+  RBP: 'LFP',
+  LHB: 'RHF',
+  CHB: 'CHF',
+  RHB: 'LHF',
+  LW: 'RW',
+  C: 'C',
+  RW: 'LW',
+  RK: 'RK',
+  RR: 'ROV',
+  ROV: 'RR',
+  LHF: 'RHB',
+  CHF: 'CHB',
+  RHF: 'LHB',
+  LFP: 'RBP',
+  FF: 'FB',
+  RFP: 'LBP',
+  I1: 'I1',
+  I2: 'I2',
+  I3: 'I3',
+  I4: 'I4',
+  I5: 'I5',
+  I6: 'I6',
+  I7: 'I7',
+  I8: 'I8',
 }
-
-const MIRROR_SLOTS: MirrorSlotPos[] = [
-  // Their back line -> your forward area (bottom)
-  { slot: 'LBP', top: 80, left: 75 },
-  { slot: 'FB', top: 83, left: 50 },
-  { slot: 'RBP', top: 80, left: 25 },
-
-  // Their half-back -> your half-forward area
-  { slot: 'LHB', top: 66, left: 78 },
-  { slot: 'CHB', top: 68, left: 50 },
-  { slot: 'RHB', top: 66, left: 22 },
-
-  // Their centre -> your centre (mirrored L/R)
-  { slot: 'LW', top: 42, left: 90 },
-  { slot: 'C', top: 44, left: 50 },
-  { slot: 'RW', top: 42, left: 10 },
-
-  // Their followers
-  { slot: 'RK', top: 37, left: 50 },
-  { slot: 'RR', top: 37, left: 64 },
-  { slot: 'ROV', top: 37, left: 36 },
-
-  // Their half-forward -> your half-back area
-  { slot: 'LHF', top: 22, left: 78 },
-  { slot: 'CHF', top: 20, left: 50 },
-  { slot: 'RHF', top: 22, left: 22 },
-
-  // Their forward line -> your back area (top)
-  { slot: 'LFP', top: 9, left: 75 },
-  { slot: 'FF', top: 6, left: 50 },
-  { slot: 'RFP', top: 9, left: 25 },
-]
 
 export function OppositionOverlay({
   oppositionClubId,
   players,
   clubs,
+  slotPositions,
 }: OppositionOverlayProps) {
   const oppositionLineup = useMemo(() => {
     const allPlayers = Object.values(players)
@@ -67,12 +55,22 @@ export function OppositionOverlay({
   const club = clubs[oppositionClubId]
   const clubColor = club?.colors.primary ?? '#ef4444'
 
+  const positionBySlot = useMemo(() => {
+    const out = new Map<LineupSlot, { top: number; left: number }>()
+    for (const p of slotPositions) out.set(p.slot, { top: p.top, left: p.left })
+    return out
+  }, [slotPositions])
+
   return (
-    <div className="absolute inset-0 pointer-events-none z-20">
-      {MIRROR_SLOTS.map((pos) => {
-        const playerId = oppositionLineup[pos.slot]
+    <div className="pointer-events-none absolute inset-0 z-10">
+      {slotPositions.map((slotPos) => {
+        const mirroredSlot = OPPOSITE_SLOT[slotPos.slot]
+        const playerId = oppositionLineup[mirroredSlot]
         const player = playerId ? players[playerId] : null
         if (!player) return null
+
+        const pos = positionBySlot.get(slotPos.slot)
+        if (!pos) return null
 
         const surname =
           player.lastName.length > 7
@@ -81,27 +79,28 @@ export function OppositionOverlay({
 
         return (
           <div
-            key={`opp-${pos.slot}`}
-            className="absolute flex flex-col items-center"
+            key={`opp-${slotPos.slot}`}
+            className="absolute"
             style={{
               top: `${pos.top}%`,
               left: `${pos.left}%`,
-              transform: 'translate(-50%, -50%)',
+              transform: 'translate(calc(-50% + 38px), calc(-50% - 18px))',
             }}
           >
             <div
-              className="flex flex-col items-center justify-center rounded-full w-[42px] h-[42px] opacity-60"
+              className="flex h-[28px] w-[68px] items-center gap-1 rounded-md border px-1 opacity-80"
               style={{
-                backgroundColor: `${clubColor}30`,
-                border: `2px solid ${clubColor}90`,
+                borderColor: `${clubColor}99`,
+                backgroundColor: `${clubColor}3d`,
               }}
             >
-              <span className="text-[8px] font-bold leading-none text-zinc-300">
+              <span className="w-5 text-center text-[8px] font-bold leading-none text-zinc-200">
                 #{player.jerseyNumber}
               </span>
-              <span className="text-[7px] leading-tight text-zinc-400 truncate max-w-[38px] text-center">
-                {surname}
-              </span>
+              <div className="min-w-0 leading-tight">
+                <span className="block truncate text-[8px] text-zinc-100">{surname}</span>
+                <span className="text-[7px] text-zinc-300">{player.position.primary}</span>
+              </div>
             </div>
           </div>
         )

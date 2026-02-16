@@ -25,6 +25,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { getProspectOverall } from '@/engine/draft/prospects'
+import type { DraftPickTradeOffer } from '@/types/draft'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -51,7 +53,7 @@ const ALL_POSITIONS: PlayerPositionType[] = [
 ]
 
 const ALL_REGIONS: ScoutingRegion[] = [
-  'VIC', 'SA', 'WA', 'NSW/ACT', 'QLD', 'TAS/NT',
+  'VIC', 'SA', 'WA', 'NSW/ACT', 'QLD', 'TAS', 'NT',
 ]
 
 const ALL_TIERS: DraftProspect['tier'][] = [
@@ -68,6 +70,21 @@ type ProspectSortField =
   | 'region'
   | 'tier'
   | 'overall'
+
+const IDEAL_POSITIONAL_COUNTS: Record<PlayerPositionType, number> = {
+  BP: 3,
+  FB: 3,
+  HBF: 4,
+  CHB: 3,
+  W: 3,
+  IM: 6,
+  OM: 5,
+  RK: 3,
+  HFF: 4,
+  CHF: 3,
+  FP: 3,
+  FF: 3,
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -102,6 +119,15 @@ function getScoutedRange(
   return `${avgLow}-${avgHigh}`
 }
 
+function getScoutedPotentialRange(
+  prospect: DraftProspect,
+  clubId: string,
+): string {
+  const report = prospect.scoutingReports[clubId]
+  if (!report || !report.potentialRange) return '?'
+  return `${Math.round(report.potentialRange[0])}-${Math.round(report.potentialRange[1])}`
+}
+
 function tierSortOrder(tier: DraftProspect['tier']): number {
   const order: Record<DraftProspect['tier'], number> = {
     elite: 0,
@@ -111,6 +137,29 @@ function tierSortOrder(tier: DraftProspect['tier']): number {
     'rookie-list': 4,
   }
   return order[tier]
+}
+
+function rankProspectForUser(prospect: DraftProspect, clubId: string): number {
+  const report = prospect.scoutingReports[clubId]
+  if (report) {
+    const confidenceBonus = report.confidence * 4
+    return report.overallEstimate * 0.7 + report.potentialEstimate * 0.3 + confidenceBonus
+  }
+  return getProspectOverall(prospect) * 0.75 + (80 - prospect.projectedPick) * 0.25
+}
+
+function deriveTeamNeeds(players: Record<string, import('@/types/player').Player>, clubId: string): PlayerPositionType[] {
+  const counts = {} as Record<PlayerPositionType, number>
+  for (const p of Object.values(players)) {
+    if (p.clubId !== clubId) continue
+    counts[p.position.primary] = (counts[p.position.primary] ?? 0) + 1
+  }
+  const needs = (Object.keys(IDEAL_POSITIONAL_COUNTS) as PlayerPositionType[])
+    .map((pos) => ({ pos, deficit: (IDEAL_POSITIONAL_COUNTS[pos] ?? 0) - (counts[pos] ?? 0) }))
+    .filter((x) => x.deficit > 0)
+    .sort((a, b) => b.deficit - a.deficit)
+    .map((x) => x.pos)
+  return needs
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +390,10 @@ function DraftBoardTab({
   playerClubId,
   clubs,
   onSelectProspect,
+  bestAvailable,
+  teamNeeds,
+  shortlist,
+  onToggleShortlist,
 }: {
   picks: DraftPick[]
   prospects: DraftProspect[]
@@ -349,6 +402,10 @@ function DraftBoardTab({
   playerClubId: string
   clubs: Record<string, { name: string; abbreviation: string }>
   onSelectProspect: (pickIndex: number, prospectId: string) => void
+  bestAvailable: DraftProspect[]
+  teamNeeds: PlayerPositionType[]
+  shortlist: DraftProspect[]
+  onToggleShortlist: (prospectId: string) => void
 }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [activePick, setActivePick] = useState<{
@@ -377,6 +434,65 @@ function DraftBoardTab({
 
   return (
     <>
+      <div className="grid gap-4 md:grid-cols-3 mb-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Best Available</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {bestAvailable.slice(0, 8).map((p) => (
+              <div key={p.id} className="flex items-center justify-between gap-2 text-sm">
+                <div className="min-w-0">
+                  <p className="font-medium truncate">{p.firstName} {p.lastName}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {p.position.primary} • Proj #{p.projectedPick}
+                  </p>
+                </div>
+                <Button size="sm" variant="outline" onClick={() => onToggleShortlist(p.id)}>
+                  {shortlist.some((s) => s.id === p.id) ? 'Unlist' : 'Shortlist'}
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Team Needs</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
+            {teamNeeds.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No urgent list deficits.</p>
+            ) : (
+              teamNeeds.slice(0, 8).map((need) => (
+                <Badge key={need} variant="outline">{need}</Badge>
+              ))
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Shortlist</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {shortlist.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No shortlisted prospects yet.</p>
+            ) : (
+              shortlist.slice(0, 10).map((p) => (
+                <div key={p.id} className="flex items-center justify-between gap-2 text-sm">
+                  <div className="min-w-0">
+                    <p className="font-medium truncate">{p.firstName} {p.lastName}</p>
+                    <p className="text-xs text-muted-foreground">{p.position.primary} • {p.tier}</p>
+                  </div>
+                  <Button size="sm" variant="ghost" onClick={() => onToggleShortlist(p.id)}>Remove</Button>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
       <ScrollArea className="h-[600px]">
         <Table>
           <TableHeader>
@@ -450,7 +566,7 @@ function DraftBoardTab({
                     )}
                   </TableCell>
                   <TableCell>
-                    {isUserPick && !isComplete && (
+                    {isUserPick && !isComplete && isCurrent && (
                       <Button
                         size="sm"
                         onClick={() => handleOpenDialog(i, pick.pickNumber)}
@@ -483,6 +599,48 @@ function DraftBoardTab({
         />
       )}
     </>
+  )
+}
+
+function DraftPickTradeOffersCard({
+  offers,
+  clubs,
+  onRespond,
+}: {
+  offers: DraftPickTradeOffer[]
+  clubs: Record<string, { name: string; abbreviation: string }>
+  onRespond: (offerId: string, decision: 'accept' | 'reject') => void
+}) {
+  if (offers.length === 0) return null
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">Live Pick Trade Offers</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {offers.map((offer) => (
+          <div key={offer.id} className="rounded border p-3">
+            <p className="text-sm font-medium">
+              {clubs[offer.fromClubId]?.name ?? offer.fromClubId} offer a pick swap
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">{offer.message}</p>
+            {offer.offeredFuturePicks.length > 0 && (
+              <p className="text-xs mt-1">
+                Future picks offered:{' '}
+                {offer.offeredFuturePicks
+                  .map((p) => `${p.year} R${p.round} (${clubs[p.originalClubId]?.abbreviation ?? p.originalClubId})`)
+                  .join(', ')}
+              </p>
+            )}
+            <div className="mt-3 flex gap-2">
+              <Button size="sm" onClick={() => onRespond(offer.id, 'accept')}>Accept</Button>
+              <Button size="sm" variant="outline" onClick={() => onRespond(offer.id, 'reject')}>Reject</Button>
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -725,7 +883,11 @@ function ProspectListTab({
                   >
                     Scouted{sortIndicator('overall')}
                   </TableHead>
+                  <TableHead className="text-center">Potential</TableHead>
                   <TableHead>Pathway</TableHead>
+                  <TableHead>Home</TableHead>
+                  <TableHead>Archetype</TableHead>
+                  <TableHead>Role</TableHead>
                   <TableHead className="text-center">F/S</TableHead>
                   <TableHead className="w-20" />
                 </TableRow>
@@ -765,9 +927,15 @@ function ProspectListTab({
                       <TableCell className="text-center font-mono">
                         {getScoutedRange(prospect, playerClubId)}
                       </TableCell>
+                      <TableCell className="text-center font-mono">
+                        {getScoutedPotentialRange(prospect, playerClubId)}
+                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {prospect.pathway}
                       </TableCell>
+                      <TableCell className="text-sm">{prospect.homeState}</TableCell>
+                      <TableCell className="text-sm">{prospect.archetype}</TableCell>
+                      <TableCell className="text-sm">{prospect.role}</TableCell>
                       <TableCell className="text-center">
                         {prospect.linkedClubId
                           ? (
@@ -791,7 +959,7 @@ function ProspectListTab({
                 {filtered.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={12}
+                      colSpan={16}
                       className="text-center text-muted-foreground py-8"
                     >
                       No prospects match the current filters.
@@ -919,30 +1087,25 @@ export function DraftPage() {
   const draft = useGameStore((s) => s.draft)
   const playerClubId = useGameStore((s) => s.playerClubId)
   const clubs = useGameStore((s) => s.clubs)
+  const settings = useGameStore((s) => s.settings)
+  const runDraftCombineAction = useGameStore((s) => s.runDraftCombineAction)
+  const startLiveDraftAction = useGameStore((s) => s.startLiveDraftAction)
+  const advanceDraftToNextUserPickAction = useGameStore((s) => s.advanceDraftToNextUserPickAction)
+  const makeUserDraftSelectionAction = useGameStore((s) => s.makeUserDraftSelectionAction)
+  const respondToDraftPickTradeOfferAction = useGameStore((s) => s.respondToDraftPickTradeOfferAction)
+  const players = useGameStore((s) => s.players)
 
-  // Local draft state for UI-only pick tracking (store actions not yet available)
-  const [localSelections, setLocalSelections] = useState<
-    Record<number, string>
-  >({})
+  const [shortlistIds, setShortlistIds] = useState<string[]>([])
 
-  // Merge store draft data with local selections
   const picks: DraftPick[] = useMemo(() => {
     if (!draft) return []
-    return draft.nationalDraftPicks.map((pick, i) => ({
-      ...pick,
-      selectedProspectId:
-        localSelections[i] ?? pick.selectedProspectId,
-    }))
-  }, [draft, localSelections])
+    return draft.nationalDraftPicks
+  }, [draft])
 
   const draftedIds = useMemo(() => {
     if (!draft) return new Set<string>()
-    const ids = new Set(draft.draftedProspectIds)
-    for (const id of Object.values(localSelections)) {
-      ids.add(id)
-    }
-    return ids
-  }, [draft, localSelections])
+    return new Set(draft.draftedProspectIds)
+  }, [draft])
 
   const userPicks = useMemo(
     () => picks.filter((p) => p.clubId === playerClubId),
@@ -953,9 +1116,45 @@ export function DraftPage() {
     ? draft.prospects.length - draftedIds.size
     : 0
 
+  const availableProspects = useMemo(
+    () => (draft ? draft.prospects.filter((p) => !draftedIds.has(p.id)) : []),
+    [draft, draftedIds],
+  )
+
+  const bestAvailable = useMemo(
+    () =>
+      [...availableProspects]
+        .sort((a, b) => rankProspectForUser(b, playerClubId) - rankProspectForUser(a, playerClubId))
+        .slice(0, 20),
+    [availableProspects, playerClubId],
+  )
+
+  const shortlist = useMemo(() => {
+    const set = new Set(shortlistIds)
+    return availableProspects.filter((p) => set.has(p.id))
+      .sort((a, b) => rankProspectForUser(b, playerClubId) - rankProspectForUser(a, playerClubId))
+  }, [availableProspects, shortlistIds, playerClubId])
+
+  const teamNeeds = useMemo(
+    () => deriveTeamNeeds(players, playerClubId),
+    [players, playerClubId],
+  )
+
   const handleSelectProspect = (pickIndex: number, prospectId: string) => {
-    setLocalSelections((prev) => ({ ...prev, [pickIndex]: prospectId }))
+    if (!draft || pickIndex !== draft.currentPickIndex) return
+    makeUserDraftSelectionAction(prospectId)
   }
+
+  const handleToggleShortlist = (prospectId: string) => {
+    setShortlistIds((prev) =>
+      prev.includes(prospectId) ? prev.filter((id) => id !== prospectId) : [...prev, prospectId],
+    )
+  }
+
+  const pendingPickTradeOffers = useMemo(
+    () => (draft?.pickTradeOffers ?? []).filter((o) => o.status === 'pending'),
+    [draft],
+  )
 
   // Derive year from draft or current year
   const year = draft?.year ?? new Date().getFullYear()
@@ -1005,6 +1204,54 @@ export function DraftPage() {
         totalPicks={picks.length}
       />
 
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Draft Class Profile</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-2 text-sm">
+          <Badge variant="outline">Strength: {draft.classProfile.strength}</Badge>
+          <Badge variant="outline">Score: {draft.classProfile.strengthScore}</Badge>
+          <Badge variant="outline">Top-End: {draft.classProfile.topEndTalent}</Badge>
+          <Badge variant="outline">Depth: {draft.classProfile.depthRating}</Badge>
+          <Badge variant={settings.realism.draftVariance ? 'default' : 'secondary'}>
+            Bust/Late-Bloomer Variance: {settings.realism.draftVariance ? 'On' : 'Off'}
+          </Badge>
+          <Badge variant={draft.combineCompleted ? 'default' : 'secondary'}>
+            Combine: {draft.combineCompleted ? `Completed (${draft.combineDate ?? 'N/A'})` : 'Pending'}
+          </Badge>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => runDraftCombineAction()}
+            disabled={draft.combineCompleted}
+          >
+            Run Draft Combine
+          </Button>
+          <Button
+            size="sm"
+            variant="default"
+            onClick={() => startLiveDraftAction()}
+            disabled={draft.nationalDraftComplete}
+          >
+            {draft.currentPickIndex < 0 ? 'Start Live Draft' : 'Resume Draft'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => advanceDraftToNextUserPickAction()}
+            disabled={draft.nationalDraftComplete}
+          >
+            Advance To My Pick
+          </Button>
+        </CardContent>
+      </Card>
+
+      <DraftPickTradeOffersCard
+        offers={pendingPickTradeOffers}
+        clubs={clubs}
+        onRespond={(offerId, decision) => respondToDraftPickTradeOfferAction(offerId, decision)}
+      />
+
       {/* Tabs */}
       <Tabs defaultValue="board">
         <TabsList>
@@ -1022,6 +1269,10 @@ export function DraftPage() {
             playerClubId={playerClubId}
             clubs={clubs}
             onSelectProspect={handleSelectProspect}
+            bestAvailable={bestAvailable}
+            teamNeeds={teamNeeds}
+            shortlist={shortlist}
+            onToggleShortlist={handleToggleShortlist}
           />
         </TabsContent>
 

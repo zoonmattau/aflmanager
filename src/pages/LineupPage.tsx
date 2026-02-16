@@ -6,10 +6,10 @@ import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Wand2, RotateCcw, Save, Eye, EyeOff } from 'lucide-react'
 import type { Player } from '@/types/player'
-import { POSITION_LINE } from '@/engine/core/constants'
+import { POSITION_LINE, getLineupSlots } from '@/engine/core/constants'
 import { selectBestLineup } from '@/engine/ai/lineupSelection'
 import { FootballField } from '@/components/lineup/FootballField'
-import { OppositionOverlay } from '@/components/lineup/OppositionOverlay'
+import { isPlayerSuspended } from '@/engine/players/availability'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -50,7 +50,29 @@ function matchesFilter(
 ): boolean {
   if (filter === 'ALL') return true
   const line = POSITION_LINE[player.position.primary]
-  return line === filter
+  if (line === filter) return true
+  return player.position.secondary.some((pos) => POSITION_LINE[pos] === filter)
+}
+
+function sanitizeLineup(
+  rawLineup: Record<string, string>,
+  players: Record<string, Player>,
+  playerClubId: string,
+  validSlots: Set<string>,
+): Record<string, string> {
+  const next: Record<string, string> = {}
+  const seen = new Set<string>()
+  for (const [slot, playerId] of Object.entries(rawLineup)) {
+    if (!validSlots.has(slot)) continue
+    if (!playerId || seen.has(playerId)) continue
+    const player = players[playerId]
+    if (!player) continue
+    if (player.clubId !== playerClubId) continue
+    if (player.injury || isPlayerSuspended(player) || player.fitness < 50) continue
+    next[slot] = playerId
+    seen.add(playerId)
+  }
+  return next
 }
 
 // ---------------------------------------------------------------------------
@@ -65,6 +87,7 @@ export function LineupPage() {
   const setSelectedLineup = useGameStore((s) => s.setSelectedLineup)
   const season = useGameStore((s) => s.season)
   const currentRound = useGameStore((s) => s.currentRound)
+  const settings = useGameStore((s) => s.settings)
 
   const club = clubs[playerClubId]
 
@@ -91,28 +114,63 @@ export function LineupPage() {
   const availablePlayers = useMemo(
     () =>
       Object.values(players)
-        .filter((p) => p.clubId === playerClubId && !p.injury && p.fitness >= 50)
+        .filter((p) => p.clubId === playerClubId && !p.injury && !isPlayerSuspended(p) && p.fitness >= 50)
         .sort((a, b) => getPlayerOverall(b) - getPlayerOverall(a)),
     [players, playerClubId],
   )
 
-  const [lineup, setLineup] = useState<Record<string, string>>(
-    selectedLineup ?? {},
+  const unavailablePlayers = useMemo(
+    () =>
+      Object.values(players)
+        .filter((p) => p.clubId === playerClubId)
+        .filter((p) => p.injury !== null || isPlayerSuspended(p) || p.fitness < 50)
+        .sort((a, b) => {
+          if (a.injury && !b.injury) return -1
+          if (!a.injury && b.injury) return 1
+          if (isPlayerSuspended(a) && !isPlayerSuspended(b)) return -1
+          if (!isPlayerSuspended(a) && isPlayerSuspended(b)) return 1
+          if (isPlayerSuspended(a) && isPlayerSuspended(b)) {
+            return (b.suspension?.weeksRemaining ?? 0) - (a.suspension?.weeksRemaining ?? 0)
+          }
+          return (b.injury?.weeksRemaining ?? 0) - (a.injury?.weeksRemaining ?? 0)
+        }),
+    [players, playerClubId],
   )
+
+  const [lineupDraft, setLineupDraft] = useState<Record<string, string> | null>(null)
+
+  const lineupSlots = useMemo(
+    () => getLineupSlots(settings.matchRules.interchangePlayers),
+    [settings.matchRules.interchangePlayers],
+  )
+  const lineupSlotSet = useMemo(() => new Set<string>(lineupSlots), [lineupSlots])
+  const requiredCount = lineupSlots.length
 
   const [posFilter, setPosFilter] = useState<PositionFilter>('ALL')
   const [showOpposition, setShowOpposition] = useState(false)
 
+  const activeLineup = useMemo(
+    () => lineupDraft ?? selectedLineup ?? {},
+    [lineupDraft, selectedLineup],
+  )
+
+  const safeLineup = useMemo(
+    () => sanitizeLineup(activeLineup, players, playerClubId, lineupSlotSet),
+    [activeLineup, players, playerClubId, lineupSlotSet],
+  )
+
   const assignedPlayerIds = useMemo(
-    () => new Set(Object.values(lineup)),
-    [lineup],
+    () => new Set(Object.values(safeLineup)),
+    [safeLineup],
   )
 
   // ---- Handlers ----
 
   const handleAssign = useCallback(
     (slot: string, playerId: string) => {
-      setLineup((prev) => {
+      if (!lineupSlotSet.has(slot)) return
+      setLineupDraft((prevDraft) => {
+        const prev = prevDraft ?? selectedLineup ?? {}
         const next = { ...prev }
         // Remove player from any other position first
         for (const [k, v] of Object.entries(next)) {
@@ -124,12 +182,14 @@ export function LineupPage() {
         return next
       })
     },
-    [],
+    [lineupSlotSet, selectedLineup],
   )
 
   const handleSwap = useCallback(
     (slotA: string, slotB: string) => {
-      setLineup((prev) => {
+      if (!lineupSlotSet.has(slotA) || !lineupSlotSet.has(slotB)) return
+      setLineupDraft((prevDraft) => {
+        const prev = prevDraft ?? selectedLineup ?? {}
         const next = { ...prev }
         const playerA = next[slotA]
         const playerB = next[slotB]
@@ -140,31 +200,35 @@ export function LineupPage() {
         return next
       })
     },
-    [],
+    [lineupSlotSet, selectedLineup],
   )
 
   const handleUnassign = useCallback(
     (slot: string) => {
-      setLineup((prev) => {
+      setLineupDraft((prevDraft) => {
+        const prev = prevDraft ?? selectedLineup ?? {}
         const next = { ...prev }
         delete next[slot]
         return next
       })
     },
-    [],
+    [selectedLineup],
   )
 
   const handleAutoFill = useCallback(() => {
     const result = selectBestLineup(availablePlayers, playerClubId)
-    setLineup(result.lineup)
-  }, [availablePlayers, playerClubId])
+    setLineupDraft(
+      sanitizeLineup(result.lineup, players, playerClubId, lineupSlotSet),
+    )
+  }, [availablePlayers, playerClubId, players, lineupSlotSet])
 
   const handleSave = useCallback(() => {
-    setSelectedLineup(lineup)
-  }, [lineup, setSelectedLineup])
+    setSelectedLineup(safeLineup)
+    setLineupDraft(safeLineup)
+  }, [safeLineup, setSelectedLineup])
 
   const handleClear = useCallback(() => {
-    setLineup({})
+    setLineupDraft({})
   }, [])
 
   // ---- Panel drag handling (drop player back to bench) ----
@@ -198,7 +262,7 @@ export function LineupPage() {
     [],
   )
 
-  const filledCount = Object.keys(lineup).length
+  const filledCount = Object.keys(safeLineup).length
 
   // Filter unassigned players for the bench panel
   const benchPlayers = useMemo(
@@ -234,7 +298,9 @@ export function LineupPage() {
             {club?.name} - Lineup Selection
           </h1>
           <p className="text-sm text-muted-foreground">
-            {filledCount}/22 positions filled
+            {filledCount}/{requiredCount} positions filled
+            {` | Available ${availablePlayers.length}`}
+            {` | Unavailable ${unavailablePlayers.length}`}
             {oppositionClubId && clubs[oppositionClubId]
               ? ` | vs ${clubs[oppositionClubId].name}`
               : ''}
@@ -263,7 +329,7 @@ export function LineupPage() {
             <Wand2 className="mr-1 h-4 w-4" />
             Auto Fill
           </Button>
-          <Button size="sm" onClick={handleSave} disabled={filledCount < 22}>
+          <Button size="sm" onClick={handleSave} disabled={filledCount < requiredCount}>
             <Save className="mr-1 h-4 w-4" />
             Save Lineup
           </Button>
@@ -276,24 +342,16 @@ export function LineupPage() {
         <div className="lg:w-[70%] w-full relative">
           <div className="relative">
             <FootballField
-              lineup={lineup}
+              lineup={safeLineup}
               players={players}
+              clubs={clubs}
+              interchangeCount={settings.matchRules.interchangePlayers}
+              oppositionClubId={oppositionClubId}
+              showOpposition={showOpposition}
               onAssign={handleAssign}
               onSwap={handleSwap}
               onUnassign={handleUnassign}
             />
-            {/* Opposition overlay */}
-            {showOpposition && oppositionClubId && (
-              <div className="absolute inset-0" style={{ bottom: '72px' }}>
-                <div className="relative w-full h-full">
-                  <OppositionOverlay
-                    oppositionClubId={oppositionClubId}
-                    players={players}
-                    clubs={clubs}
-                  />
-                </div>
-              </div>
-            )}
           </div>
         </div>
 
@@ -353,6 +411,11 @@ export function LineupPage() {
                       <span className="text-xs text-muted-foreground w-7 text-right">
                         {p.fitness}%
                       </span>
+                      {p.fatigue >= 65 && (
+                        <Badge variant="outline" className="text-[10px] border-yellow-500/30 bg-yellow-500/15 text-yellow-700">
+                          High Fatigue
+                        </Badge>
+                      )}
                     </div>
                   ))}
                   {benchPlayers.length === 0 && (
@@ -363,6 +426,36 @@ export function LineupPage() {
                     </p>
                   )}
                 </div>
+                {unavailablePlayers.length > 0 && (
+                  <div className="px-2 pb-2 pt-2 border-t border-border/60 space-y-1">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">
+                      Unavailable ({unavailablePlayers.length})
+                    </p>
+                    {unavailablePlayers.map((p) => (
+                      <div
+                        key={`unavail-${p.id}`}
+                        className="flex items-center gap-2 rounded-md px-2 py-1 text-xs bg-muted/20"
+                      >
+                        <span className="font-medium truncate min-w-0 flex-1">
+                          {p.firstName.charAt(0)}. {p.lastName}
+                        </span>
+                        {p.injury ? (
+                          <Badge variant="outline" className="text-[10px] border-red-500/30 bg-red-500/15 text-red-600">
+                            {p.injury.type} ({p.injury.weeksRemaining}w)
+                          </Badge>
+                        ) : isPlayerSuspended(p) ? (
+                          <Badge variant="outline" className="text-[10px] border-orange-500/30 bg-orange-500/15 text-orange-700">
+                            Suspended ({p.suspension?.weeksRemaining ?? 0}w)
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] border-orange-500/30 bg-orange-500/15 text-orange-700">
+                            Fitness {p.fitness}%
+                          </Badge>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </ScrollArea>
             </CardContent>
           </Card>

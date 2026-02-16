@@ -6,6 +6,9 @@ export interface QuarterScore {
 
 export interface MatchPlayerStats {
   playerId: string
+  minutesPlayed: number
+  aflFantasyPoints: number
+  superCoachPoints: number
   disposals: number
   kicks: number
   handballs: number
@@ -15,7 +18,9 @@ export interface MatchPlayerStats {
   behinds: number
   hitouts: number
   contestedPossessions: number
-  uncountestedPossessions: number
+  uncontestedPossessions: number
+  /** @deprecated Use uncontestedPossessions */
+  uncountestedPossessions?: number
   clearances: number
   insideFifties: number
   rebound50s: number
@@ -50,6 +55,15 @@ export interface MatchResult {
   homePlayerStats: MatchPlayerStats[]
   awayPlayerStats: MatchPlayerStats[]
   keyEvents: MatchKeyEvent[]
+  simulationContext?: {
+    weather: 'clear' | 'windy' | 'wet' | 'hot' | 'humid'
+    groundCondition: 'firm' | 'dewy' | 'soft' | 'heavy' | 'muddy'
+    venueId?: string
+    venueFamiliarity: { home: number; away: number }
+    travelFatigue: { home: number; away: number }
+    ratingInputs: { home: number; away: number }
+    umpiringRisk?: { home: number; away: number }
+  }
 }
 
 export interface Match {

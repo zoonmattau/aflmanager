@@ -8,6 +8,8 @@ import { processEndOfSeasonContracts } from '@/engine/contracts/freeAgency'
 import { MINIMUM_SALARY } from '@/engine/core/constants'
 import { validateContractOffer } from '@/engine/salary/salaryCapEngine'
 import { resolveListConstraints, canAddToSeniorList } from '@/engine/rules/listRules'
+import { getArchetypeFAWeights } from '@/engine/player/agentPersonality'
+import { getClubState } from '@/engine/venues/venueEngine'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,6 +46,7 @@ export interface PreferenceWeights {
   contender: number
   facilities: number
   role: number
+  homeState: number
 }
 
 export interface CompensationPick {
@@ -70,6 +73,7 @@ const DEFAULT_WEIGHTS: PreferenceWeights = {
   contender: 0.20,
   facilities: 0.10,
   role: 0.15,
+  homeState: 0.0,
 }
 
 const ALL_ATTRIBUTE_KEYS: (keyof Player['attributes'])[] = [
@@ -472,19 +476,31 @@ export function resolveMarket(
     if (!player) return { ...listing, status: 'unsigned' as const }
 
     // Compute preference scores for all bids
-    const weights = { ...DEFAULT_WEIGHTS }
+    const weights: PreferenceWeights = { ...DEFAULT_WEIGHTS }
 
     // Personality modifiers
     if (player.personality.loyalty >= 60) weights.loyalty *= 2
     if (player.personality.ambition >= 70) weights.contender *= 2
 
-    // Normalize weights after personality modifiers
-    const totalWeight = weights.money + weights.loyalty + weights.contender + weights.facilities + weights.role
+    // Archetype-driven weight modifiers
+    if (player.agentArchetype) {
+      const archWeights = getArchetypeFAWeights(player.agentArchetype)
+      if (archWeights.money !== undefined) weights.money *= archWeights.money
+      if (archWeights.loyalty !== undefined) weights.loyalty *= archWeights.loyalty
+      if (archWeights.contender !== undefined) weights.contender *= archWeights.contender
+      if (archWeights.facilities !== undefined) weights.facilities *= archWeights.facilities
+      if (archWeights.role !== undefined) weights.role *= archWeights.role
+      if (archWeights.homeState !== undefined) weights.homeState *= archWeights.homeState
+    }
+
+    // Normalize weights after personality + archetype modifiers
+    const totalWeight = weights.money + weights.loyalty + weights.contender + weights.facilities + weights.role + weights.homeState
     weights.money /= totalWeight
     weights.loyalty /= totalWeight
     weights.contender /= totalWeight
     weights.facilities /= totalWeight
     weights.role /= totalWeight
+    weights.homeState /= totalWeight
 
     const scoredBids = listing.bids.map((bid) => {
       const club = clubs[bid.clubId]
@@ -495,10 +511,11 @@ export function resolveMarket(
       const contScore = contenderScore(ladder, bid.clubId) * weights.contender
       const facScore = facilityScore(club) * weights.facilities
       const rScore = roleScore(updatedPlayers, bid.clubId, listing.position) * weights.role
+      const homeStateScore = (player.homeState && getClubState(bid.clubId) === player.homeState ? 1.0 : 0.0) * weights.homeState
 
       return {
         ...bid,
-        preferenceScore: moneyScore + loyaltyBonus + contScore + facScore + rScore,
+        preferenceScore: moneyScore + loyaltyBonus + contScore + facScore + rScore + homeStateScore,
       }
     })
 

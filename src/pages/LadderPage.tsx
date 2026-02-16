@@ -21,10 +21,16 @@ import { Button } from '@/components/ui/button'
 
 const LEADER_STATS: { key: keyof PlayerCareerStats; label: string }[] = [
   { key: 'gamesPlayed', label: 'Games' },
+  { key: 'aflFantasyPoints', label: 'AFL Fantasy' },
+  { key: 'superCoachPoints', label: 'SuperCoach' },
   { key: 'goals', label: 'Goals' },
   { key: 'disposals', label: 'Disposals' },
   { key: 'marks', label: 'Marks' },
   { key: 'tackles', label: 'Tackles' },
+  { key: 'clearances', label: 'Clearances' },
+  { key: 'hitouts', label: 'Hitouts' },
+  { key: 'intercepts', label: 'Intercepts' },
+  { key: 'scoreInvolvements', label: 'Score Involvements' },
 ]
 
 function CareerLeadersTable({
@@ -114,6 +120,28 @@ export function LadderPage() {
     () => awards.find((a) => a.year === currentYear) ?? null,
     [awards, currentYear],
   )
+  const seasonLeaders = useMemo(() => {
+    const pool = Object.values(players).filter((p) => p.seasonStats.gamesPlayed > 0)
+    const by = (key: keyof PlayerCareerStats) =>
+      [...pool]
+        .sort((a, b) => b.seasonStats[key] - a.seasonStats[key])
+        .slice(0, 5)
+        .map((p) => ({
+          playerId: p.id,
+          name: `${p.firstName} ${p.lastName}`,
+          clubId: p.clubId,
+          value: p.seasonStats[key],
+        }))
+    return {
+      goals: by('goals'),
+      disposals: by('disposals'),
+      marks: by('marks'),
+      tackles: by('tackles'),
+      hitouts: by('hitouts'),
+      aflFantasyPoints: by('aflFantasyPoints'),
+      superCoachPoints: by('superCoachPoints'),
+    }
+  }, [players])
 
   return (
     <div className="space-y-4">
@@ -328,6 +356,42 @@ export function LadderPage() {
               </CardContent>
             </Card>
           </div>
+
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-sm">Season Stat Leaders</CardTitle>
+              <CardDescription>Totals to date</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-7">
+              {(
+                [
+                  ['Goals', seasonLeaders.goals],
+                  ['Disposals', seasonLeaders.disposals],
+                  ['Marks', seasonLeaders.marks],
+                  ['Tackles', seasonLeaders.tackles],
+                  ['Hitouts', seasonLeaders.hitouts],
+                  ['AFL Fantasy', seasonLeaders.aflFantasyPoints],
+                  ['SuperCoach', seasonLeaders.superCoachPoints],
+                ] as const
+              ).map(([label, rows]) => (
+                <div key={label} className="space-y-1">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{label}</p>
+                  {rows.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No data yet.</p>
+                  ) : (
+                    rows.map((r, idx) => (
+                      <div key={`${label}-${r.playerId}`} className="flex items-center justify-between text-xs">
+                        <Link to={`/player/${r.playerId}`} className="truncate hover:underline">
+                          {idx + 1}. {r.name}
+                        </Link>
+                        <span className="font-mono font-semibold">{r.value}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
 
           {/* All-Australian & Other Awards (shown if season awards computed) */}
           {currentAwards && (

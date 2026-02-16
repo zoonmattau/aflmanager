@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -84,8 +84,10 @@ const NEWS_CATEGORY_COLORS: Record<string, string> = {
   match: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
   trade: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
   injury: 'bg-red-500/15 text-red-400 border-red-500/30',
+  discipline: 'bg-orange-500/15 text-orange-400 border-orange-500/30',
   draft: 'bg-green-500/15 text-green-400 border-green-500/30',
   contract: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+  milestone: 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30',
   general: 'bg-zinc-500/15 text-zinc-400 border-zinc-500/30',
 }
 
@@ -115,6 +117,7 @@ function tierBorder(tier: PlayerTier): string {
 function tagStyle(key: PlayerTagKey): string {
   switch (key) {
     case 'injured': return 'bg-red-500/15 text-red-600 border-red-500/30'
+    case 'suspended': return 'bg-orange-500/15 text-orange-600 border-orange-500/30'
     case 'expiring': return 'bg-amber-500/15 text-amber-600 border-amber-500/30'
     case 'unhappy': return 'bg-orange-500/15 text-orange-600 border-orange-500/30'
     case 'high-potential': return 'bg-blue-500/15 text-blue-600 border-blue-500/30'
@@ -1463,6 +1466,7 @@ export function OffseasonPage() {
   const currentYear = useGameStore((s) => s.currentYear)
   const ladder = useGameStore((s) => s.ladder)
   const settings = useGameStore((s) => s.settings)
+  const history = useGameStore((s) => s.history)
   const offseasonState = useGameStore((s) => s.offseasonState)
   const advancePhase = useGameStore((s) => s.advanceOffseasonPhase)
   const delistPlayer = useGameStore((s) => s.delistPlayerOffseason)
@@ -1513,6 +1517,10 @@ export function OffseasonPage() {
 
   // Club info for header
   const club = clubs[playerClubId]
+  const hasUpcomingDevReport = useMemo(
+    () => history.developmentReports.some((r) => r.year === currentYear + 1),
+    [history.developmentReports, currentYear],
+  )
 
   // Null guard: no offseason in progress
   if (!offseasonState) {
@@ -1541,6 +1549,14 @@ export function OffseasonPage() {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          {offseasonState.currentPhase === 'preseason' && hasUpcomingDevReport && (
+            <Button asChild variant="outline" size="sm">
+              <Link to="/development-report">
+                <ExternalLink className="mr-1 h-3 w-3" />
+                Development Report
+              </Link>
+            </Button>
+          )}
           <Badge variant="outline" className="font-mono text-xs">
             <Clock className="mr-1 h-3 w-3" />
             {getOffseasonPhaseLabel(offseasonState.currentPhase)}

@@ -48,6 +48,7 @@ export function getPlayerTier(overall: number): PlayerTier {
 
 export type PlayerTagKey =
   | 'injured'
+  | 'suspended'
   | 'expiring'
   | 'unhappy'
   | 'high-potential'
@@ -66,6 +67,12 @@ export function getPlayerTags(player: Player): PlayerTag[] {
     tags.push({
       key: 'injured',
       label: `Injured (${player.injury.weeksRemaining}w)`,
+    })
+  }
+  if ((player.suspension?.weeksRemaining ?? 0) > 0) {
+    tags.push({
+      key: 'suspended',
+      label: `Suspended (${player.suspension?.weeksRemaining ?? 0}w)`,
     })
   }
 

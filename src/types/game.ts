@@ -13,6 +13,9 @@ import type { OffseasonState } from '@/engine/season/offseasonFlow'
 import type { FinalsFormat } from './finals'
 import type { SeasonVenueState } from './venue'
 import type { NegotiationTracker } from './contract'
+import type { TradeBlockState, TradeInboxItem, TradePlayerMove } from './trade'
+import type { TribunalCase } from './discipline'
+import type { ClubGameplan } from './club'
 
 export type GamePhase =
   | 'setup'           // Choosing club
@@ -121,6 +124,9 @@ export interface RealismSettings {
   // Player Behavior
   playerLoyalty: boolean          // Loyalty affects contract discounts & trade reluctance
   tradeRequests: boolean          // Unhappy players nominate preferred clubs for trades
+  nominatedTradeDestinations: boolean // Trade requests include nominated destination clubs
+  reducedNominatedLeverage: boolean // Nominated clubs can trade at a discount
+  playersRefuseTrades: boolean      // Players can refuse trades to unsuitable clubs
   playerRoleDisputes: boolean     // Players lose morale when played out of position
 
   // Trading & Contracts
@@ -130,6 +136,7 @@ export interface RealismSettings {
   // Draft & Development
   draftVariance: boolean          // Draft busts (top picks underperform) and late bloomers
   ngaAcademy: boolean             // NGA/Academy Father-Son matching bid system
+  ngaAcademyZoneMatching: boolean // Restrict academy/NGA matching to zone-linked prospects only
 
   // League Operations
   fixtureBlockbusterBias: boolean // Named matches get prime scheduling priority
@@ -172,7 +179,7 @@ export interface NewsItem {
   date: string          // In-game date ISO
   headline: string
   body: string
-  category: 'match' | 'trade' | 'injury' | 'draft' | 'contract' | 'general' | 'milestone'
+  category: 'match' | 'trade' | 'injury' | 'discipline' | 'draft' | 'contract' | 'general' | 'milestone'
   clubIds: string[]     // Related clubs
   playerIds: string[]   // Related players
   read?: boolean        // Undefined = unread (backward-compatible with old saves)
@@ -239,6 +246,23 @@ export interface GameState {
 
   // Negotiation tracker
   negotiations: NegotiationTracker | null
+
+  // Trade inbox / negotiation
+  tradeInbox: TradeInboxItem[]
+  tradeBlock: TradeBlockState
+
+  // Tribunal / suspensions
+  tribunalInbox: TribunalCase[]
+
+  // Weekly tactical adjustments (opponent-specific, round-scoped)
+  weeklyGameplans: Record<string, WeeklyGameplan | undefined>
+}
+
+export interface WeeklyGameplan {
+  round: number
+  opponentClubId: string
+  overrides: Partial<ClubGameplan>
+  source: 'user' | 'ai-auto'
 }
 
 export interface CompletedTrade {
@@ -250,4 +274,6 @@ export interface CompletedTrade {
   playersToB: string[]
   salaryRetainedByA: number
   salaryRetainedByB: number
+  clubsInvolved?: string[]
+  multiClubMoves?: TradePlayerMove[]
 }

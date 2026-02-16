@@ -1,6 +1,9 @@
 import type { Player } from '@/types/player'
-import type { DraftPick } from '@/types/club'
+import type { DraftPick, TacticalIdentity } from '@/types/club'
 import { averageAttributes, PREMIUM_POSITIONS } from '@/engine/contracts/negotiation'
+import { getRoleNeedBonus, roleNeedsByClub } from '@/engine/player/roles'
+import { getSuspensionWeeksRemaining } from '@/engine/players/availability'
+import { getTacticalTradePreferences } from '@/engine/core/tacticalIdentity'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -10,6 +13,7 @@ export interface TradeContext {
   evaluatingClubId?: string
   players?: Record<string, Player>
   competitiveWindow?: 'win-now' | 'balanced' | 'rebuilding'
+  tacticalIdentity?: TacticalIdentity
 }
 
 // ---------------------------------------------------------------------------
@@ -101,9 +105,20 @@ export function getPlayerTradeValue(player: Player, context?: TradeContext): num
 
   // 4. Injury risk discount — based on injuryProneness
   let injuryDiscount = 1.0 - (hiddenAttributes.injuryProneness / 100) * 0.25
+  const durability = hiddenAttributes.durability ?? Math.max(20, 100 - hiddenAttributes.injuryProneness)
+  injuryDiscount *= 0.88 + (durability / 100) * 0.18
   if (player.injury !== null) {
-    injuryDiscount *= 0.90
+    const weeks = Math.max(1, player.injury.weeksRemaining)
+    injuryDiscount *= Math.max(0.55, 1 - weeks * 0.03)
   }
+  const suspensionWeeks = getSuspensionWeeksRemaining(player)
+  if (suspensionWeeks > 0) {
+    injuryDiscount *= Math.max(0.72, 1 - suspensionWeeks * 0.06)
+  }
+  const recentInjuryBurden = (player.injuryHistory ?? [])
+    .slice(-6)
+    .reduce((sum, h) => sum + Math.min(1.5, h.initialWeeks / 8), 0)
+  injuryDiscount *= Math.max(0.7, 1 - recentInjuryBurden * 0.025)
 
   // 5. Contract value multiplier — years remaining affect trade desirability
   let contractMultiplier: number
@@ -129,6 +144,10 @@ export function getPlayerTradeValue(player: Player, context?: TradeContext): num
   } else {
     positionScarcity = 1.0
   }
+  if (player.preferredRole === 'ruck') positionScarcity += 0.05
+  if (player.preferredRole === 'intercept-defender' || player.preferredRole === 'inside-mid') {
+    positionScarcity += 0.03
+  }
 
   // 7. Form adjustment — recent form affects perceived value
   const formAdjustment = 0.90 + (player.form / 100) * 0.20
@@ -147,6 +166,23 @@ export function getPlayerTradeValue(player: Player, context?: TradeContext): num
     } else if (positionCount === 3) {
       roleFitBonus = 100
     }
+    const roleNeeds = roleNeedsByClub(context.players, context.evaluatingClubId)
+    roleFitBonus += Math.round(getRoleNeedBonus(player.preferredRole, roleNeeds) * 22)
+  }
+
+  // 9. Tactical identity fit bonus (additive, 0-200)
+  let identityFitBonus = 0
+  if (context?.tacticalIdentity) {
+    const prefs = getTacticalTradePreferences(context.tacticalIdentity)
+    if (prefs.preferredPlayerRoles.includes(player.preferredRole)) {
+      identityFitBonus += 120
+    }
+    const attrSum = prefs.preferredAttributeKeys.reduce(
+      (sum, key) => sum + (player.attributes[key] ?? 0), 0,
+    )
+    const attrAvg = prefs.preferredAttributeKeys.length > 0
+      ? attrSum / prefs.preferredAttributeKeys.length : 0
+    identityFitBonus += Math.max(0, Math.min(80, Math.round((attrAvg - 55) * 2.5)))
   }
 
   // Combination formula
@@ -154,6 +190,7 @@ export function getPlayerTradeValue(player: Player, context?: TradeContext): num
     base * ageMultiplier * injuryDiscount * contractMultiplier * positionScarcity * formAdjustment
     + potentialBonus
     + roleFitBonus
+    + identityFitBonus
   )
 
   return Math.round(value)

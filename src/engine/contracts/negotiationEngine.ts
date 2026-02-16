@@ -34,6 +34,7 @@ import {
   MINIMUM_SALARY,
 } from '@/engine/core/constants'
 import { checkForMediaLeak } from '@/engine/contracts/mediaLeaks'
+import { checkContractRefusal } from '@/engine/players/happiness'
 
 // ---------------------------------------------------------------------------
 // 1. initNegotiationTracker
@@ -173,6 +174,7 @@ export function startNegotiation(
   rng: SeededRNG,
   ladderPosition: number,
   options?: { playerLoyaltyEnabled?: boolean },
+  teamCount?: number,
 ): StartNegotiationResult {
   // Check willingness based on professionalism + ambition
   const willingness =
@@ -182,6 +184,16 @@ export function startNegotiation(
     return {
       success: false,
       error: `${player.firstName} ${player.lastName} has no interest in negotiating at this time.`,
+    }
+  }
+
+  // Archetype + morale refusal check
+  const effectiveTeamCount = teamCount ?? 18
+  const refusal = checkContractRefusal(player, clubId, ladderPosition, effectiveTeamCount)
+  if (refusal.refuseChance > 0 && rng.chance(refusal.refuseChance)) {
+    return {
+      success: false,
+      error: `${player.firstName} ${player.lastName} refused to negotiate: ${refusal.reason}`,
     }
   }
 
