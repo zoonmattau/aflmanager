@@ -205,9 +205,12 @@ export function buildSeasonCalendar(
   }
 
   // ---- Offseason events ----
-  // Use gameStartDate as offseason anchor if provided (initial season),
-  // otherwise derive from the season dates (subsequent seasons).
-  const offseasonStart = gameStartDate ?? addDays(finalsStart, finalsWeeks * 7 + 7)
+  // Anchor offseason events to the actual offseason start date (day after Grand Final),
+  // not the user's chosen game start date. For the initial season, use the standard
+  // offseason start; for subsequent seasons, derive from the current season's finals.
+  const offseasonStart = gameStartDate !== undefined
+    ? computeDefaultGameStartDate(year)
+    : addDays(finalsStart, finalsWeeks * 7 + 7)
 
   events.push(
     createEvent(

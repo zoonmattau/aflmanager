@@ -3,7 +3,14 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 import { immer } from 'zustand/middleware/immer'
 import { get, set, del } from 'idb-keyval'
 
-import type { GameState, GamePhase, GameMeta, GameSettings, NewsItem } from '@/types/game'
+import type {
+  GameState,
+  GamePhase,
+  GameMeta,
+  GameSettings,
+  NewsItem,
+  CoachingJobOpening,
+} from '@/types/game'
 import type { TradeInboxItem, TradeNegotiationOffer } from '@/types/trade'
 import type { ScheduleSlot } from '@/types/calendar'
 import type { TrainingFocus } from '@/engine/training/trainingEngine'
@@ -39,10 +46,17 @@ import { applyBetweenRoundMorale, generateMoraleWarnings } from '@/engine/player
 import { selectBestLineup } from '@/engine/ai/lineupSelection'
 import { SLOT_POSITION_COMPATIBILITY } from '@/engine/core/constants'
 import { SeededRNG } from '@/engine/core/rng'
-import { generateClubStaff, generateStaffPool, getCoachingImpact, getMedicalStaffImpact } from '@/engine/staff/staffEngine'
+import {
+  generateClubStaff,
+  generateStaffPool,
+  getCoachingImpact,
+  getMedicalStaffImpact,
+  processCoachingCarousel,
+} from '@/engine/staff/staffEngine'
 import { awardBrownlowVotes, computeSeasonAwards } from '@/engine/awards/awardsEngine'
 import { buildSeasonCalendar, computeDefaultGameStartDate, getYear } from '@/engine/calendar/calendarEngine'
 import { initializeStateLeagues, simStateLeagueRound } from '@/engine/stateLeague/stateLeagueEngine'
+import { simulateReservesRound } from '@/engine/stateLeague/reservesSimulation'
 import { createDefaultSettings, DEFAULT_REALISM } from '@/engine/core/defaultSettings'
 import { autoSelectLeadership, getTeamLeadershipRating, getLeadershipMoraleBonus } from '@/engine/leadership/leadershipEngine'
 import { updateClubCulture, getCultureMoraleBuffer, createDefaultCulture } from '@/engine/culture/cultureEngine'
@@ -56,6 +70,7 @@ import {
   applyVenueAllocationsToFixture,
   updateFanSatisfaction,
 } from '@/engine/venues/venueEngine'
+import { createInitialClubIdentity } from '@/engine/clubs/identity'
 import { VENUES } from '@/data/venues'
 import {
   initOffseason,
@@ -101,9 +116,11 @@ import { resolveListConstraints, canAddToSeniorList } from '@/engine/rules/listR
 import { MINIMUM_SALARY } from '@/engine/core/constants'
 import {
   initOffseasonCalendar,
+  computePhaseForDate,
   advanceHalfDay as advanceHalfDayEngine,
   advanceToNextMilestone as advanceToNextMilestoneEngine,
 } from '@/engine/offseason/offseasonCalendar'
+import { averageAttributes } from '@/engine/contracts/negotiation'
 import { syncClubCurrentSpend, calculateSeasonEndFinancials } from '@/engine/salary/salaryCapEngine'
 import type { NegotiationOffer } from '@/types/contract'
 import {
@@ -143,6 +160,11 @@ import {
   validateTradeConsent,
 } from '@/engine/trades/tradeNegotiationEngine'
 import { applyGameplanAdjustment, buildCounterAdjustment } from '@/engine/coaching/tacticalAdjustments'
+import {
+  generateBoardExpectation,
+  evaluateBoardSatisfaction,
+  applyFanSatisfactionToJobSecurity,
+} from '@/engine/clubs/clubManagement'
 
 // ---------------------------------------------------------------------------
 // IndexedDB storage adapter (via idb-keyval)
@@ -220,6 +242,7 @@ const createDefaultState = (): GameState => ({
   },
   calendar: { ...DEFAULT_CALENDAR },
   weekSchedule: {},
+  trainingWeekPlan: null,
   awards: [],
   brownlowTracker: [],
   brownlowRevealed: false,
@@ -231,6 +254,28 @@ const createDefaultState = (): GameState => ({
   tradeBlock: initTradeBlockState(),
   tribunalInbox: [],
   weeklyGameplans: {},
+  reserves: {
+    seasonStatsByPlayer: {},
+    lastRoundPerformances: [],
+    promotionWatchlist: [],
+    delegationEnabled: true,
+    managedLineupPlayerIds: [],
+    tactics: {
+      tempo: 'balanced',
+      aggression: 'balanced',
+      youthFocus: true,
+    },
+  },
+  manager: {
+    name: 'Manager',
+    employmentStatus: 'employed',
+    currentClubId: null,
+    reputation: 50,
+    jobSecurity: 65,
+    seasonExpectation: 'Deliver consistent improvement.',
+    unemployedSinceYear: null,
+  },
+  coachingJobMarket: [],
 })
 
 function getAvailableProspectsForDraft(
@@ -499,12 +544,68 @@ function createLiveDraftPickTradeOffers(params: {
   return offers
 }
 
+const COACHING_URGENCIES: CoachingJobOpening['urgency'][] = ['low', 'medium', 'high']
+
+function buildCoachingOpening(params: {
+  clubId: string
+  reason: string
+  postedDate: string
+  urgency: CoachingJobOpening['urgency']
+}): CoachingJobOpening {
+  return {
+    id: `job_${crypto.randomUUID()}`,
+    clubId: params.clubId,
+    title: 'Senior Coach',
+    reason: params.reason,
+    postedDate: params.postedDate,
+    urgency: params.urgency,
+    status: 'open',
+  }
+}
+
+function seedInitialCoachingOpenings(
+  clubs: Record<string, Club>,
+  rng: SeededRNG,
+  postedDate: string,
+): CoachingJobOpening[] {
+  const pool = Object.keys(clubs)
+  if (pool.length === 0) return []
+  const openingCount = Math.min(3, Math.max(1, Math.round(pool.length * 0.1)))
+  const picked = new Set<string>()
+  const openings: CoachingJobOpening[] = []
+  for (let i = 0; i < openingCount && picked.size < pool.length; i++) {
+    const clubId = rng.pick(pool)
+    if (picked.has(clubId)) continue
+    picked.add(clubId)
+    openings.push(
+      buildCoachingOpening({
+        clubId,
+        reason: rng.pick([
+          'Board seeks a fresh direction after review.',
+          'Current coach stepped down at end of contract.',
+          'Club leadership initiating strategic reset.',
+        ]),
+        postedDate,
+        urgency: rng.pick(COACHING_URGENCIES),
+      }),
+    )
+  }
+  return openings
+}
+
 // ---------------------------------------------------------------------------
 // Store actions interface
 // ---------------------------------------------------------------------------
 interface GameActions {
   // Mutations
-  initializeGame: (clubId: string, saveName: string, settings?: GameSettings, fictionalClubs?: Club[]) => void
+  initializeGame: (
+    clubId: string,
+    saveName: string,
+    settings?: GameSettings,
+    fictionalClubs?: Club[],
+    managerName?: string,
+    startUnemployed?: boolean,
+  ) => void
   setPhase: (phase: GamePhase) => void
   advanceRound: () => void
   updatePlayer: (playerId: string, updates: Partial<Player>) => void
@@ -517,6 +618,7 @@ interface GameActions {
   markNewsRead: (newsId: string) => void
   markAllNewsRead: () => void
   resetGame: () => void
+  loadState: (state: GameState) => void
   updateGameplan: (gameplan: Partial<ClubGameplan>) => void
   updateWeeklyGameplanAdjustment: (gameplan: Partial<ClubGameplan>) => { success: boolean; error?: string }
   clearWeeklyGameplanAdjustment: () => void
@@ -526,8 +628,15 @@ interface GameActions {
   saveGame: () => void
   sendToReserves: (playerId: string) => void
   recallFromReserves: (playerId: string) => void
+  setReservesDelegation: (enabled: boolean) => void
+  setManagedReservesLineup: (playerIds: string[]) => void
+  setReservesTactics: (updates: Partial<GameState['reserves']['tactics']>) => void
+  autoPickManagedReservesLineup: () => void
   setDaySlot: (date: string, slot: ScheduleSlot, activity: TrainingFocus | 'rest' | null) => void
   clearWeekSchedule: () => void
+  setTrainingWeekPlan: (plan: import('@/engine/training/trainingEngine').TrainingWeekPlan) => void
+  updateTrainingSlotGroups: (date: string, slot: 'morning' | 'afternoon', groups: import('@/engine/training/trainingEngine').TrainingGroup[]) => void
+  clearTrainingWeekPlan: () => void
 
   // History
   recordUserDraftPick: (entry: import('@/types/history').DraftHistoryEntry) => void
@@ -552,6 +661,7 @@ interface GameActions {
   simOffseasonHalfDay: () => void
   simOffseasonFullDay: () => void
   simOffseasonToMilestone: () => void
+  applyForCoachingJob: (jobId: string) => { success: boolean; error?: string }
 
   // Free agency market
   buildFreeAgencyMarketAction: () => void
@@ -609,10 +719,19 @@ export const useGameStore = create<GameStore>()(
 
       // ---- Actions ----
 
-      initializeGame: (clubId: string, saveName: string, settings?: GameSettings, fictionalClubs?: Club[]) => {
+      initializeGame: (
+        clubId: string,
+        saveName: string,
+        settings?: GameSettings,
+        fictionalClubs?: Club[],
+        managerName?: string,
+        startUnemployed?: boolean,
+      ) => {
         const now = new Date().toISOString()
         const gameId = crypto.randomUUID()
         const seed = Date.now()
+        const unemployedStart = Boolean(startUnemployed)
+        const initialClubId = unemployedStart ? '' : clubId
 
         const gameSettings = settings ?? createDefaultSettings()
 
@@ -620,10 +739,11 @@ export const useGameStore = create<GameStore>()(
         const clubsRecord: Record<string, Club> = {}
         const clubSource = fictionalClubs && fictionalClubs.length > 0
           ? fictionalClubs
-          : (clubsJson as Club[])
+          : (clubsJson as unknown as Club[])
         for (const c of clubSource) {
           clubsRecord[c.id] = {
             ...c,
+            finances: { ...(c as Club).finances },
             draftPicks: (c.draftPicks ?? []).map((p) => ({ ...p })),
           }
         }
@@ -631,6 +751,9 @@ export const useGameStore = create<GameStore>()(
         for (const club of Object.values(clubsRecord)) {
           if (!club.leadership) {
             (club as Club).leadership = { captainId: null, viceCaptainId: null, leadershipGroupIds: [] }
+          }
+          if (!club.identity) {
+            club.identity = createInitialClubIdentity(club, 2026)
           }
         }
 
@@ -675,7 +798,7 @@ export const useGameStore = create<GameStore>()(
         const scoutPool = generateScoutPool(Math.max(72, clubSource.length * 5), scoutRng)
         const scoutRegions: ScoutingRegion[] = ['VIC', 'SA', 'WA', 'NSW/ACT', 'QLD', 'TAS', 'NT']
         for (const c of clubSource) {
-          if (c.id === clubId) continue
+          if (c.id === initialClubId) continue
           const available = scoutPool.filter((s) => s.clubId === '')
           const toHire = Math.min(2, available.length)
           for (let i = 0; i < toHire; i++) {
@@ -690,7 +813,7 @@ export const useGameStore = create<GameStore>()(
         const season = generateFixture({
           clubs: clubsWithPicks,
           seed,
-          playerClubId: clubId,
+          playerClubId: initialClubId,
           settings: gameSettings,
         })
 
@@ -715,7 +838,7 @@ export const useGameStore = create<GameStore>()(
             version: '0.1.0',
           }
 
-          state.playerClubId = clubId
+          state.playerClubId = initialClubId
           state.currentYear = 2026
           state.currentRound = 0
 
@@ -725,7 +848,25 @@ export const useGameStore = create<GameStore>()(
           if (gameStart < seasonStart) {
             state.phase = 'offseason'
             state.currentDate = gameStart
-            state.offseasonState = initOffseason()
+            // Set year to previous season so startNewSeasonAction() increments correctly
+            state.currentYear = parseInt(seasonStart.slice(0, 4)) - 1
+
+            // Compute offseason start date (day after Grand Final)
+            const offseasonStartDate = computeDefaultGameStartDate(parseInt(seasonStart.slice(0, 4)))
+
+            // Determine correct phase based on where gameStart falls in the timeline
+            const { phase: offseasonPhase, completedPhases } = computePhaseForDate(
+              offseasonStartDate, gameStart,
+            )
+
+            // Build fully-initialized offseason state
+            const offseason = initOffseason()
+            offseason.currentPhase = offseasonPhase
+            offseason.completedPhases = completedPhases
+            offseason.calendarState = initOffseasonCalendar(offseasonStartDate)
+            offseason.calendarState.currentDate = gameStart
+
+            state.offseasonState = offseason
           } else {
             state.phase = 'regular-season'
             state.currentDate = seasonStart
@@ -734,6 +875,18 @@ export const useGameStore = create<GameStore>()(
           state.selectedLineup = null
 
           state.settings = gameSettings
+          state.manager = {
+            name: managerName?.trim() || 'Manager',
+            employmentStatus: unemployedStart ? 'unemployed' : 'employed',
+            currentClubId: unemployedStart ? null : initialClubId,
+            reputation: 50,
+            jobSecurity: unemployedStart ? 0 : 65,
+            seasonExpectation: unemployedStart ? 'Secure a senior coaching appointment.' : 'Deliver consistent improvement.',
+            unemployedSinceYear: unemployedStart ? state.currentYear : null,
+          }
+          state.coachingJobMarket = unemployedStart
+            ? seedInitialCoachingOpenings(clubsWithPicks, new SeededRNG(seed + 1234), state.currentDate)
+            : []
 
           state.clubs = clubsWithPicks
           state.players = playersRecord
@@ -749,7 +902,7 @@ export const useGameStore = create<GameStore>()(
           }
 
           // Build season calendar (settings-driven finals weeks + start date + game start date for offseason)
-          state.calendar = buildSeasonCalendar(2026, season, clubId, gameSettings.finals, gameSettings.seasonStartDate, gameSettings.gameStartDate)
+          state.calendar = buildSeasonCalendar(2026, season, initialClubId, gameSettings.finals, gameSettings.seasonStartDate, gameSettings.gameStartDate)
 
           // Initialize state leagues (VFL/SANFL/WAFL)
           if (gameSettings.leagueMode !== 'fictional') {
@@ -764,7 +917,7 @@ export const useGameStore = create<GameStore>()(
 
             // Auto-accept sold games for AI clubs
             for (const cid of clubIds) {
-              if (cid === clubId) continue
+              if (cid === initialClubId) continue
               const club = clubsRecord[cid]
               if (!club) continue
               const config = allocations[cid]
@@ -1630,6 +1783,12 @@ export const useGameStore = create<GameStore>()(
         })
       },
 
+      loadState: (loaded: GameState) => {
+        set((state) => {
+          Object.assign(state, loaded)
+        })
+      },
+
       enterOffseason: () => {
         const state = get()
         const rng = new SeededRNG(state.rngSeed + state.currentYear * 31337)
@@ -1659,6 +1818,47 @@ export const useGameStore = create<GameStore>()(
           state.currentYear,
         )
 
+        const ladderByClub = new Map(state.ladder.map((entry, idx) => [entry.clubId, idx + 1]))
+        const userClub = state.playerClubId ? strategyUpdatedClubs[state.playerClubId] ?? state.clubs[state.playerClubId] : null
+        const userLadderPosition = userClub ? (ladderByClub.get(userClub.id) ?? 18) : 18
+        const userFinalist = userLadderPosition <= 8
+        const expectation = userClub
+          ? generateBoardExpectation(userClub, userLadderPosition, rng)
+          : null
+        const satisfaction = expectation
+          ? evaluateBoardSatisfaction(expectation, userLadderPosition, userFinalist)
+          : null
+        const fanAdjustedSecurity = satisfaction && userClub
+          ? applyFanSatisfactionToJobSecurity(satisfaction.jobSecurity, userClub.fanSatisfaction)
+          : null
+        const politicsModifier =
+          state.settings.realism.boardPolitics
+            ? rng.nextInt(-12, 12)
+            : 0
+        const finalJobSecurity = fanAdjustedSecurity == null
+          ? null
+          : Math.max(0, Math.min(100, fanAdjustedSecurity + politicsModifier))
+        const firedByBoard =
+          Boolean(state.settings.realism.boardPressure) &&
+          finalJobSecurity != null &&
+          finalJobSecurity < 28
+
+        const carouselSacks = processCoachingCarousel(
+          Object.values(state.staff),
+          state.ladder,
+          rng,
+          state.playerClubId,
+          state.settings.realism.coachingCarousel,
+        )
+        const aiOpeningsFromSacks = carouselSacks.map((sack) =>
+          buildCoachingOpening({
+            clubId: sack.clubId,
+            reason: 'Head coach dismissed after underperformance.',
+            postedDate: state.currentDate,
+            urgency: 'high',
+          }),
+        )
+
         // 4. AI delistings (uses updated strategies from step 3)
         const { delistedIds: aiDelistedIds, news: delistNews } = processAIDelistings(
           postRetirePlayers,
@@ -1686,10 +1886,70 @@ export const useGameStore = create<GameStore>()(
           for (const [id, c] of Object.entries(strategyUpdatedClubs)) {
             s.clubs[id] = c
           }
+          // Resolve coaching carousel (AI only)
+          if (carouselSacks.length > 0) {
+            for (const sack of carouselSacks) {
+              delete s.staff[sack.sacked.id]
+              s.staff[sack.replacement.id] = sack.replacement
+              s.newsLog.push({
+                id: crypto.randomUUID(),
+                date: s.currentDate,
+                headline: sack.headline,
+                body: sack.body,
+                category: 'general',
+                clubIds: [sack.clubId],
+                playerIds: [],
+              })
+            }
+          }
           // Append news
           for (const n of [...retirementNews, ...strategyNews, ...delistNews]) {
             s.newsLog.push(n)
           }
+
+          if (expectation && finalJobSecurity != null) {
+            s.manager.jobSecurity = finalJobSecurity
+            s.manager.seasonExpectation = expectation.description
+          }
+
+          if (firedByBoard) {
+            const firedClubId = s.playerClubId
+            const firedClub = s.clubs[firedClubId]
+            s.playerClubId = ''
+            s.manager.employmentStatus = 'unemployed'
+            s.manager.currentClubId = null
+            s.manager.unemployedSinceYear = s.currentYear
+            s.coachingJobMarket.push(
+              buildCoachingOpening({
+                clubId: firedClubId,
+                reason: 'Board terminated the senior coach after failing expectations.',
+                postedDate: s.currentDate,
+                urgency: 'high',
+              }),
+            )
+            s.newsLog.push({
+              id: crypto.randomUUID(),
+              date: s.currentDate,
+              headline: `${firedClub?.name ?? 'Your club'} sack ${s.manager.name}`,
+              body: `Board review concluded with job security at ${finalJobSecurity}%. You are now unemployed and can apply for vacant roles.`,
+              category: 'general',
+              clubIds: firedClub ? [firedClub.id] : [],
+              playerIds: [],
+            })
+          }
+          if (aiOpeningsFromSacks.length > 0) {
+            s.coachingJobMarket.push(...aiOpeningsFromSacks)
+          }
+
+          if (
+            s.manager.employmentStatus === 'unemployed' &&
+            s.coachingJobMarket.filter((job) => job.status === 'open').length === 0
+          ) {
+            s.coachingJobMarket.push(
+              ...seedInitialCoachingOpenings(s.clubs, new SeededRNG(s.rngSeed + s.currentYear * 41), s.currentDate),
+            )
+          }
+
           s.history.developmentReports.push(developmentReport)
           s.newsLog.push({
             id: crypto.randomUUID(),
@@ -2276,6 +2536,88 @@ export const useGameStore = create<GameStore>()(
         })
       },
 
+      applyForCoachingJob: (jobId: string) => {
+        const state = get()
+        const opening = state.coachingJobMarket.find((job) => job.id === jobId && job.status === 'open')
+        if (!opening) return { success: false, error: 'Job opening not found' }
+        if (state.manager.employmentStatus !== 'unemployed') {
+          return { success: false, error: 'You are already employed' }
+        }
+
+        const club = state.clubs[opening.clubId]
+        if (!club) return { success: false, error: 'Club not found' }
+
+        const politicsBias =
+          state.settings.realism.boardPolitics
+            ? (opening.urgency === 'high' ? 0.08 : opening.urgency === 'low' ? -0.04 : 0)
+            : 0
+        const acceptanceChance = Math.max(
+          0.25,
+          Math.min(0.9, 0.45 + state.manager.reputation / 200 + politicsBias),
+        )
+        const rng = new SeededRNG(state.rngSeed + state.currentYear * 179 + jobId.length * 31)
+        const accepted = rng.chance(acceptanceChance)
+
+        set((s) => {
+          const idx = s.coachingJobMarket.findIndex((job) => job.id === jobId)
+          if (idx < 0) return
+          const liveJob = s.coachingJobMarket[idx]
+          if (liveJob.status !== 'open') return
+
+          if (!accepted) {
+            s.coachingJobMarket[idx] = {
+              ...liveJob,
+              status: 'withdrawn',
+            }
+            s.newsLog.push({
+              id: crypto.randomUUID(),
+              date: s.currentDate,
+              headline: `${club.name} conclude coaching search`,
+              body: `${club.fullName} interviewed ${s.manager.name} but appointed another candidate.`,
+              category: 'general',
+              clubIds: [club.id],
+              playerIds: [],
+            })
+            if (s.coachingJobMarket.filter((job) => job.status === 'open').length === 0) {
+              s.coachingJobMarket.push(
+                ...seedInitialCoachingOpenings(
+                  s.clubs,
+                  new SeededRNG(s.rngSeed + s.currentYear * 97 + s.coachingJobMarket.length),
+                  s.currentDate,
+                ),
+              )
+            }
+            return
+          }
+
+          s.playerClubId = club.id
+          s.manager = {
+            ...s.manager,
+            employmentStatus: 'employed',
+            currentClubId: club.id,
+            jobSecurity: 68,
+            seasonExpectation: 'Meet board expectations and stabilise results.',
+            unemployedSinceYear: null,
+          }
+
+          s.coachingJobMarket = s.coachingJobMarket.map((job) =>
+            job.id === jobId ? { ...job, status: 'filled' } : job,
+          )
+
+          s.newsLog.push({
+            id: crypto.randomUUID(),
+            date: s.currentDate,
+            headline: `${club.name} appoint ${s.manager.name} as senior coach`,
+            body: `${s.manager.name} has accepted the senior coaching role at ${club.fullName}.`,
+            category: 'general',
+            clubIds: [club.id],
+            playerIds: [],
+          })
+        })
+
+        return { success: accepted, error: accepted ? undefined : 'Application unsuccessful' }
+      },
+
       delistPlayerOffseason: (playerId: string) => {
         set((s) => {
           const player = s.players[playerId]
@@ -2387,6 +2729,18 @@ export const useGameStore = create<GameStore>()(
           s.brownlowTracker = []
           s.brownlowRevealed = false
           s.selectedLineup = null
+          s.reserves = {
+            seasonStatsByPlayer: {},
+            lastRoundPerformances: [],
+            promotionWatchlist: [],
+            delegationEnabled: true,
+            managedLineupPlayerIds: [],
+            tactics: {
+              tempo: 'balanced',
+              aggression: 'balanced',
+              youthFocus: true,
+            },
+          }
           s.clubs = ledgered
           s.calendar = buildSeasonCalendar(
             newYear,
@@ -2865,6 +3219,10 @@ export const useGameStore = create<GameStore>()(
         set((state) => {
           state.meta.lastSaved = new Date().toISOString()
         })
+        // Also persist to save slot via saveManager (avoids circular dep with appStore)
+        import('@/lib/saveManager').then(({ saveGameToSlot }) => {
+          saveGameToSlot(get())
+        })
       },
 
       sendToReserves: (playerId: string) => {
@@ -2885,6 +3243,56 @@ export const useGameStore = create<GameStore>()(
         })
       },
 
+      setReservesDelegation: (enabled: boolean) => {
+        set((state) => {
+          state.reserves.delegationEnabled = enabled
+        })
+      },
+
+      setManagedReservesLineup: (playerIds: string[]) => {
+        set((state) => {
+          const selectedLineupIds = new Set(
+            Object.values(state.selectedLineup ?? {}).filter((id): id is string => Boolean(id)),
+          )
+          const valid = playerIds.filter((id) => {
+            const p = state.players[id]
+            if (!p) return false
+            if (p.clubId !== state.playerClubId) return false
+            if (p.injury || isPlayerSuspended(p)) return false
+            if (selectedLineupIds.has(id)) return false
+            return true
+          })
+          state.reserves.managedLineupPlayerIds = Array.from(new Set(valid)).slice(0, 23)
+        })
+      },
+
+      setReservesTactics: (updates: Partial<GameState['reserves']['tactics']>) => {
+        set((state) => {
+          state.reserves.tactics = { ...state.reserves.tactics, ...updates }
+        })
+      },
+
+      autoPickManagedReservesLineup: () => {
+        set((state) => {
+          const selectedLineupIds = new Set(
+            Object.values(state.selectedLineup ?? {}).filter((id): id is string => Boolean(id)),
+          )
+          const candidates = Object.values(state.players)
+            .filter((p) =>
+              p.clubId === state.playerClubId &&
+              !p.injury &&
+              !isPlayerSuspended(p) &&
+              !selectedLineupIds.has(p.id),
+            )
+            .sort((a, b) => {
+              const aScore = a.form * 0.45 + a.fitness * 0.2 + averageAttributes(a.attributes) * 0.35
+              const bScore = b.form * 0.45 + b.fitness * 0.2 + averageAttributes(b.attributes) * 0.35
+              return bScore - aScore
+            })
+          state.reserves.managedLineupPlayerIds = candidates.slice(0, 23).map((p) => p.id)
+        })
+      },
+
       setDaySlot: (date: string, slot: ScheduleSlot, activity: TrainingFocus | 'rest' | null) => {
         set((state) => {
           if (!state.weekSchedule[date]) {
@@ -2897,6 +3305,31 @@ export const useGameStore = create<GameStore>()(
       clearWeekSchedule: () => {
         set((state) => {
           state.weekSchedule = {}
+        })
+      },
+
+      setTrainingWeekPlan: (plan) => {
+        set((state) => {
+          state.trainingWeekPlan = plan
+        })
+      },
+
+      updateTrainingSlotGroups: (date, slot, groups) => {
+        set((state) => {
+          if (!state.trainingWeekPlan) return
+          if (!state.trainingWeekPlan.slots[date]) {
+            state.trainingWeekPlan.slots[date] = {
+              morning: { groups: [] },
+              afternoon: { groups: [] },
+            }
+          }
+          state.trainingWeekPlan.slots[date][slot].groups = groups
+        })
+      },
+
+      clearTrainingWeekPlan: () => {
+        set((state) => {
+          state.trainingWeekPlan = null
         })
       },
 
@@ -3319,6 +3752,23 @@ export const useGameStore = create<GameStore>()(
                 simStateLeagueRound(league, s.currentRound + 1, slRng)
               }
             }
+          }
+
+          // Simulate reserves/VFL performances for non-selected players
+          const reservesRng = new SeededRNG(s.rngSeed + s.currentRound * 1777 + 19)
+          const reservesResult = simulateReservesRound({
+            players: s.players,
+            clubs: s.clubs,
+            playedPlayerIds: new Set(Object.keys(playedStats)),
+            currentRound: s.currentRound + 1,
+            currentDate: s.currentDate,
+            userClubId: s.playerClubId,
+            reserves: s.reserves,
+            rng: reservesRng,
+          })
+          s.reserves = reservesResult.reserves
+          for (const n of reservesResult.news) {
+            s.newsLog.push(n)
           }
 
           // --- Negotiation tick ---
@@ -3846,11 +4296,17 @@ export const useGameStore = create<GameStore>()(
         if (merged.offseasonState === undefined) {
           merged.offseasonState = null
         }
+        if (!merged.trainingWeekPlan) {
+          merged.trainingWeekPlan = null
+        }
 
         // Sync currentSpend for all clubs on load (old saves may have stale values)
         if (merged.players && merged.clubs) {
           const allPlayers = Object.values(merged.players)
           for (const club of Object.values(merged.clubs)) {
+            if (!club.identity) {
+              club.identity = createInitialClubIdentity(club, merged.currentYear ?? 2026)
+            }
             club.finances.currentSpend = syncClubCurrentSpend(allPlayers, club.id)
           }
         }
@@ -3889,6 +4345,9 @@ export const useGameStore = create<GameStore>()(
         if (realismObj && !('brownlowNight' in realismObj)) {
           realismObj.brownlowNight = true
         }
+        if (realismObj && !('boardPolitics' in realismObj)) {
+          realismObj.boardPolitics = true
+        }
 
         // Migrate brownlowRevealed
         if ((merged as Record<string, unknown>).brownlowRevealed === undefined) {
@@ -3905,6 +4364,68 @@ export const useGameStore = create<GameStore>()(
         }
         if ((merged as Record<string, unknown>).weeklyGameplans === undefined) {
           (merged as Record<string, unknown>).weeklyGameplans = {}
+        }
+        if ((merged as Record<string, unknown>).reserves === undefined) {
+          ;(merged as Record<string, unknown>).reserves = {
+            seasonStatsByPlayer: {},
+            lastRoundPerformances: [],
+            promotionWatchlist: [],
+            delegationEnabled: true,
+            managedLineupPlayerIds: [],
+            tactics: {
+              tempo: 'balanced',
+              aggression: 'balanced',
+              youthFocus: true,
+            },
+          }
+        }
+        const reservesObj = (merged as Record<string, unknown>).reserves as Record<string, unknown> | undefined
+        if (reservesObj) {
+          if (!('seasonStatsByPlayer' in reservesObj)) reservesObj.seasonStatsByPlayer = {}
+          if (!('lastRoundPerformances' in reservesObj)) reservesObj.lastRoundPerformances = []
+          if (!('promotionWatchlist' in reservesObj)) reservesObj.promotionWatchlist = []
+          if (!('delegationEnabled' in reservesObj)) reservesObj.delegationEnabled = true
+          if (!('managedLineupPlayerIds' in reservesObj)) reservesObj.managedLineupPlayerIds = []
+          if (!('tactics' in reservesObj)) {
+            reservesObj.tactics = {
+              tempo: 'balanced',
+              aggression: 'balanced',
+              youthFocus: true,
+            }
+          }
+          const tacticsObj = reservesObj.tactics as Record<string, unknown> | undefined
+          if (tacticsObj) {
+            if (!('tempo' in tacticsObj)) tacticsObj.tempo = 'balanced'
+            if (!('aggression' in tacticsObj)) tacticsObj.aggression = 'balanced'
+            if (!('youthFocus' in tacticsObj)) tacticsObj.youthFocus = true
+          }
+        }
+        if ((merged as Record<string, unknown>).manager === undefined) {
+          ;(merged as Record<string, unknown>).manager = {
+            name: 'Manager',
+            employmentStatus: 'employed',
+            currentClubId: merged.playerClubId || null,
+            reputation: 50,
+            jobSecurity: 65,
+            seasonExpectation: 'Deliver consistent improvement.',
+            unemployedSinceYear: null,
+          }
+        }
+        if ((merged as Record<string, unknown>).coachingJobMarket === undefined) {
+          ;(merged as Record<string, unknown>).coachingJobMarket = []
+        }
+        const managerObj = (merged as Record<string, unknown>).manager as Record<string, unknown> | undefined
+        if (managerObj) {
+          if (!('name' in managerObj)) managerObj.name = 'Manager'
+          if (!('employmentStatus' in managerObj)) managerObj.employmentStatus = merged.playerClubId ? 'employed' : 'unemployed'
+          if (!('currentClubId' in managerObj)) managerObj.currentClubId = merged.playerClubId || null
+          if (!('reputation' in managerObj)) managerObj.reputation = 50
+          if (!('jobSecurity' in managerObj)) managerObj.jobSecurity = 65
+          if (!('seasonExpectation' in managerObj)) managerObj.seasonExpectation = 'Deliver consistent improvement.'
+          if (!('unemployedSinceYear' in managerObj)) managerObj.unemployedSinceYear = null
+          if ((managerObj.employmentStatus as string) === 'employed' && !managerObj.currentClubId && merged.playerClubId) {
+            managerObj.currentClubId = merged.playerClubId
+          }
         }
 
         // Backfill draft class profile for old saves

@@ -62,6 +62,50 @@ const MILESTONE_DEFS: { offset: number; label: string; phase: OffseasonPhase }[]
   { offset: 84, label: 'Season Ready', phase: 'ready' },
 ]
 
+/** Day offset at which each phase starts (derived from MILESTONE_DEFS). */
+const PHASE_START_OFFSETS: [OffseasonPhase, number][] = [
+  ['season-end', 0],
+  ['retirements', 7],
+  ['delistings', 10],
+  ['trade-period', 14],
+  ['free-agency', 35],
+  ['national-draft', 49],
+  ['rookie-draft', 52],
+  ['supplemental-signing', 54],
+  ['preseason', 56],
+  ['venue-allocation', 70],
+  ['practice-matches', 77],
+  ['ready', 84],
+]
+
+/**
+ * Given an offseason start date and a current date, determine which phase
+ * the offseason should be in and which phases are already completed.
+ */
+export function computePhaseForDate(
+  offseasonStartDate: string,
+  currentDate: string,
+): { phase: OffseasonPhase; completedPhases: OffseasonPhase[] } {
+  const dayOffset = diffDays(offseasonStartDate, currentDate)
+
+  let currentPhase: OffseasonPhase = 'season-end'
+  const completedPhases: OffseasonPhase[] = []
+
+  for (const [phase, startOffset] of PHASE_START_OFFSETS) {
+    if (dayOffset >= startOffset) {
+      currentPhase = phase
+    }
+  }
+
+  // All phases before the current one are completed
+  for (const [phase] of PHASE_START_OFFSETS) {
+    if (phase === currentPhase) break
+    completedPhases.push(phase)
+  }
+
+  return { phase: currentPhase, completedPhases }
+}
+
 // ---------------------------------------------------------------------------
 // Functions
 // ---------------------------------------------------------------------------
