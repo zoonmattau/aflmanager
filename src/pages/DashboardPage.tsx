@@ -4,10 +4,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { useNavigate } from 'react-router-dom'
 import {
   Trophy,
-  Play, FastForward, ChevronLeft, ChevronRight, ArrowRight,
+  Play, FastForward, SkipForward, ChevronLeft, ChevronRight, ArrowRight,
   Plus, Moon, X,
   Users, ClipboardList, Shield, BarChart3, Gamepad2,
   Swords, ArrowLeftRight, AlertTriangle, GraduationCap, FileText, Newspaper, Sparkles, Scale,
@@ -22,7 +28,7 @@ import type { Fixture, LadderEntry } from '@/types/season'
 import type { GamePhase } from '@/types/game'
 import type { GameEvent, GameEventType, ScheduleSlot, WeekSchedule } from '@/types/calendar'
 import type { TrainingFocus, TrainingSession } from '@/engine/training/trainingEngine'
-import { runTrainingSessions, applyTrainingResults, getDefaultTrainingWeek } from '@/engine/training/trainingEngine'
+import { runTrainingSessions, applyTrainingResults, getDefaultTrainingWeek, weekPlanToSessions } from '@/engine/training/trainingEngine'
 import { SeededRNG } from '@/engine/core/rng'
 import {
   getEventsForDate,
@@ -30,7 +36,16 @@ import {
   addDays,
   formatDate,
 } from '@/engine/calendar/calendarEngine'
+import {
+  getOffseasonPhaseLabel,
+} from '@/engine/season/offseasonFlow'
+import {
+  formatOffseasonDateTime,
+} from '@/engine/offseason/offseasonCalendar'
 import { RecommendedActions } from '@/components/dashboard/RecommendedActions'
+import { OffseasonPhaseCard } from '@/components/dashboard/OffseasonPhaseCard'
+import { PhaseProgressCard } from '@/components/dashboard/PhaseProgressCard'
+import { OffseasonCalendarOverlay } from '@/components/dashboard/OffseasonCalendarOverlay'
 
 // ---------------------------------------------------------------------------
 // Calendar constants
@@ -200,6 +215,7 @@ function buildWeekDays(startDate: string, events: GameEvent[], currentDate: stri
     isToday: boolean
     isPast: boolean
     hasMatch: boolean
+    hasMilestone: boolean
   }[] = []
 
   for (let i = 0; i < 7; i++) {
@@ -215,6 +231,7 @@ function buildWeekDays(startDate: string, events: GameEvent[], currentDate: stri
       isToday: dateStr === currentDate,
       isPast: dateStr < currentDate,
       hasMatch: dayEvents.some((e) => e.type === 'match'),
+      hasMilestone: dayEvents.some((e) => e.type === 'milestone'),
     })
   }
 
@@ -342,6 +359,7 @@ export function DashboardPage() {
   const weekSchedule = useGameStore((s) => s.weekSchedule)
   const setDaySlot = useGameStore((s) => s.setDaySlot)
   const clearWeekSchedule = useGameStore((s) => s.clearWeekSchedule)
+  const clearTrainingWeekPlan = useGameStore((s) => s.clearTrainingWeekPlan)
   const players = useGameStore((s) => s.players)
   const staff = useGameStore((s) => s.staff)
   const newsLog = useGameStore((s) => s.newsLog)
@@ -352,6 +370,11 @@ export function DashboardPage() {
   const enterOffseason = useGameStore((s) => s.enterOffseason)
   const offseasonState = useGameStore((s) => s.offseasonState)
 
+  // Offseason sim controls
+  const simHalfDay = useGameStore((s) => s.simOffseasonHalfDay)
+  const simFullDay = useGameStore((s) => s.simOffseasonFullDay)
+  const simToMilestone = useGameStore((s) => s.simOffseasonToMilestone)
+
   // Actual game date (season starts from settings, each round is 1 week)
   const seasonStartDate = settings?.seasonStartDate ?? '2026-03-20'
   const gameDate = useMemo(
@@ -359,17 +382,22 @@ export function DashboardPage() {
     [seasonStartDate, currentRound],
   )
 
+  // Offseason derived state
+  const isOffseason = phase === 'offseason'
+  const offseasonDate = offseasonState?.calendarState?.currentDate ?? gameDate
+  const effectiveDate = isOffseason ? offseasonDate : gameDate
+
   const [lastResult, setLastResult] = useState<Match | null>(null)
   const [simming, setSimming] = useState(false)
   const [premierMsg, setPremierMsg] = useState<string | null>(null)
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
-  const [weekStart, setWeekStart] = useState(() => getWeekStart(gameDate))
+  const [weekStart, setWeekStart] = useState(() => getWeekStart(effectiveDate))
   const [expandedNewsId, setExpandedNewsId] = useState<string | null>(null)
 
-  // Auto-scroll calendar to current week when game date changes
+  // Auto-scroll calendar to current week when effective date changes
   useEffect(() => {
-    setWeekStart(getWeekStart(gameDate))
-  }, [gameDate])
+    setWeekStart(getWeekStart(effectiveDate))
+  }, [effectiveDate])
 
   // News: latest 10, newest first
   const recentNews = useMemo(() => [...newsLog].reverse().slice(0, 10), [newsLog])
@@ -386,82 +414,6 @@ export function DashboardPage() {
       enterOffseason()
     }
   }, [phase, offseasonState, enterOffseason])
-
-  // Offseason early return
-  if (phase === 'offseason') {
-    const rosterCount = Object.values(players).filter((p) => p.clubId === playerClubId).length
-    const capSpend = Object.values(players)
-      .filter((p) => p.clubId === playerClubId)
-      .reduce((sum, p) => sum + (p.contract.yearByYear[0] ?? 0), 0)
-    const capTotal = settings?.salaryCapAmount ?? 18_300_000
-
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center gap-4">
-          <div
-            className="h-12 w-12 rounded-full"
-            style={{ backgroundColor: club?.colors.primary ?? '#666' }}
-          />
-          <div>
-            <h1 className="text-2xl font-bold">{club?.fullName}</h1>
-            <p className="text-muted-foreground">Offseason</p>
-          </div>
-        </div>
-
-        <Card className="border-amber-500/30 bg-amber-500/5">
-          <CardContent className="py-6 text-center">
-            <Moon className="mx-auto h-8 w-8 text-amber-400 mb-2" />
-            <p className="text-lg font-bold">Offseason In Progress</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Complete offseason activities to start the next season
-            </p>
-            <Button className="mt-4" onClick={() => navigate('/offseason')}>
-              <ArrowRight className="mr-1 h-4 w-4" />
-              Go to Offseason
-            </Button>
-          </CardContent>
-        </Card>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Roster</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">{rosterCount}</p>
-              <p className="text-xs text-muted-foreground">players on list</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Cap Space</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">
-                ${((capTotal - capSpend) / 1_000_000).toFixed(1)}M
-              </p>
-              <p className="text-xs text-muted-foreground">
-                of ${(capTotal / 1_000_000).toFixed(1)}M available
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Last Season</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">
-                {ladderPosition > 0 ? `${ladderPosition}${ordinal(ladderPosition)}` : '-'}
-              </p>
-              <p className="text-xs text-muted-foreground">final ladder position</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        <RecommendedActions />
-      </div>
-    )
-  }
 
   // User & opponent form
   const userForm = useMemo(() => computeForm(matchResults, playerClubId), [matchResults, playerClubId])
@@ -506,9 +458,24 @@ export function DashboardPage() {
     || (nextRound && !nextFixture && phase === 'regular-season')
 
   // Week days for the current view
+  // During offseason, inject milestone events into the week
+  const effectiveEvents = useMemo(() => {
+    if (!isOffseason || !offseasonState?.calendarState?.milestones) return calendar.events
+    // Merge calendar events with offseason milestone "virtual events"
+    const milestoneEvents: GameEvent[] = offseasonState.calendarState.milestones.map((m) => ({
+      id: m.id,
+      date: m.date,
+      type: 'milestone' as const,
+      title: m.label,
+      description: `Offseason: ${m.label}`,
+      resolved: m.date < effectiveDate,
+    }))
+    return [...calendar.events, ...milestoneEvents]
+  }, [isOffseason, offseasonState?.calendarState?.milestones, calendar.events, effectiveDate])
+
   const weekDays = useMemo(
-    () => buildWeekDays(weekStart, calendar.events, gameDate),
-    [weekStart, calendar.events, gameDate],
+    () => buildWeekDays(weekStart, effectiveEvents, effectiveDate),
+    [weekStart, effectiveEvents, effectiveDate],
   )
 
   const weekLabel = useMemo(() => {
@@ -577,20 +544,25 @@ export function DashboardPage() {
     }
     const userFacilities = state.clubs[state.playerClubId]?.facilities
 
-    // Build sessions from weekSchedule
-    const userSessions: TrainingSession[] = []
-    let sessionCounter = 0
-    for (const [_dateStr, daySched] of Object.entries(state.weekSchedule)) {
-      for (const slot of ['morning', 'afternoon'] as const) {
-        const activity = daySched[slot]
-        if (activity && activity !== 'rest') {
-          userSessions.push({
-            id: `user-sched-${sessionCounter++}`,
-            focus: activity,
-            intensity: slot === 'morning' ? 'moderate' : 'light',
-            assignedCoachId: null,
-            assignedPlayerIds: [],
-          })
+    // Build sessions: prefer enhanced training plan, fall back to weekSchedule
+    let userSessions: TrainingSession[]
+    if (state.trainingWeekPlan && Object.keys(state.trainingWeekPlan.slots).length > 0) {
+      userSessions = weekPlanToSessions(state.trainingWeekPlan)
+    } else {
+      userSessions = []
+      let sessionCounter = 0
+      for (const [_dateStr, daySched] of Object.entries(state.weekSchedule)) {
+        for (const slot of ['morning', 'afternoon'] as const) {
+          const activity = daySched[slot]
+          if (activity && activity !== 'rest') {
+            userSessions.push({
+              id: `user-sched-${sessionCounter++}`,
+              focus: activity,
+              intensity: slot === 'morning' ? 'moderate' : 'light',
+              assignedCoachId: null,
+              assignedPlayerIds: [],
+            })
+          }
         }
       }
     }
@@ -627,8 +599,9 @@ export function DashboardPage() {
       })
     }
 
-    // Clear the week schedule
+    // Clear the week schedule and training plan
     clearWeekSchedule()
+    clearTrainingWeekPlan()
 
     // --- Now simulate the round ---
     if (phase === 'regular-season') {
@@ -766,7 +739,7 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header + Date + Continue Button */}
+      {/* Header + Date + Controls */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <div
@@ -776,24 +749,71 @@ export function DashboardPage() {
           <div>
             <h1 className="text-2xl font-bold">{club?.fullName}</h1>
             <p className="text-muted-foreground">
-              {club?.homeGround}
-              {nextMatchDate && (
-                <span className="ml-2 text-sm">
-                  · Next match {formatDate(nextMatchDate)}
-                </span>
+              {isOffseason ? (
+                <>Offseason · {offseasonState ? getOffseasonPhaseLabel(offseasonState.currentPhase) : 'In Progress'}</>
+              ) : seasonComplete ? (
+                <>Season Complete</>
+              ) : phase === 'finals' ? (
+                <>{club?.homeGround} · Finals Week {season.finalsRounds.length + 1}</>
+              ) : (
+                <>
+                  {club?.homeGround}
+                  {nextMatchDate && (
+                    <span className="ml-2 text-sm">
+                      · Next match {formatDate(nextMatchDate)}
+                    </span>
+                  )}
+                </>
               )}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Game Date</p>
-            <p className="text-lg font-bold">{formatDate(gameDate)}</p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
+              {isOffseason ? 'Offseason Date' : 'Game Date'}
+            </p>
+            <p className="text-lg font-bold">{formatDate(effectiveDate)}</p>
             <p className="text-xs text-muted-foreground">
-              Round {currentRound + 1} of {season.rounds.length}
+              {isOffseason && offseasonState?.calendarState
+                ? formatOffseasonDateTime(offseasonState.calendarState)
+                : `Round ${currentRound + 1} of ${season.rounds.length}`
+              }
             </p>
           </div>
-          {!seasonComplete && (
+          {isOffseason ? (
+            /* Offseason sim controls */
+            <div className="flex flex-col items-end gap-1">
+              <div className="flex gap-1.5">
+                <TooltipProvider delayDuration={300}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button size="lg" className="h-12 px-4" onClick={simHalfDay}>
+                        <Play className="h-5 w-5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Sim Half Day</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button size="lg" variant="outline" className="h-12 px-4" onClick={simFullDay}>
+                        <FastForward className="h-5 w-5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Sim Full Day</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button size="lg" variant="outline" className="h-12 px-4" onClick={simToMilestone}>
+                        <SkipForward className="h-5 w-5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Sim to Next Milestone</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+            </div>
+          ) : !seasonComplete ? (
             <div className="flex flex-col items-end gap-1">
               <Button
                 size="lg"
@@ -810,7 +830,7 @@ export function DashboardPage() {
                 </span>
               )}
             </div>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -837,7 +857,7 @@ export function DashboardPage() {
                 variant="ghost"
                 size="sm"
                 className="text-xs h-6"
-                onClick={() => setWeekStart(getWeekStart(gameDate))}
+                onClick={() => setWeekStart(getWeekStart(effectiveDate))}
               >
                 Today
               </Button>
@@ -867,7 +887,9 @@ export function DashboardPage() {
                         ? 'border-accent-foreground/30 bg-accent'
                         : day.hasMatch
                           ? 'border-blue-500/40 bg-blue-500/5 hover:bg-blue-500/10'
-                          : 'border-border hover:bg-accent/50'
+                          : day.hasMilestone
+                            ? 'border-pink-500/40 bg-pink-500/5 hover:bg-pink-500/10'
+                            : 'border-border hover:bg-accent/50'
                     }
                     ${isPastDay ? 'opacity-40' : ''}
                   `}
@@ -887,8 +909,8 @@ export function DashboardPage() {
                     </span>
                   </div>
 
-                  {/* Match day: full cell with event pills */}
-                  {day.hasMatch ? (
+                  {/* Day content: events, training slots, or offseason overlay */}
+                  {day.hasMatch || day.events.some((e) => e.type === 'milestone') ? (
                     <div className="flex flex-col gap-0.5 mt-auto w-full px-1.5 pb-1.5">
                       {day.events.map((evt) => (
                         <div
@@ -898,6 +920,15 @@ export function DashboardPage() {
                           <span className="truncate">{evt.title}</span>
                         </div>
                       ))}
+                    </div>
+                  ) : isOffseason ? (
+                    /* Offseason: show phase overlay instead of training */
+                    <div className="flex flex-col flex-1 px-1.5 pb-1.5 mt-1">
+                      <OffseasonCalendarOverlay
+                        date={day.date}
+                        milestones={offseasonState?.calendarState?.milestones ?? []}
+                        currentPhase={offseasonState?.currentPhase ?? 'season-end'}
+                      />
                     </div>
                   ) : (
                     /* Non-match day: morning/afternoon slots */
@@ -925,35 +956,56 @@ export function DashboardPage() {
 
           {/* Legend */}
           <div className="flex items-center gap-4 mt-3 text-[10px] text-muted-foreground">
-            <div className="flex items-center gap-1">
-              <div className="h-2 w-2 rounded-full bg-blue-500" />
-              <span>Match</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="h-2 w-2 rounded-full bg-green-500" />
-              <span>Training</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="h-2 w-2 rounded-full bg-orange-500" />
-              <span>Other</span>
-            </div>
+            {isOffseason ? (
+              <>
+                <div className="flex items-center gap-1">
+                  <div className="h-2 w-2 rounded-full bg-pink-500" />
+                  <span>Milestone</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="h-2 w-2 rounded-full bg-purple-500" />
+                  <span>Trade</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="h-2 w-2 rounded-full bg-yellow-500" />
+                  <span>Draft</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-1">
+                  <div className="h-2 w-2 rounded-full bg-blue-500" />
+                  <span>Match</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="h-2 w-2 rounded-full bg-green-500" />
+                  <span>Training</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="h-2 w-2 rounded-full bg-orange-500" />
+                  <span>Other</span>
+                </div>
+              </>
+            )}
             <div className="ml-auto flex items-center gap-3">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-6 text-[10px] px-2"
-                onClick={handleAutoFillTraining}
-              >
-                <ClipboardList className="mr-1 h-3 w-3" />
-                Assistant Coach Sets Training
-              </Button>
+              {!isOffseason && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 text-[10px] px-2"
+                  onClick={handleAutoFillTraining}
+                >
+                  <ClipboardList className="mr-1 h-3 w-3" />
+                  Assistant Coach Sets Training
+                </Button>
+              )}
               <Button
                 variant="link"
                 size="sm"
                 className="p-0 h-auto text-xs"
-                onClick={() => navigate('/calendar')}
+                onClick={() => navigate(isOffseason ? '/offseason' : '/calendar')}
               >
-                Full Calendar <ArrowRight className="ml-0.5 h-3 w-3" />
+                {isOffseason ? 'View Offseason' : 'Full Calendar'} <ArrowRight className="ml-0.5 h-3 w-3" />
               </Button>
             </div>
           </div>
@@ -998,8 +1050,8 @@ export function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Training Schedule Summary */}
-      {scheduleSummary && (
+      {/* Training Schedule Summary (hidden during offseason) */}
+      {!isOffseason && scheduleSummary && (
         <Card>
           <CardContent className="py-4 space-y-4">
             {/* Fatigue + Injury Risk — big and clear */}
@@ -1182,67 +1234,75 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* MIDDLE: Ladder Position */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Ladder Position</CardTitle>
-            <Trophy className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-center">
-              <div className="text-4xl font-bold">
-                {ladderPosition > 0 ? `${ladderPosition}${ordinal(ladderPosition)}` : '-'}
-              </div>
-              {ladderEntry ? (
-                <div className="mt-3 space-y-1 text-sm text-muted-foreground">
-                  <p>
-                    <span className="font-semibold text-foreground">{ladderEntry.points}</span> pts
-                    {' · '}
-                    <span className="font-semibold text-foreground">{ladderEntry.percentage.toFixed(1)}%</span>
-                  </p>
-                  <p>{ladderEntry.pointsFor} PF / {ladderEntry.pointsAgainst} PA</p>
-                  <p>{ladderEntry.wins}W {ladderEntry.draws}D {ladderEntry.losses}L</p>
+        {/* MIDDLE: Ladder Position / Phase Progress */}
+        {isOffseason ? (
+          <PhaseProgressCard />
+        ) : (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Ladder Position</CardTitle>
+              <Trophy className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-center">
+                <div className="text-4xl font-bold">
+                  {ladderPosition > 0 ? `${ladderPosition}${ordinal(ladderPosition)}` : '-'}
                 </div>
-              ) : (
-                <p className="mt-2 text-sm text-muted-foreground">Season not started</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+                {ladderEntry ? (
+                  <div className="mt-3 space-y-1 text-sm text-muted-foreground">
+                    <p>
+                      <span className="font-semibold text-foreground">{ladderEntry.points}</span> pts
+                      {' · '}
+                      <span className="font-semibold text-foreground">{ladderEntry.percentage.toFixed(1)}%</span>
+                    </p>
+                    <p>{ladderEntry.pointsFor} PF / {ladderEntry.pointsAgainst} PA</p>
+                    <p>{ladderEntry.wins}W {ladderEntry.draws}D {ladderEntry.losses}L</p>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm text-muted-foreground">Season not started</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* RIGHT: Recommended Actions */}
         <RecommendedActions />
       </div>
 
-      {/* Next Matchup Card */}
-      <MatchupCard
-        phase={phase}
-        seasonComplete={seasonComplete}
-        currentRound={currentRound}
-        totalRounds={season.rounds.length}
-        finalsWeek={season.finalsRounds.length + 1}
-        isBye={!!isBye}
-        nextFixture={nextFixture ?? null}
-        club={club}
-        opponent={opponent}
-        isHome={isHome}
-        opponentLadderPosition={opponentLadderPosition}
-        opponentLadderEntry={opponentLadderEntry ?? null}
-        opponentForm={opponentForm}
-        ladderPosition={ladderPosition}
-        matchDay={nextFixture?.matchDay ?? null}
-        nextMatchDate={nextMatchDate}
-        simming={simming}
-        onSimWeek={handleSimWeek}
-        onSimToEnd={handleSimToEnd}
-        onEnterOffseason={enterOffseason}
-        userForm={userForm}
-        userLadderEntry={ladderEntry ?? null}
-        headToHead={headToHead}
-      />
+      {/* Main Card: Matchup or Offseason Phase */}
+      {isOffseason ? (
+        <OffseasonPhaseCard />
+      ) : (
+        <MatchupCard
+          phase={phase}
+          seasonComplete={seasonComplete}
+          currentRound={currentRound}
+          totalRounds={season.rounds.length}
+          finalsWeek={season.finalsRounds.length + 1}
+          isBye={!!isBye}
+          nextFixture={nextFixture ?? null}
+          club={club}
+          opponent={opponent}
+          isHome={isHome}
+          opponentLadderPosition={opponentLadderPosition}
+          opponentLadderEntry={opponentLadderEntry ?? null}
+          opponentForm={opponentForm}
+          ladderPosition={ladderPosition}
+          matchDay={nextFixture?.matchDay ?? null}
+          nextMatchDate={nextMatchDate}
+          simming={simming}
+          onSimWeek={handleSimWeek}
+          onSimToEnd={handleSimToEnd}
+          onEnterOffseason={enterOffseason}
+          userForm={userForm}
+          userLadderEntry={ladderEntry ?? null}
+          headToHead={headToHead}
+        />
+      )}
 
-      {/* Last Match Result */}
-      {lastResult?.result && (
+      {/* Last Match Result (hidden during offseason) */}
+      {!isOffseason && lastResult?.result && (
         <Card>
           <CardHeader>
             <CardTitle className="text-sm">Your Last Result</CardTitle>

@@ -330,6 +330,7 @@ export const DEFAULT_REALISM: RealismSettings = {
   venueScheduling: true,
   coachingCarousel: true,
   boardPressure: true,
+  boardPolitics: true,
   aflHouseInterference: false,
   listSizeEnforcement: true,
   mediaLeaks: true,

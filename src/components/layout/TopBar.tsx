@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Sun, Moon, Calendar, Hash, Save, RotateCcw, Home, Menu } from 'lucide-react'
+import { Sun, Moon, Calendar, Hash, Save, Home, Menu } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTheme } from '@/components/layout/ThemeProvider'
 import { useGameStore } from '@/stores/gameStore'
+import { useAppStore } from '@/stores/appStore'
 import { Badge } from '@/components/ui/badge'
 import {
   DropdownMenu,
@@ -22,17 +22,16 @@ import {
 } from '@/components/ui/dialog'
 
 export function TopBar() {
-  const navigate = useNavigate()
   const { resolvedTheme, setTheme } = useTheme()
   const currentYear = useGameStore((s) => s.currentYear)
   const currentRound = useGameStore((s) => s.currentRound)
   const currentDate = useGameStore((s) => s.currentDate)
   const phase = useGameStore((s) => s.phase)
   const saveGame = useGameStore((s) => s.saveGame)
-  const resetGame = useGameStore((s) => s.resetGame)
   const meta = useGameStore((s) => s.meta)
+  const setScreen = useAppStore((s) => s.setScreen)
 
-  const [showNewGameConfirm, setShowNewGameConfirm] = useState(false)
+  const [showMainMenuConfirm, setShowMainMenuConfirm] = useState(false)
   const [showSavedBadge, setShowSavedBadge] = useState(false)
 
   const phaseLabel = {
@@ -50,14 +49,15 @@ export function TopBar() {
     setTimeout(() => setShowSavedBadge(false), 2000)
   }
 
-  const handleNewGame = () => {
-    setShowNewGameConfirm(true)
+  const handleMainMenu = () => {
+    setShowMainMenuConfirm(true)
   }
 
-  const handleConfirmNewGame = () => {
-    resetGame()
-    setShowNewGameConfirm(false)
-    navigate('/')
+  const handleConfirmMainMenu = () => {
+    // Save before leaving
+    saveGame()
+    setShowMainMenuConfirm(false)
+    setScreen('home')
   }
 
   // Format date for display
@@ -115,11 +115,7 @@ export function TopBar() {
                 Save Game
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={handleNewGame}>
-                <RotateCcw className="mr-2 h-4 w-4" />
-                New Game
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleNewGame}>
+              <DropdownMenuItem onClick={handleMainMenu}>
                 <Home className="mr-2 h-4 w-4" />
                 Main Menu
               </DropdownMenuItem>
@@ -128,23 +124,22 @@ export function TopBar() {
         </div>
       </header>
 
-      {/* New Game Confirmation Dialog */}
-      <Dialog open={showNewGameConfirm} onOpenChange={setShowNewGameConfirm}>
+      {/* Main Menu Confirmation Dialog */}
+      <Dialog open={showMainMenuConfirm} onOpenChange={setShowMainMenuConfirm}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Start New Game?</DialogTitle>
+            <DialogTitle>Return to Main Menu?</DialogTitle>
             <DialogDescription>
-              This will reset all progress in your current save
-              {meta.saveName ? ` "${meta.saveName}"` : ''}.
-              Unsaved progress will be lost.
+              Your game{meta.saveName ? ` "${meta.saveName}"` : ''} will be saved
+              automatically before returning to the main menu.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowNewGameConfirm(false)}>
+            <Button variant="outline" onClick={() => setShowMainMenuConfirm(false)}>
               Cancel
             </Button>
-            <Button variant="destructive" onClick={handleConfirmNewGame}>
-              New Game
+            <Button onClick={handleConfirmMainMenu}>
+              Save &amp; Exit
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -50,6 +50,20 @@ export interface ClubCulture {
   lastUpdatedRound: number
 }
 
+export type ClubIdentityType =
+  | 'youth-development'
+  | 'star-chasing'
+  | 'defensive-powerhouse'
+
+export interface ClubIdentity {
+  current: ClubIdentityType
+  previous: ClubIdentityType | null
+  scores: Record<ClubIdentityType, number> // 0-100
+  momentum: number // -20 to +20
+  fanExpectation: 'patience' | 'progress' | 'finals' | 'contend'
+  lastEvolvedYear: number
+}
+
 export type TacticalIdentity =
   | 'fast-movement'
   | 'contested'
@@ -89,6 +103,7 @@ export interface Club {
   tacticalIdentity: TacticalIdentity
   leadership: ClubLeadership
   culture?: ClubCulture
+  identity?: ClubIdentity
   fanSatisfaction?: number
   lastSeasonLadderPosition?: number  // 1-18, undefined for first season
   /** AI personality for non-player clubs */

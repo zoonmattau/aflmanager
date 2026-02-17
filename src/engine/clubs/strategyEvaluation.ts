@@ -9,15 +9,17 @@ import {
   evaluateBoardSatisfaction,
   applyFanSatisfactionToJobSecurity,
 } from '@/engine/clubs/clubManagement'
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+import {
+  evolveClubIdentity,
+  getClubIdentity,
+  getClubIdentityLabel,
+  getFanExpectationLabel,
+} from '@/engine/clubs/identity'
 
 interface RosterProfile {
-  youthRatio: number   // aged < 24
-  primeRatio: number   // aged 24-29
-  veteranRatio: number // aged 30+
+  youthRatio: number
+  primeRatio: number
+  veteranRatio: number
   avgOverall: number
 }
 
@@ -25,9 +27,7 @@ function computeRosterProfile(
   players: Record<string, Player>,
   clubId: string,
 ): RosterProfile {
-  const roster = Object.values(players).filter(
-    (p) => p.clubId === clubId && !p.injury?.permanent,
-  )
+  const roster = Object.values(players).filter((p) => p.clubId === clubId)
   if (roster.length === 0) {
     return { youthRatio: 0, primeRatio: 0, veteranRatio: 0, avgOverall: 0 }
   }
@@ -36,7 +36,6 @@ function computeRosterProfile(
   let prime = 0
   let veteran = 0
   let totalOverall = 0
-
   for (const p of roster) {
     if (p.age < 24) youth++
     else if (p.age <= 29) prime++
@@ -57,17 +56,11 @@ function determineCompetitiveWindow(
   ladderPosition: number,
   profile: RosterProfile,
 ): 'win-now' | 'balanced' | 'rebuilding' {
-  // Top 4 with a prime-aged core → win-now
   if (ladderPosition <= 4 && profile.primeRatio >= 0.30) return 'win-now'
-  // Top 8 with prime core and decent quality → win-now
   if (ladderPosition <= 8 && profile.primeRatio >= 0.30 && profile.avgOverall >= 50) return 'win-now'
-  // Bottom 4 → rebuilding
   if (ladderPosition >= 15) return 'rebuilding'
-  // Bottom half with very young list → rebuilding
   if (ladderPosition >= 11 && profile.youthRatio >= 0.40) return 'rebuilding'
-  // Bottom half with low quality → rebuilding
   if (ladderPosition >= 11 && profile.avgOverall < 48) return 'rebuilding'
-  // Everything else → balanced
   return 'balanced'
 }
 
@@ -75,13 +68,8 @@ function alignDraftPhilosophy(
   window: 'win-now' | 'balanced' | 'rebuilding',
   rng: SeededRNG,
 ): 'best-available' | 'positional-need' | 'high-upside' {
-  if (window === 'rebuilding') {
-    return rng.chance(0.70) ? 'high-upside' : 'best-available'
-  }
-  if (window === 'win-now') {
-    return rng.chance(0.50) ? 'best-available' : 'positional-need'
-  }
-  // balanced
+  if (window === 'rebuilding') return rng.chance(0.70) ? 'high-upside' : 'best-available'
+  if (window === 'win-now') return rng.chance(0.50) ? 'best-available' : 'positional-need'
   return rng.chance(0.50) ? 'positional-need' : 'best-available'
 }
 
@@ -90,15 +78,9 @@ function alignTradeActivity(
   profile: RosterProfile,
 ): 'active' | 'moderate' | 'passive' {
   if (window === 'win-now') return 'active'
-  if (window === 'rebuilding') {
-    return profile.veteranRatio > 0.20 ? 'active' : 'passive'
-  }
+  if (window === 'rebuilding') return profile.veteranRatio > 0.20 ? 'active' : 'passive'
   return 'moderate'
 }
-
-// ---------------------------------------------------------------------------
-// Main export
-// ---------------------------------------------------------------------------
 
 export function evaluateAndUpdateAIStrategies(
   clubs: Record<string, Club>,
@@ -108,9 +90,7 @@ export function evaluateAndUpdateAIStrategies(
   playerClubId: string,
   currentYear: number,
 ): { updatedClubs: Record<string, Club>; news: NewsItem[] } {
-  // Build a position lookup from the sorted ladder
   const positionByClub = new Map<string, number>()
-  // Ladder is already sorted by points desc; index+1 = position
   for (let i = 0; i < ladder.length; i++) {
     positionByClub.set(ladder[i].clubId, i + 1)
   }
@@ -120,14 +100,21 @@ export function evaluateAndUpdateAIStrategies(
   const dateStr = `${currentYear}-10-01`
 
   for (const club of Object.values(clubs)) {
-    const ladderPosition = positionByClub.get(club.id) ?? 9 // fallback mid-table
+    const ladderPosition = positionByClub.get(club.id) ?? 9
     const isFinalist = ladderPosition <= 8
+    const identityUpdate = evolveClubIdentity({
+      club,
+      players,
+      ladderPosition,
+      rng,
+      currentYear,
+    })
 
     if (club.id === playerClubId) {
-      // --- User's club: track position + board feedback only ---
       const updated: Club = {
         ...club,
         lastSeasonLadderPosition: ladderPosition,
+        identity: identityUpdate.identity,
       }
 
       const expectation = generateBoardExpectation(club, ladderPosition, rng)
@@ -141,17 +128,32 @@ export function evaluateAndUpdateAIStrategies(
         id: crypto.randomUUID(),
         date: dateStr,
         headline: `${club.name} board reviews ${currentYear} season`,
-        body: `${satisfaction.message} Your job security is at ${finalJobSecurity}%.`,
+        body:
+          `${satisfaction.message} Your job security is at ${finalJobSecurity}%. ` +
+          `Fan expectation heading into next year: ${getFanExpectationLabel(identityUpdate.identity.fanExpectation)}.`,
         category: 'general',
         clubIds: [club.id],
         playerIds: [],
       })
 
+      if (identityUpdate.changed) {
+        news.push({
+          id: crypto.randomUUID(),
+          date: dateStr,
+          headline: `${club.name} identity shift: ${getClubIdentityLabel(identityUpdate.identity.current)}`,
+          body:
+            `${club.fullName} have shifted from ${getClubIdentityLabel(identityUpdate.identity.previous ?? identityUpdate.identity.current)} ` +
+            `to ${getClubIdentityLabel(identityUpdate.identity.current)} based on list profile and season trajectory.`,
+          category: 'general',
+          clubIds: [club.id],
+          playerIds: [],
+        })
+      }
+
       updatedClubs[club.id] = updated
       continue
     }
 
-    // --- AI club: evaluate and potentially update strategy ---
     const profile = computeRosterProfile(players, club.id)
     const newWindow = determineCompetitiveWindow(ladderPosition, profile)
     const oldWindow = club.aiPersonality.competitiveWindow
@@ -159,15 +161,43 @@ export function evaluateAndUpdateAIStrategies(
 
     const newDraftPhilosophy = alignDraftPhilosophy(newWindow, rng)
     const newTradeActivity = alignTradeActivity(newWindow, profile)
+    const currentIdentity = identityUpdate.identity.current
+
+    const adjustedDraftPhilosophy =
+      currentIdentity === 'youth-development'
+        ? (rng.chance(0.65) ? 'high-upside' : 'positional-need')
+        : currentIdentity === 'star-chasing'
+          ? (rng.chance(0.60) ? 'best-available' : 'positional-need')
+          : 'positional-need'
+    const adjustedTradeActivity =
+      currentIdentity === 'star-chasing'
+        ? 'active'
+        : currentIdentity === 'youth-development'
+          ? (profile.veteranRatio > 0.18 ? 'active' : 'moderate')
+          : newTradeActivity
+    const adjustedRiskTolerance =
+      currentIdentity === 'defensive-powerhouse'
+        ? (rng.chance(0.70) ? 'conservative' : 'moderate')
+        : currentIdentity === 'star-chasing'
+          ? (rng.chance(0.55) ? 'aggressive' : club.aiPersonality.riskTolerance)
+          : club.aiPersonality.riskTolerance
+    const identityAwareWindow =
+      currentIdentity === 'youth-development' && newWindow === 'win-now'
+        ? 'balanced'
+        : currentIdentity === 'star-chasing' && newWindow === 'rebuilding'
+          ? 'balanced'
+          : newWindow
 
     const updated: Club = {
       ...club,
       lastSeasonLadderPosition: ladderPosition,
+      identity: identityUpdate.identity,
       aiPersonality: {
         ...club.aiPersonality,
-        competitiveWindow: newWindow,
-        draftPhilosophy: newDraftPhilosophy,
-        tradeActivity: newTradeActivity,
+        competitiveWindow: identityAwareWindow,
+        draftPhilosophy: adjustedDraftPhilosophy ?? newDraftPhilosophy,
+        tradeActivity: adjustedTradeActivity,
+        riskTolerance: adjustedRiskTolerance,
       },
     }
 
@@ -180,8 +210,24 @@ export function evaluateAndUpdateAIStrategies(
       news.push({
         id: crypto.randomUUID(),
         date: dateStr,
-        headline: `${club.name} shift to ${newWindow} strategy`,
-        body: `After finishing ${ladderPosition}${ordinalSuffix(ladderPosition)} on the ladder, ${club.fullName} have decided to ${labels[newWindow]}. Previously they were in a '${oldWindow}' phase.`,
+        headline: `${club.name} shift to ${identityAwareWindow} strategy`,
+        body: `After finishing ${ladderPosition}${ordinalSuffix(ladderPosition)} on the ladder, ${club.fullName} have decided to ${labels[identityAwareWindow]}. Previously they were in a '${oldWindow}' phase.`,
+        category: 'general',
+        clubIds: [club.id],
+        playerIds: [],
+      })
+    }
+
+    if (identityUpdate.changed) {
+      const previousIdentity = identityUpdate.identity.previous ?? getClubIdentity(club, currentYear).current
+      news.push({
+        id: crypto.randomUUID(),
+        date: dateStr,
+        headline: `${club.name} identity shift: ${getClubIdentityLabel(identityUpdate.identity.current)}`,
+        body:
+          `${club.fullName} have moved from ${getClubIdentityLabel(previousIdentity)} to ` +
+          `${getClubIdentityLabel(identityUpdate.identity.current)}. Fan expectation now: ` +
+          `${getFanExpectationLabel(identityUpdate.identity.fanExpectation)}.`,
         category: 'general',
         clubIds: [club.id],
         playerIds: [],

@@ -50,6 +50,41 @@ export interface TrainingResult {
   injuryRisk: boolean
 }
 
+// ── Enhanced Week Planner Types ─────────────────────────────────────────────
+
+export interface TrainingGroup {
+  id: string
+  focus: TrainingFocus
+  intensity: TrainingIntensity
+  assignedCoachId: string | null
+  playerIds: string[]    // empty on remainder group
+  isRemainder: boolean   // true = catches all unassigned players
+}
+
+export interface TrainingSlot {
+  groups: TrainingGroup[]
+}
+
+export interface TrainingWeekPlan {
+  slots: Record<string, { morning: TrainingSlot; afternoon: TrainingSlot }>
+  matchDate: string | null   // YYYY-MM-DD or null for bye
+}
+
+export type FatigueTrend = 'rising' | 'falling' | 'stable'
+
+export interface PlayerFitnessBreakdown {
+  playerId: string
+  fitness: number
+  fatigue: number
+  form: number
+  endurance: number
+  recoveryAttr: number
+  injuryRisk: 'low' | 'moderate' | 'high'
+  fatigueTrend: FatigueTrend
+  weeklySessionCount: number
+  weeklyIntenseCount: number
+}
+
 // ── Attribute Mappings by Focus ─────────────────────────────────────────────
 
 export const FOCUS_ATTRIBUTES: Record<TrainingFocus, (keyof PlayerAttributes)[]> = {
@@ -529,4 +564,187 @@ export function calculatePreseasonTraining(
       player.fatigue = clamp(player.fatigue - fatigueReduction, 0, 100)
     }
   }
+}
+
+// ── Enhanced Week Planner Functions ─────────────────────────────────────────
+
+let groupCounter = 0
+
+/** Create a single remainder group with the given focus and intensity. */
+export function createDefaultGroup(
+  focus: TrainingFocus,
+  intensity: TrainingIntensity,
+): TrainingGroup {
+  return {
+    id: `grp-${++groupCounter}-${Date.now()}`,
+    focus,
+    intensity,
+    assignedCoachId: null,
+    playerIds: [],
+    isRemainder: true,
+  }
+}
+
+/** Match day offsets from the round base (Saturday variants default to 5). */
+const MATCH_DAY_OFFSETS: Record<string, number> = {
+  Thursday: 3,
+  Friday: 4,
+  'Saturday-Early': 5,
+  'Saturday-Twilight': 5,
+  'Saturday-Night': 5,
+  'Sunday-Early': 6,
+  'Sunday-Twilight': 6,
+}
+
+/**
+ * Generate a sensible default TrainingWeekPlan for a Mon-Sun week.
+ * @param weekDates - 7 YYYY-MM-DD strings (Mon through Sun)
+ * @param matchDate - YYYY-MM-DD of the match day, or null for bye week
+ */
+export function getDefaultTrainingWeekPlan(
+  weekDates: string[],
+  matchDate: string | null,
+): TrainingWeekPlan {
+  const focusRotation: TrainingFocus[] = [
+    'contested', 'kicking', 'defensive', 'offensive', 'game-sense', 'physical', 'mental',
+  ]
+  let rotIndex = 0
+
+  const slots: TrainingWeekPlan['slots'] = {}
+
+  for (const date of weekDates) {
+    const isMatchDay = matchDate !== null && date === matchDate
+    const dayBefore = matchDate !== null && weekDates.indexOf(date) >= 0 &&
+      (() => {
+        const d1 = new Date(date + 'T00:00:00')
+        const dm = new Date(matchDate + 'T00:00:00')
+        return dm.getTime() - d1.getTime() === 86400000
+      })()
+    const dayAfter = matchDate !== null &&
+      (() => {
+        const d1 = new Date(date + 'T00:00:00')
+        const dm = new Date(matchDate + 'T00:00:00')
+        return d1.getTime() - dm.getTime() === 86400000
+      })()
+
+    if (isMatchDay) {
+      // Match day: empty slots
+      slots[date] = {
+        morning: { groups: [] },
+        afternoon: { groups: [] },
+      }
+    } else if (dayBefore) {
+      // Game eve: light match-fitness AM, rest PM
+      slots[date] = {
+        morning: { groups: [createDefaultGroup('match-fitness', 'light')] },
+        afternoon: { groups: [] },
+      }
+    } else if (dayAfter) {
+      // Recovery day: light recovery AM, rest PM
+      slots[date] = {
+        morning: { groups: [createDefaultGroup('recovery', 'light')] },
+        afternoon: { groups: [] },
+      }
+    } else {
+      // Normal training day
+      const amFocus = focusRotation[rotIndex % focusRotation.length]
+      rotIndex++
+      slots[date] = {
+        morning: { groups: [createDefaultGroup(amFocus, 'moderate')] },
+        afternoon: { groups: [createDefaultGroup('recovery', 'light')] },
+      }
+    }
+  }
+
+  return { slots, matchDate }
+}
+
+/**
+ * Flatten a TrainingWeekPlan into TrainingSession[] for runTrainingSessions().
+ * Each group becomes one session. Remainder groups get assignedPlayerIds: []
+ * (engine treats as whole squad).
+ */
+export function weekPlanToSessions(plan: TrainingWeekPlan): TrainingSession[] {
+  const sessions: TrainingSession[] = []
+  let counter = 0
+
+  for (const [_date, daySlots] of Object.entries(plan.slots)) {
+    for (const slotKey of ['morning', 'afternoon'] as const) {
+      const slot = daySlots[slotKey]
+      for (const group of slot.groups) {
+        sessions.push({
+          id: `wp-${counter++}`,
+          focus: group.focus,
+          intensity: group.intensity,
+          assignedCoachId: group.assignedCoachId,
+          assignedPlayerIds: group.isRemainder ? [] : group.playerIds,
+        })
+      }
+    }
+  }
+
+  return sessions
+}
+
+/** Compare fatigue vs fitness ratio and recovery attribute to determine trend. */
+export function computeFatigueTrend(player: Player): FatigueTrend {
+  const fatigueRatio = player.fatigue / Math.max(player.fitness, 1)
+  const recoveryFactor = player.attributes.recovery / 100
+
+  // High fatigue relative to fitness and low recovery = rising
+  if (fatigueRatio > 0.7 && recoveryFactor < 0.5) return 'rising'
+  if (fatigueRatio > 0.5) return 'stable'
+  return 'falling'
+}
+
+/** Count how many sessions (total and intense) a player has in a given plan. */
+export function countPlayerSessions(
+  plan: TrainingWeekPlan,
+  playerId: string,
+): { total: number; intense: number } {
+  let total = 0
+  let intense = 0
+
+  for (const daySlots of Object.values(plan.slots)) {
+    for (const slotKey of ['morning', 'afternoon'] as const) {
+      const slot = daySlots[slotKey]
+      for (const group of slot.groups) {
+        const participates = group.isRemainder || group.playerIds.includes(playerId)
+        if (participates) {
+          total++
+          if (group.intensity === 'intense') intense++
+        }
+      }
+    }
+  }
+
+  return { total, intense }
+}
+
+/** Build enhanced fitness breakdown data for each player. */
+export function buildFitnessBreakdown(
+  players: Player[],
+  plan: TrainingWeekPlan | null,
+): PlayerFitnessBreakdown[] {
+  return players.map((player) => {
+    const sessionCounts = plan ? countPlayerSessions(plan, player.id) : { total: 0, intense: 0 }
+    const injuryProneness = player.hiddenAttributes.injuryProneness
+
+    let injuryRisk: 'low' | 'moderate' | 'high' = 'low'
+    if (injuryProneness > 66) injuryRisk = 'high'
+    else if (injuryProneness > 33) injuryRisk = 'moderate'
+
+    return {
+      playerId: player.id,
+      fitness: player.fitness,
+      fatigue: player.fatigue,
+      form: player.form,
+      endurance: player.attributes.endurance,
+      recoveryAttr: player.attributes.recovery,
+      injuryRisk,
+      fatigueTrend: computeFatigueTrend(player),
+      weeklySessionCount: sessionCounts.total,
+      weeklyIntenseCount: sessionCounts.intense,
+    }
+  })
 }

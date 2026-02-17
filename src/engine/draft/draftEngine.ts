@@ -12,6 +12,7 @@ import {
 } from '@/engine/player/roles'
 import { deriveAgentArchetype } from '@/engine/player/agentPersonality'
 import { getTacticalDraftPreferences } from '@/engine/core/tacticalIdentity'
+import { getClubIdentity, getIdentityDraftModifiers } from '@/engine/clubs/identity'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -201,6 +202,35 @@ function identityArchetypeBonus(club: Club, prospect: DraftProspect): number {
   }
   if (style === 'balanced' && prospect.role === 'utility') return 2
   return 0
+}
+
+function clubIdentityModelBonus(
+  club: Club,
+  prospect: DraftProspect,
+  valuation: { overall: number; potential: number; confidence: number },
+  ageProfile: { avgAge: number; under23Ratio: number; over29Ratio: number },
+): number {
+  const identity = getClubIdentity(club).current
+  const modifiers = getIdentityDraftModifiers(identity)
+  let score = 0
+
+  if (prospect.age <= 18) score += modifiers.youthPreference
+  if (prospect.age >= 19) score += modifiers.readyMadePreference * 0.55
+  score += Math.max(0, valuation.potential - valuation.overall) * (modifiers.upsideBias / 20)
+  if (prospect.role === 'shutdown' || prospect.role === 'ground-pressure' || prospect.archetype.includes('defender')) {
+    score += modifiers.defensiveRoleBias
+  }
+
+  if (identity === 'star-chasing') {
+    if (valuation.overall >= 63) score += 2.8
+    if (ageProfile.avgAge > 27.2) score += 1.2
+  } else if (identity === 'youth-development') {
+    if (ageProfile.under23Ratio < 0.36 && prospect.age <= 18) score += 2.2
+  } else if (identity === 'defensive-powerhouse') {
+    if (prospect.role === 'shutdown' || prospect.archetype === 'intercept-defender') score += 2.4
+  }
+
+  return score
 }
 
 function getDraftPickLedgerOwner(
@@ -606,6 +636,7 @@ export function aiSelectProspect(
 
     // Club identity/style alignment (gameplan + archetype/role).
     score += identityArchetypeBonus(club, prospect)
+    score += clubIdentityModelBonus(club, prospect, valuation, ageProfile)
     score += getRoleNeedBonus(mapDraftProspectToPreferredRole(prospect), roleNeeds)
 
     // Scouting confidence weighting.

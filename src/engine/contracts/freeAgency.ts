@@ -5,6 +5,7 @@ import type { ListConstraints } from '@/engine/rules/listRules'
 import { calculatePlayerValue } from '@/engine/contracts/negotiation'
 import { MINIMUM_SALARY, SENIOR_LIST_SIZE } from '@/engine/core/constants'
 import { validateContractOffer } from '@/engine/salary/salaryCapEngine'
+import { getClubIdentity, getIdentityFreeAgencyModifiers } from '@/engine/clubs/identity'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -245,11 +246,22 @@ export function generateFreeAgentInterest(
         break
     }
 
+    // --- Club identity profile ---
+    const identity = getClubIdentity(club).current
+    const idMods = getIdentityFreeAgencyModifiers(identity)
+    let identityScore = idMods.starAggression
+    if (player.age <= 24) identityScore += idMods.youngTargetBias
+    if (player.age >= 28) identityScore += idMods.veteranTargetBias
+    if (identity === 'defensive-powerhouse') {
+      const isDefender = ['BP', 'FB', 'HBF', 'CHB'].includes(player.position.primary)
+      if (isDefender) identityScore += 0.08
+    }
+
     // --- Combine into a probability ---
     const baseProbability = 0.3
     const totalProbability = Math.min(
       0.95,
-      Math.max(0.05, baseProbability + windowScore + needScore + riskScore),
+      Math.max(0.05, baseProbability + windowScore + needScore + riskScore + identityScore),
     )
 
     if (rng.chance(totalProbability)) {

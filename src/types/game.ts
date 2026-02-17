@@ -7,6 +7,7 @@ import type { DraftState, Scout } from './draft'
 import type { LeagueConfig } from './expansion'
 import type { GameHistory } from './history'
 import type { GameCalendar, WeekSchedule } from './calendar'
+import type { TrainingWeekPlan } from '@/engine/training/trainingEngine'
 import type { SeasonAwards, BrownlowRound } from './awards'
 import type { StateLeague, StateLeagueId } from './stateLeague'
 import type { OffseasonState } from '@/engine/season/offseasonFlow'
@@ -144,6 +145,7 @@ export interface RealismSettings {
   venueScheduling: boolean        // Shared venue allocation, sold games, dynamic home advantage
   coachingCarousel: boolean       // Poor-performing AI coaches get sacked
   boardPressure: boolean          // Board expectations affect job security
+  boardPolitics: boolean          // Boardroom factions can amplify or soften pressure
   aflHouseInterference: boolean   // AFL mandates priority picks & scheduling for struggling clubs
   listSizeEnforcement: boolean    // Enforce senior (38) and rookie (6) list limits
   mediaLeaks: boolean              // Player managers leak negotiations to media
@@ -151,6 +153,64 @@ export interface RealismSettings {
 
   // Awards
   brownlowNight: boolean          // Votes hidden until Brownlow Night ceremony (Monday before GF)
+}
+
+export interface ManagerCareer {
+  name: string
+  employmentStatus: 'employed' | 'unemployed'
+  currentClubId: string | null
+  reputation: number
+  jobSecurity: number
+  seasonExpectation: string
+  unemployedSinceYear: number | null
+}
+
+export interface CoachingJobOpening {
+  id: string
+  clubId: string
+  title: string
+  reason: string
+  postedDate: string
+  urgency: 'low' | 'medium' | 'high'
+  status: 'open' | 'filled' | 'withdrawn'
+}
+
+export interface ReservesPlayerSeasonStats {
+  gamesPlayed: number
+  aflFantasyPoints: number
+  superCoachPoints: number
+  disposals: number
+  goals: number
+  marks: number
+  tackles: number
+  hitouts: number
+}
+
+export interface ReservesPlayerPerformance {
+  playerId: string
+  clubId: string
+  round: number
+  rating: number
+  aflFantasyPoints: number
+  superCoachPoints: number
+  disposals: number
+  goals: number
+  marks: number
+  tackles: number
+  hitouts: number
+}
+
+export interface ReservesSystemState {
+  seasonStatsByPlayer: Record<string, ReservesPlayerSeasonStats>
+  lastRoundPerformances: ReservesPlayerPerformance[]
+  promotionWatchlist: string[]
+  delegationEnabled: boolean
+  managedLineupPlayerIds: string[]
+  tactics: {
+    tempo: 'slow' | 'balanced' | 'fast'
+    aggression: 'low' | 'balanced' | 'high'
+    youthFocus: boolean
+  }
 }
 
 export interface GameSettings {
@@ -230,6 +290,9 @@ export interface GameState {
   // Weekly training schedule (user-managed via dashboard calendar)
   weekSchedule: WeekSchedule
 
+  // Enhanced training week plan (from Training Page week planner)
+  trainingWeekPlan: TrainingWeekPlan | null
+
   // Awards
   awards: SeasonAwards[]
   brownlowTracker: BrownlowRound[]
@@ -256,6 +319,13 @@ export interface GameState {
 
   // Weekly tactical adjustments (opponent-specific, round-scoped)
   weeklyGameplans: Record<string, WeeklyGameplan | undefined>
+
+  // Manager career
+  manager: ManagerCareer
+  coachingJobMarket: CoachingJobOpening[]
+
+  // Reserves / VFL tracking
+  reserves: ReservesSystemState
 }
 
 export interface WeeklyGameplan {

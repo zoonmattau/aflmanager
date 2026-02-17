@@ -1,5 +1,6 @@
 import type { Club, ClubGameplan } from '@/types/club'
 import { SeededRNG } from '@/engine/core/rng'
+import { getClubIdentity } from '@/engine/clubs/identity'
 
 export function applyGameplanAdjustment(
   base: ClubGameplan,
@@ -39,6 +40,7 @@ export function buildCounterAdjustment(
   const tweakChance = Math.max(0.4, Math.min(0.95, baseTweakChance * tacticalMultiplier * disciplineModifier))
 
   const update: Partial<ClubGameplan> = {}
+  const clubIdentity = getClubIdentity(club).current
 
   if (opponentPlan.offensiveStyle === 'attacking') {
     update.offensiveStyle = maybe(rng, tweakChance, 'defensive')
@@ -84,6 +86,19 @@ export function buildCounterAdjustment(
     if (aggressive) update.aggression = maybe(rng, 0.74, 'high')
     else if (conservative) update.aggression = maybe(rng, 0.62, 'low')
     else update.aggression = maybe(rng, 0.58, 'medium')
+  }
+
+  if (clubIdentity === 'defensive-powerhouse') {
+    update.offensiveStyle = update.offensiveStyle ?? maybe(rng, 0.66, 'defensive')
+    update.defensiveLine = update.defensiveLine ?? maybe(rng, 0.72, 'press')
+    update.aggression = update.aggression ?? maybe(rng, 0.62, 'low')
+  } else if (clubIdentity === 'star-chasing') {
+    update.offensiveStyle = update.offensiveStyle ?? maybe(rng, 0.62, 'attacking')
+    update.tempo = update.tempo ?? maybe(rng, 0.56, 'fast')
+    update.aggression = update.aggression ?? maybe(rng, 0.64, 'high')
+  } else {
+    update.tempo = update.tempo ?? maybe(rng, 0.5, 'medium')
+    update.aggression = update.aggression ?? maybe(rng, 0.55, 'medium')
   }
 
   return update

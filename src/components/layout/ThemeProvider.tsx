@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, type ReactNode } from 'react'
+import { useAppStore } from '@/stores/appStore'
 
 type Theme = 'dark' | 'light' | 'system'
 
@@ -15,10 +16,12 @@ const ThemeContext = createContext<ThemeContextType>({
 })
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<Theme>(() => {
-    const stored = localStorage.getItem('afl-theme') as Theme | null
-    return stored ?? 'dark'
-  })
+  const theme = useAppStore((s) => s.globalSettings.theme)
+  const updateGlobalSettings = useAppStore((s) => s.updateGlobalSettings)
+
+  const setTheme = (newTheme: Theme) => {
+    updateGlobalSettings({ theme: newTheme })
+  }
 
   const resolvedTheme = theme === 'system'
     ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
@@ -28,8 +31,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const root = document.documentElement
     root.classList.remove('light', 'dark')
     root.classList.add(resolvedTheme)
-    localStorage.setItem('afl-theme', theme)
-  }, [theme, resolvedTheme])
+  }, [resolvedTheme])
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme, resolvedTheme }}>

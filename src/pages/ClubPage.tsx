@@ -42,6 +42,7 @@ import {
   Trophy,
 } from 'lucide-react'
 import { getDynastyStats } from '@/engine/history/historyEngine'
+import { getClubIdentity, getClubIdentityLabel, getFanExpectationLabel } from '@/engine/clubs/identity'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -240,6 +241,7 @@ export function ClubPage() {
   const settings = useGameStore((s) => s.settings)
   const ladder = useGameStore((s) => s.ladder)
   const history = useGameStore((s) => s.history)
+  const manager = useGameStore((s) => s.manager)
 
   const clubId = routeClubId ?? playerClubId
   const isOwnClub = clubId === playerClubId
@@ -338,34 +340,49 @@ export function ClubPage() {
   }, [ladder, clubId])
 
   const boardExpectation = useMemo(() => {
+    if (isOwnClub && manager.seasonExpectation) return manager.seasonExpectation
+    const identity = getClubIdentity(club, 2026)
+    const expectationLabel = getFanExpectationLabel(identity.fanExpectation)
+    if (expectationLabel === 'Premiership Contention') return 'Contend for Premiership'
+    if (expectationLabel === 'Finals Qualification') return 'Finals appearance'
+    if (expectationLabel === 'Visible Year-on-Year Progress') return 'Improvement'
+    if (expectationLabel === 'Patience During Build') return 'Development'
     if (ladderPosition <= 4) return 'Finals appearance'
     if (ladderPosition <= 8) return 'Improvement'
     if (ladderPosition <= 14) return 'Development'
     return 'Patience'
-  }, [ladderPosition])
+  }, [club, isOwnClub, ladderPosition, manager.seasonExpectation])
 
   const jobSecurity = useMemo(() => {
+    if (isOwnClub) return manager.jobSecurity
     // Job security based on ladder position
     // Top 4 = 85-100, 5-8 = 60-80, 9-14 = 35-55, 15-18 = 15-30
     if (ladderPosition <= 4) return 85 + (4 - ladderPosition) * 5
     if (ladderPosition <= 8) return 80 - (ladderPosition - 5) * 7
     if (ladderPosition <= 14) return 55 - (ladderPosition - 9) * 4
     return 30 - (ladderPosition - 15) * 5
-  }, [ladderPosition])
+  }, [isOwnClub, ladderPosition, manager.jobSecurity])
 
   const boardMessage = useMemo(() => {
+    if (isOwnClub && manager.employmentStatus === 'unemployed') {
+      return 'You are currently unemployed and can apply for vacant coaching jobs.'
+    }
+    const identity = getClubIdentity(club, 2026)
+    const identityLabel = getClubIdentityLabel(identity.current)
     if (ladderPosition <= 2)
-      return 'The board is delighted with the team\'s performance. Keep pushing for the Premiership.'
+      return `The board is delighted with the team's performance. Keep pushing while maintaining your ${identityLabel} identity.`
     if (ladderPosition <= 4)
-      return 'Strong season so far. The board expects a deep finals run.'
+      return `Strong season so far. The board expects a deep finals run consistent with your ${identityLabel} profile.`
     if (ladderPosition <= 8)
-      return 'Solid progress. The board wants to see continued improvement and a finals berth.'
+      return `Solid progress. The board wants continued improvement and a finals berth from this ${identityLabel} group.`
     if (ladderPosition <= 12)
-      return 'Results have been mixed. The board expects to see a clear plan for improvement.'
+      return `Results have been mixed. The board expects a clearer identity-led plan for improvement.`
     if (ladderPosition <= 14)
-      return 'The board is growing impatient. They want to see signs of development in the playing group.'
-    return 'The board is deeply concerned about the direction of the club. Improvement is urgently needed.'
-  }, [ladderPosition])
+      return `The board is growing impatient. They want clearer signs the ${identityLabel} pathway is working.`
+    return `The board is deeply concerned about the direction of the club. Improvement is urgently needed.`
+  }, [club, isOwnClub, ladderPosition, manager.employmentStatus])
+
+  const identityInfo = useMemo(() => getClubIdentity(club, 2026), [club])
 
   // -------------------------------------------------------------------------
   // Handlers
@@ -697,6 +714,12 @@ export function ClubPage() {
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">Season Objective</p>
                   <p className="text-xl font-bold">{boardExpectation}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Identity: {getClubIdentityLabel(identityInfo.current)} ({Math.round(identityInfo.scores[identityInfo.current])}% confidence)
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Fan expectation: {getFanExpectationLabel(identityInfo.fanExpectation)}
+                  </p>
                 </div>
                 <div className="text-right space-y-1">
                   <p className="text-sm text-muted-foreground">Current Position</p>

@@ -10,6 +10,7 @@ import { validateContractOffer } from '@/engine/salary/salaryCapEngine'
 import { resolveListConstraints, canAddToSeniorList } from '@/engine/rules/listRules'
 import { getArchetypeFAWeights } from '@/engine/player/agentPersonality'
 import { getClubState } from '@/engine/venues/venueEngine'
+import { getClubIdentity, getIdentityFreeAgencyModifiers } from '@/engine/clubs/identity'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -301,10 +302,24 @@ export function generateAIBids(
       // Loyalty bonus: previous club bids more often
       if (club.id === listing.previousClubId) interest += 0.2
 
+      // Identity-driven targeting
+      const identity = getClubIdentity(club).current
+      const idMods = getIdentityFreeAgencyModifiers(identity)
+      interest += idMods.starAggression
+      if (listing.age <= 24) interest += idMods.youngTargetBias
+      if (listing.age >= 28) interest += idMods.veteranTargetBias
+      if (identity === 'defensive-powerhouse' && ['BP', 'FB', 'HBF', 'CHB'].includes(listing.position)) {
+        interest += 0.09
+      }
+
       if (!rng.chance(Math.max(0.05, Math.min(0.9, interest)))) continue
 
       // Generate bid amount
-      const bidMultiplier = 0.85 + rng.next() * 0.35
+      const starBonus =
+        identity === 'star-chasing' && listing.overall >= 65 ? 0.08
+          : identity === 'youth-development' && listing.age <= 23 ? 0.05
+            : 0
+      const bidMultiplier = 0.85 + rng.next() * 0.35 + starBonus
       const bidAav = Math.max(MINIMUM_SALARY, Math.round(listing.demandedAav * bidMultiplier))
 
       // Verify bid fits cap

@@ -14,6 +14,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Slider } from '@/components/ui/slider'
 import { useGameStore } from '@/stores/gameStore'
+import { useAppStore } from '@/stores/appStore'
 import { cn } from '@/lib/utils'
 import {
   ChevronRight,
@@ -71,10 +72,13 @@ export function NewGamePage() {
   const [managerName, setManagerName] = useState('')
   const [saveName, setSaveName] = useState('My Career')
   const [selectedClub, setSelectedClub] = useState<string | null>(null)
+  const [startUnemployed, setStartUnemployed] = useState(false)
   const [clubSearch, setClubSearch] = useState('')
   const [settings, setSettings] = useState<GameSettings>(createDefaultSettings())
 
   const initializeGame = useGameStore((s) => s.initializeGame)
+  const setScreen = useAppStore((s) => s.setScreen)
+  const saveCurrentGame = useAppStore((s) => s.saveCurrentGame)
   const realClubs = clubsData as ClubData[]
 
   // Game start date override state
@@ -93,6 +97,9 @@ export function NewGamePage() {
         abbreviation: c.abbreviation,
         mascot: c.mascot,
         homeGround: c.homeGround,
+        established: c.established,
+        premierships: c.premierships,
+        tier: c.tier,
         colors: c.colors,
       }))
     }
@@ -123,7 +130,7 @@ export function NewGamePage() {
       case 2:
         return true
       case 3:
-        return selectedClub !== null
+        return selectedClub !== null || startUnemployed
       case 4:
         return true
       case 5:
@@ -141,6 +148,7 @@ export function NewGamePage() {
       if (currentStep === 2 && settings.leagueMode === 'fictional') {
         setFictionalClubs(generateFictionalLeague(settings.teamCount, Date.now()))
         setSelectedClub(null)
+        setStartUnemployed(false)
       }
       setCurrentStep((s) => s + 1)
     }
@@ -152,14 +160,20 @@ export function NewGamePage() {
     }
   }
 
-  const handleStartGame = () => {
-    if (!selectedClub) return
+  const handleStartGame = async () => {
+    if (!selectedClub && !startUnemployed) return
     initializeGame(
-      selectedClub,
+      selectedClub ?? '',
       saveName,
       settings,
       settings.leagueMode === 'fictional' ? fictionalClubs : undefined,
+      managerName.trim(),
+      startUnemployed,
     )
+    // Save the new game to a slot and navigate to game screen
+    const gameState = useGameStore.getState()
+    await saveCurrentGame(gameState)
+    setScreen('game')
   }
 
   const handleResetSettings = () => {
@@ -199,11 +213,25 @@ export function NewGamePage() {
     <div className="flex min-h-screen flex-col bg-gradient-to-b from-zinc-950 via-zinc-900 to-zinc-950">
       {/* Header */}
       <div className="border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-sm">
-        <div className="mx-auto max-w-5xl px-4 py-6 text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
-            AFL Manager
-          </h1>
-          <p className="mt-1 text-sm text-zinc-400">Create a new career</p>
+        <div className="mx-auto max-w-5xl px-4 py-6">
+          <div className="flex items-center justify-between">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-zinc-400 hover:text-white"
+              onClick={() => setScreen('home')}
+            >
+              <ChevronLeft className="mr-1 h-4 w-4" />
+              Back to Menu
+            </Button>
+            <div className="text-center">
+              <h1 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
+                AFL Manager
+              </h1>
+              <p className="mt-1 text-sm text-zinc-400">Create a new career</p>
+            </div>
+            <div className="w-[120px]" /> {/* Spacer for centering */}
+          </div>
         </div>
       </div>
 
@@ -409,8 +437,33 @@ export function NewGamePage() {
               <div className="text-center">
                 <h2 className="text-2xl font-bold text-white">Select Your Club</h2>
                 <p className="mt-1 text-sm text-zinc-400">
-                  Choose the club you want to manage
+                  Choose a club now, or begin unemployed and enter the coaching market
                 </p>
+              </div>
+
+              <div className="mx-auto max-w-2xl">
+                <Card
+                  className={cn(
+                    'cursor-pointer border-2 transition-all duration-200',
+                    startUnemployed
+                      ? 'border-amber-500 bg-amber-500/10 shadow-[0_0_20px_rgba(245,158,11,0.2)]'
+                      : 'border-zinc-800 bg-zinc-900/50 hover:border-zinc-600',
+                  )}
+                  onClick={() => {
+                    setStartUnemployed(true)
+                    setSelectedClub(null)
+                  }}
+                >
+                  <CardContent className="flex items-center justify-between gap-3 p-4">
+                    <div>
+                      <p className="font-semibold text-zinc-100">Start Unemployed</p>
+                      <p className="text-xs text-zinc-400">
+                        Begin without a club and apply for vacant senior coaching roles.
+                      </p>
+                    </div>
+                    {startUnemployed && <CheckCircle2 className="h-5 w-5 text-amber-400" />}
+                  </CardContent>
+                </Card>
               </div>
 
               <div className="mx-auto max-w-sm">
@@ -446,7 +499,10 @@ export function NewGamePage() {
                             }
                           : undefined
                       }
-                      onClick={() => setSelectedClub(club.id)}
+                      onClick={() => {
+                        setSelectedClub(club.id)
+                        setStartUnemployed(false)
+                      }}
                     >
                       <CardContent className="flex items-center gap-4 p-4">
                         <div
@@ -1357,6 +1413,13 @@ export function NewGamePage() {
                       </div>
                       <div className="flex items-center justify-between">
                         <div>
+                          <Label className="text-zinc-200">Board Politics</Label>
+                          <p className="text-xs text-zinc-500">Internal factions can sway sackings and hiring outcomes</p>
+                        </div>
+                        <Switch checked={settings.realism.boardPolitics} onCheckedChange={(val) => updateRealism('boardPolitics', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
                           <Label className="text-zinc-200">AFL House Interference</Label>
                           <p className="text-xs text-zinc-500">AFL mandates priority picks & scheduling for struggling clubs</p>
                         </div>
@@ -1501,10 +1564,11 @@ export function NewGamePage() {
               <SummaryCard title="Manager" onEdit={() => setCurrentStep(1)}>
                 <SummaryRow label="Name" value={managerName.trim() || 'Not set'} />
                 <SummaryRow label="Save Name" value={saveName} />
+                <SummaryRow label="Career Start" value={startUnemployed ? 'Unemployed' : 'At Club'} />
               </SummaryCard>
 
               {/* Club Summary */}
-              {selectedClubData && (
+              {selectedClubData && !startUnemployed && (
                 <Card
                   className="border-2 bg-zinc-900/50"
                   style={{
@@ -1545,6 +1609,11 @@ export function NewGamePage() {
                     </div>
                   </CardContent>
                 </Card>
+              )}
+              {startUnemployed && (
+                <SummaryCard title="Club" onEdit={() => setCurrentStep(3)}>
+                  <SummaryRow label="Status" value="Unemployed - entering coaching market" />
+                </SummaryCard>
               )}
 
               {/* Season & Fixture Summary */}
@@ -1669,7 +1738,7 @@ export function NewGamePage() {
           ) : (
             <Button
               onClick={handleStartGame}
-              disabled={!selectedClub}
+              disabled={!selectedClub && !startUnemployed}
               className="bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-30"
             >
               <Play className="mr-1 h-4 w-4" />
