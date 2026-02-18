@@ -2,12 +2,15 @@
  * BracketGrid — flex container with SVG overlay for bracket connections.
  */
 
-import { useCallback, type RefObject } from 'react'
-import type { BracketDraftState, Connection, DraftMatchNode } from './bracketUtils'
+import { useCallback, type ReactNode, type RefObject } from 'react'
+import type { BracketDraftState, DraftMatchNode } from './bracketUtils'
 import { WeekColumnEditor } from './WeekColumnEditor'
 import { ConnectorLines } from './ConnectorLines'
 import type { PortKey, PortPosition } from './useBracketLayout'
 import type { WiringState } from './useBracketConnections'
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, horizontalListSortingStrategy, useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 interface BracketGridProps {
   draft: BracketDraftState
@@ -33,6 +36,7 @@ interface BracketGridProps {
   onRemoveMatch: (nodeId: string) => void
   onRemoveConnection: (connectionId: string) => void
   onAddMatch: (weekIndex: number) => void
+  onMoveWeek: (fromIndex: number, toIndex: number) => void
   onRemoveWeek: (weekIndex: number) => void
   onUpdateWeekLabel: (weekIndex: number, label: string) => void
 }
@@ -54,9 +58,16 @@ export function BracketGrid({
   onRemoveMatch,
   onRemoveConnection,
   onAddMatch,
+  onMoveWeek,
   onRemoveWeek,
   onUpdateWeekLabel,
 }: BracketGridProps) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+  )
+
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
       if (wiringState.mode !== 'wiring') return
@@ -94,9 +105,23 @@ export function BracketGrid({
     [wiringState.mode, onCancelWiring],
   )
 
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event
+      if (!over || active.id === over.id) return
+
+      const fromIndex = Number(String(active.id).replace('week-', ''))
+      const toIndex = Number(String(over.id).replace('week-', ''))
+      if (!Number.isInteger(fromIndex) || !Number.isInteger(toIndex)) return
+      onMoveWeek(fromIndex, toIndex)
+    },
+    [onMoveWeek],
+  )
+
   const containerEl = containerRef.current
   const containerWidth = containerEl?.scrollWidth ?? 800
   const containerHeight = containerEl?.scrollHeight ?? 400
+  const weekIds = draft.weeks.map((_, wi) => `week-${wi}`)
 
   return (
     <div
@@ -109,30 +134,35 @@ export function BracketGrid({
       tabIndex={0}
     >
       {/* Week columns */}
-      <div className="flex gap-6" data-bracket-grid>
-        {draft.weeks.map((week, wi) => (
-          <WeekColumnEditor
-            key={wi}
-            week={week}
-            weekIndex={wi}
-            totalWeeks={draft.weeks.length}
-            connections={draft.connections}
-            wiringState={wiringState}
-            qualifyingTeams={draft.qualifyingTeams}
-            isValidTarget={isValidTarget}
-            onRegisterPort={onRegisterPort}
-            onOutputClick={onOutputClick}
-            onInputClick={onInputClick}
-            onUpdateMatch={onUpdateMatch}
-            onSetLadderSource={onSetLadderSource}
-            onRemoveMatch={onRemoveMatch}
-            onRemoveConnection={onRemoveConnection}
-            onAddMatch={onAddMatch}
-            onRemoveWeek={onRemoveWeek}
-            onUpdateWeekLabel={onUpdateWeekLabel}
-          />
-        ))}
-      </div>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={weekIds} strategy={horizontalListSortingStrategy}>
+          <div className="flex gap-6" data-bracket-grid>
+            {draft.weeks.map((week, wi) => (
+              <SortableWeekColumn key={`week-${wi}`} id={`week-${wi}`}>
+                <WeekColumnEditor
+                  week={week}
+                  weekIndex={wi}
+                  totalWeeks={draft.weeks.length}
+                  connections={draft.connections}
+                  wiringState={wiringState}
+                  qualifyingTeams={draft.qualifyingTeams}
+                  isValidTarget={isValidTarget}
+                  onRegisterPort={onRegisterPort}
+                  onOutputClick={onOutputClick}
+                  onInputClick={onInputClick}
+                  onUpdateMatch={onUpdateMatch}
+                  onSetLadderSource={onSetLadderSource}
+                  onRemoveMatch={onRemoveMatch}
+                  onRemoveConnection={onRemoveConnection}
+                  onAddMatch={onAddMatch}
+                  onRemoveWeek={onRemoveWeek}
+                  onUpdateWeekLabel={onUpdateWeekLabel}
+                />
+              </SortableWeekColumn>
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
 
       {/* SVG connection lines overlay */}
       <ConnectorLines
@@ -143,6 +173,32 @@ export function BracketGrid({
         containerWidth={containerWidth}
         containerHeight={containerHeight}
       />
+    </div>
+  )
+}
+
+function SortableWeekColumn({
+  id,
+  children,
+}: {
+  id: string
+  children: ReactNode
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={isDragging ? 'opacity-70' : undefined}
+      {...attributes}
+      {...listeners}
+    >
+      {children}
     </div>
   )
 }

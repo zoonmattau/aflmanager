@@ -45,3 +45,22 @@ export interface Season {
   rounds: Round[]
   finalsRounds: Round[]
 }
+
+export interface PowerRankingEntry {
+  clubId: string
+  rank: number
+  previousRank: number | null
+  movement: number         // positive means moved up, negative means moved down
+  score: number            // 0-100 composite score
+  formScore: number        // 0-100 recent results and margins
+  injuryScore: number      // 0-100 availability health
+  fixtureDifficulty: number // 0-100 strength of schedule
+  travelLoad: number       // 0-100 burden (higher = heavier travel)
+}
+
+export interface PowerRankingSnapshot {
+  year: number
+  round: number            // regular season round number, finals use 100+ markers
+  date: string             // in-game date
+  entries: PowerRankingEntry[]
+}

@@ -58,6 +58,12 @@ export function MatchNodeEditor({
   const awayConn = connections.find(
     (c) => c.to.nodeId === match.id && c.to.portType === 'away-in',
   )
+  const winnerTargets = connections.filter(
+    (c) => c.from.nodeId === match.id && c.from.portType === 'winner-out',
+  )
+  const loserTargets = connections.filter(
+    (c) => c.from.nodeId === match.id && c.from.portType === 'loser-out',
+  )
 
   const isWiring = wiringState.mode === 'wiring'
   const isWiringFrom = (portType: PortType) =>
@@ -91,15 +97,18 @@ export function MatchNodeEditor({
     [match.id, homeConn, awayConn, onSetLadderSource, onRemoveConnection],
   )
 
+  const describeTarget = (conn: Connection) =>
+    `${conn.to.nodeId.toUpperCase()} ${conn.to.portType === 'home-in' ? '(H)' : '(A)'}`
+
   return (
     <div
       className={cn(
-        'relative rounded-lg border p-2 transition-colors',
+        'relative rounded-lg border p-2 shadow-sm transition-colors',
         match.finalType === 'GF'
-          ? 'border-amber-500/50 bg-amber-500/10'
+          ? 'border-amber-400/90 bg-amber-500/20 shadow-amber-500/30'
           : match.isElimination
-            ? 'border-red-500/30 bg-red-500/5'
-            : 'border-blue-500/30 bg-blue-500/5',
+            ? 'border-red-400/90 bg-red-500/20 shadow-red-500/30'
+            : 'border-blue-400/90 bg-blue-500/20 shadow-blue-500/30',
       )}
     >
       {/* Header row */}
@@ -194,9 +203,9 @@ export function MatchNodeEditor({
               onInputClick={onInputClick}
             />
             <div className="flex items-center gap-0.5">
-              <span className="text-[8px] text-zinc-500">H:</span>
+              <span className="rounded bg-black/35 px-1 text-[8px] font-semibold text-zinc-100">H</span>
               {homeConn ? (
-                <span className="text-[8px] text-green-400">linked</span>
+                <span className="text-[8px] font-semibold text-green-200">linked</span>
               ) : (
                 <select
                   className="h-4 w-10 rounded border border-zinc-700 bg-zinc-800 px-0.5 text-[8px] text-zinc-400 outline-none"
@@ -204,7 +213,7 @@ export function MatchNodeEditor({
                   onChange={(e) => handleLadderRankChange('home', e.target.value)}
                 >
                   <option value="conn">--</option>
-                  {Array.from({ length: qualifyingTeams }, (_, i) => (
+                  {Array.from({ length: Math.max(qualifyingTeams, 18) }, (_, i) => (
                     <option key={i + 1} value={i + 1}>
                       #{i + 1}
                     </option>
@@ -228,9 +237,9 @@ export function MatchNodeEditor({
               onInputClick={onInputClick}
             />
             <div className="flex items-center gap-0.5">
-              <span className="text-[8px] text-zinc-500">A:</span>
+              <span className="rounded bg-black/35 px-1 text-[8px] font-semibold text-zinc-100">A</span>
               {awayConn ? (
-                <span className="text-[8px] text-green-400">linked</span>
+                <span className="text-[8px] font-semibold text-green-200">linked</span>
               ) : (
                 <select
                   className="h-4 w-10 rounded border border-zinc-700 bg-zinc-800 px-0.5 text-[8px] text-zinc-400 outline-none"
@@ -238,7 +247,7 @@ export function MatchNodeEditor({
                   onChange={(e) => handleLadderRankChange('away', e.target.value)}
                 >
                   <option value="conn">--</option>
-                  {Array.from({ length: qualifyingTeams }, (_, i) => (
+                  {Array.from({ length: Math.max(qualifyingTeams, 18) }, (_, i) => (
                     <option key={i + 1} value={i + 1}>
                       #{i + 1}
                     </option>
@@ -291,6 +300,27 @@ export function MatchNodeEditor({
             />
           </div>
         </div>
+      </div>
+
+      <div className="mt-1.5 space-y-0.5 text-[8px]">
+        <p className="text-zinc-400">
+          Winner:{' '}
+          {winnerTargets.length > 0 ? (
+            <span className="text-blue-300">{winnerTargets.map(describeTarget).join(', ')}</span>
+          ) : (
+            <span className="text-amber-300">No next matchup linked</span>
+          )}
+        </p>
+        <p className="text-zinc-400">
+          Loser:{' '}
+          {loserTargets.length > 0 ? (
+            <span className="text-amber-300">{loserTargets.map(describeTarget).join(', ')}</span>
+          ) : match.isElimination ? (
+            <span className="text-red-300">Eliminated</span>
+          ) : (
+            <span className="text-amber-300">No loser path linked</span>
+          )}
+        </p>
       </div>
     </div>
   )

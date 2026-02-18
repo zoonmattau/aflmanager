@@ -3,6 +3,7 @@ import type { SaveIndex, SaveSlotMeta } from '@/types/save'
 import type { GlobalSettings } from '@/types/globalSettings'
 import type { LeaguePreset } from '@/types/leaguePreset'
 import type { GameState } from '@/types/game'
+import type { CustomLeagueTemplate } from '@/types/customLeague'
 
 // ---------------------------------------------------------------------------
 // IndexedDB keys
@@ -11,6 +12,7 @@ const KEY_SAVE_INDEX = 'afl-save-index'
 const KEY_SAVE_PREFIX = 'afl-save:'
 const KEY_GLOBAL_SETTINGS = 'afl-global-settings'
 const KEY_LEAGUE_PRESETS = 'afl-league-presets'
+const KEY_CUSTOM_LEAGUE_TEMPLATES = 'afl-custom-league-templates'
 const KEY_LEGACY_SAVE = 'afl-manager-save' // Zustand persist key
 
 // ---------------------------------------------------------------------------
@@ -125,6 +127,27 @@ export async function saveLeaguePreset(preset: LeaguePreset): Promise<void> {
 export async function deleteLeaguePreset(presetId: string): Promise<void> {
   const presets = await getLeaguePresets()
   await set(KEY_LEAGUE_PRESETS, presets.filter((p) => p.id !== presetId))
+}
+
+// ---------------------------------------------------------------------------
+// Custom League Templates
+// ---------------------------------------------------------------------------
+export async function getCustomLeagueTemplates(): Promise<CustomLeagueTemplate[]> {
+  const raw = await get(KEY_CUSTOM_LEAGUE_TEMPLATES)
+  return (raw as CustomLeagueTemplate[]) ?? []
+}
+
+export async function saveCustomLeagueTemplate(template: CustomLeagueTemplate): Promise<void> {
+  const templates = await getCustomLeagueTemplates()
+  const idx = templates.findIndex((t) => t.id === template.id)
+  if (idx >= 0) templates[idx] = template
+  else templates.push(template)
+  await set(KEY_CUSTOM_LEAGUE_TEMPLATES, templates)
+}
+
+export async function deleteCustomLeagueTemplate(templateId: string): Promise<void> {
+  const templates = await getCustomLeagueTemplates()
+  await set(KEY_CUSTOM_LEAGUE_TEMPLATES, templates.filter((t) => t.id !== templateId))
 }
 
 // ---------------------------------------------------------------------------

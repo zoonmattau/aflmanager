@@ -1,7 +1,11 @@
 import type { SeededRNG } from '@/engine/core/rng'
-import type { Player, PlayerAttributes, PlayerPositionType } from '@/types/player'
+import type { Player, PlayerAttributes, PlayerPositionType, PlayerTrainingFocus } from '@/types/player'
 import type { StaffMember, StaffRole } from '@/types/staff'
 import type { ClubFacilities } from '@/types/club'
+import {
+  getPlayerTrainingFocusAttributeMultiplier,
+  PLAYER_TRAINING_FOCUS_ATTRIBUTES,
+} from '@/engine/players/trainingFocus'
 import { MIN_ATTRIBUTE, MAX_ATTRIBUTE } from '@/engine/core/constants'
 
 // ── Training Program Types ──────────────────────────────────────────────────
@@ -35,11 +39,11 @@ export interface TrainingWeek {
   sessions: TrainingSession[] // max 4 sessions per week
 }
 
-export interface PositionRetrainProgress {
+export interface UpskillCompletion {
   playerId: string
-  targetPosition: PlayerPositionType
-  progress: number // 0-100, once 100 the player gains the position
-  startedWeek: number
+  planId: string
+  type: 'position' | 'skill'
+  targetLabel: string
 }
 
 export interface TrainingResult {
@@ -150,6 +154,21 @@ const INTENSITY_FITNESS: Record<TrainingIntensity, number> = {
   light: 2,
   moderate: 1,
   intense: -3,
+}
+
+const POSITION_UPSKILL_FOCUS: Record<PlayerPositionType, TrainingFocus[]> = {
+  BP: ['defensive', 'contested', 'marking'],
+  FB: ['defensive', 'marking', 'contested'],
+  HBF: ['defensive', 'kicking', 'game-sense'],
+  CHB: ['defensive', 'marking', 'contested'],
+  W: ['match-fitness', 'kicking', 'game-sense'],
+  IM: ['contested', 'match-fitness', 'game-sense'],
+  OM: ['kicking', 'game-sense', 'match-fitness'],
+  RK: ['ruck', 'contested', 'match-fitness'],
+  HFF: ['offensive', 'kicking', 'match-fitness'],
+  CHF: ['offensive', 'marking', 'contested'],
+  FP: ['offensive', 'kicking', 'match-fitness'],
+  FF: ['offensive', 'marking', 'kicking'],
 }
 
 // ── Core Functions ──────────────────────────────────────────────────────────
@@ -355,6 +374,7 @@ export function runTrainingSessions(
           facilityMultiplier *
           devRate *
           ageFactor *
+          getPlayerTrainingFocusAttributeMultiplier(player.trainingFocus, attr) *
           ceilingDiminish
 
         const prev = (result.attributeChanges[attr] as number | undefined) ?? 0
@@ -365,7 +385,13 @@ export function runTrainingSessions(
       if (player.age > player.hiddenAttributes.peakAgeEnd) {
         const declineRate = player.hiddenAttributes.declineRate
         for (const attr of DECLINING_PHYSICAL_ATTRS) {
-          const decline = rng.nextFloat(0.1, 0.3) * declineRate
+          const focusMultiplier = getPlayerTrainingFocusAttributeMultiplier(
+            player.trainingFocus,
+            attr,
+            0.92,
+            1.05,
+          )
+          const decline = rng.nextFloat(0.1, 0.3) * declineRate * focusMultiplier
           const prev = (result.attributeChanges[attr] as number | undefined) ?? 0
           result.attributeChanges[attr] = prev - decline
         }
@@ -432,81 +458,173 @@ export function applyTrainingResults(
   }
 }
 
-/**
- * Begin retraining a player at a new position.
- * Returns a fresh progress tracker starting at 0%.
- */
-export function startPositionRetrain(
-  playerId: string,
+function getBestDevelopmentCoachFactor(staff: Record<string, StaffMember>): number {
+  const staffList = Object.values(staff)
+  if (staffList.length === 0) return 0.85
+  const bestDev = staffList.reduce((best, s) => Math.max(best, s.ratings.development), 50)
+  return clamp(0.8 + (bestDev / 100) * 0.4, 0.85, 1.25)
+}
+
+function getAgeUpskillFactor(age: number): number {
+  if (age <= 20) return 1.18
+  if (age <= 24) return 1.08
+  if (age <= 28) return 1
+  if (age <= 32) return 0.9
+  return 0.78
+}
+
+function getConditionUpskillFactor(player: Player): number {
+  if (player.injury) return 0.35
+  const fitnessFactor = clamp(player.fitness / 100, 0.55, 1.05)
+  const fatigueFactor = clamp(1 - player.fatigue / 120, 0.45, 1)
+  return fitnessFactor * fatigueFactor
+}
+
+function getSkillSessionRelevance(
+  sessions: TrainingSession[],
+  targetSkill: PlayerTrainingFocus,
+): number {
+  if (sessions.length === 0) return 0.85
+  const skillAttrs = PLAYER_TRAINING_FOCUS_ATTRIBUTES[targetSkill]
+  if (!skillAttrs || skillAttrs.length === 0) return 1
+
+  let weightedOverlap = 0
+  let totalWeight = 0
+  for (const session of sessions) {
+    const attrs = FOCUS_ATTRIBUTES[session.focus]
+    const overlap = attrs.filter((a) => skillAttrs.includes(a)).length
+    const overlapRatio = overlap / Math.max(1, skillAttrs.length)
+    const intensityWeight = INTENSITY_MULTIPLIER[session.intensity]
+    weightedOverlap += overlapRatio * intensityWeight
+    totalWeight += intensityWeight
+  }
+  const averageOverlap = totalWeight > 0 ? weightedOverlap / totalWeight : 0
+  return clamp(0.8 + averageOverlap * 1.1, 0.8, 1.4)
+}
+
+function getPositionSessionRelevance(
+  sessions: TrainingSession[],
   targetPosition: PlayerPositionType,
-  currentWeek: number = 0,
-): PositionRetrainProgress {
-  return {
-    playerId,
-    targetPosition,
-    progress: 0,
-    startedWeek: currentWeek,
+): number {
+  if (sessions.length === 0) return 0.85
+  const preferredFocuses = POSITION_UPSKILL_FOCUS[targetPosition]
+  const weightedTotal = sessions.reduce((sum, s) => sum + INTENSITY_MULTIPLIER[s.intensity], 0)
+  const weightedMatches = sessions
+    .filter((s) => preferredFocuses.includes(s.focus))
+    .reduce((sum, s) => sum + INTENSITY_MULTIPLIER[s.intensity], 0)
+  const ratio = weightedTotal > 0 ? weightedMatches / weightedTotal : 0
+  return clamp(0.78 + ratio * 0.8, 0.78, 1.4)
+}
+
+function applyPositionUpskillCompletion(
+  player: Player,
+  targetPosition: PlayerPositionType,
+  rng: SeededRNG,
+): void {
+  if (
+    player.position.primary !== targetPosition &&
+    !player.position.secondary.includes(targetPosition)
+  ) {
+    player.position.secondary.push(targetPosition)
+  }
+  const currentRating = player.position.ratings[targetPosition] ?? 0
+  const nextRating = currentRating > 0
+    ? currentRating + rng.nextInt(6, 14)
+    : rng.nextInt(45, 62)
+  player.position.ratings[targetPosition] = clamp(nextRating, MIN_ATTRIBUTE, MAX_ATTRIBUTE - 1)
+}
+
+function applySkillUpskillCompletion(
+  player: Player,
+  targetSkill: PlayerTrainingFocus,
+  coachingFactor: number,
+  rng: SeededRNG,
+): void {
+  const skillAttrs = PLAYER_TRAINING_FOCUS_ATTRIBUTES[targetSkill]
+  const devRate = clamp(player.hiddenAttributes.developmentRate, 0.55, 2)
+  for (const attr of skillAttrs) {
+    const current = player.attributes[attr]
+    const gain = rng.nextFloat(0.5, 1.7) * coachingFactor * devRate * 0.55
+    player.attributes[attr] = clamp(
+      Math.round((current + gain) * 10) / 10,
+      MIN_ATTRIBUTE,
+      MAX_ATTRIBUTE - 1,
+    )
   }
 }
 
 /**
- * Advance position retraining by one week.
- *
- * Progress gains are based on the player's agility, determination, and
- * coaching quality. When progress reaches 100, the target position is
- * added to the player's secondary positions with a base rating of 40-60.
+ * Advance all active upskill plans for a club by one simulated week.
+ * Mutates players in place and returns any plans completed this week.
  */
-export function advancePositionRetrain(
-  progress: PositionRetrainProgress,
-  player: Player,
+export function advanceClubUpskilling(
+  players: Record<string, Player>,
+  sessions: TrainingSession[],
   staff: Record<string, StaffMember>,
   rng: SeededRNG,
-): PositionRetrainProgress {
-  if (progress.progress >= 100) return progress
+  currentRound: number,
+  currentDate: string,
+): UpskillCompletion[] {
+  const completions: UpskillCompletion[] = []
+  const coachingFactor = getBestDevelopmentCoachFactor(staff)
 
-  // Base weekly advance: 3-8 points
-  const baseAdvance = rng.nextInt(3, 8)
+  for (const player of Object.values(players)) {
+    const plans = player.upskillPlans ?? []
+    if (plans.length === 0) continue
 
-  // Agility factor: 0.8 (low agility) to 1.2 (high agility)
-  const agilityFactor = 0.8 + (player.attributes.agility / 100) * 0.4
+    const ageFactor = getAgeUpskillFactor(player.age)
+    const conditionFactor = getConditionUpskillFactor(player)
+    const determinationFactor = clamp(0.75 + player.attributes.determination / 250, 0.8, 1.15)
 
-  // Determination factor: 0.8 to 1.2
-  const determinationFactor = 0.8 + (player.attributes.determination / 100) * 0.4
+    for (const plan of plans) {
+      if (plan.status !== 'active' || plan.progress >= 100) continue
 
-  // Coaching quality: best development rating among all staff
-  const staffList = Object.values(staff)
-  const bestDevRating = staffList.reduce(
-    (best, s) => Math.max(best, s.ratings.development),
-    50,
-  )
-  const coachFactor = 0.8 + (bestDevRating / 100) * 0.4
+      let relevance = 1
+      let targetLabel = ''
+      if (plan.type === 'position' && plan.targetPosition) {
+        relevance = getPositionSessionRelevance(sessions, plan.targetPosition)
+        targetLabel = plan.targetPosition
+      } else if (plan.type === 'skill' && plan.targetSkill) {
+        relevance = getSkillSessionRelevance(sessions, plan.targetSkill)
+        targetLabel = plan.targetSkill
+      } else {
+        continue
+      }
 
-  const weeklyGain = baseAdvance * agilityFactor * determinationFactor * coachFactor
-  const newProgress = Math.min(100, progress.progress + weeklyGain)
+      const baseGain = rng.nextFloat(4.8, 9.8)
+      const gain = baseGain * coachingFactor * ageFactor * conditionFactor * determinationFactor * relevance
+      plan.progress = Math.min(100, Math.round((plan.progress + gain) * 10) / 10)
+      plan.updatedDate = currentDate
 
-  const updatedProgress: PositionRetrainProgress = {
-    ...progress,
-    progress: Math.round(newProgress * 10) / 10,
-  }
+      if (plan.progress >= 100) {
+        plan.progress = 100
+        plan.status = 'completed'
+        plan.completedDate = currentDate
 
-  // If retrain is complete, award the new position to the player
-  if (updatedProgress.progress >= 100) {
-    updatedProgress.progress = 100
+        if (plan.type === 'position' && plan.targetPosition) {
+          applyPositionUpskillCompletion(player, plan.targetPosition, rng)
+        } else if (plan.type === 'skill' && plan.targetSkill) {
+          applySkillUpskillCompletion(player, plan.targetSkill, coachingFactor, rng)
+        }
 
-    // Add the target position to secondary positions if not already present
-    if (
-      player.position.primary !== progress.targetPosition &&
-      !player.position.secondary.includes(progress.targetPosition)
-    ) {
-      player.position.secondary.push(progress.targetPosition)
+        completions.push({
+          playerId: player.id,
+          planId: plan.id,
+          type: plan.type,
+          targetLabel,
+        })
+      }
     }
 
-    // Assign a base position rating of 40-60
-    const baseRating = rng.nextInt(40, 60)
-    player.position.ratings[progress.targetPosition] = baseRating
+    if (!player.upskillPlans) player.upskillPlans = plans
+    for (const plan of plans) {
+      if (!plan.startedRound && plan.startedRound !== 0) {
+        plan.startedRound = currentRound
+      }
+    }
   }
 
-  return updatedProgress
+  return completions
 }
 
 /**
@@ -585,17 +703,6 @@ export function createDefaultGroup(
   }
 }
 
-/** Match day offsets from the round base (Saturday variants default to 5). */
-const MATCH_DAY_OFFSETS: Record<string, number> = {
-  Thursday: 3,
-  Friday: 4,
-  'Saturday-Early': 5,
-  'Saturday-Twilight': 5,
-  'Saturday-Night': 5,
-  'Sunday-Early': 6,
-  'Sunday-Twilight': 6,
-}
-
 /**
  * Generate a sensible default TrainingWeekPlan for a Mon-Sun week.
  * @param weekDates - 7 YYYY-MM-DD strings (Mon through Sun)
@@ -668,7 +775,7 @@ export function weekPlanToSessions(plan: TrainingWeekPlan): TrainingSession[] {
   const sessions: TrainingSession[] = []
   let counter = 0
 
-  for (const [_date, daySlots] of Object.entries(plan.slots)) {
+  for (const daySlots of Object.values(plan.slots)) {
     for (const slotKey of ['morning', 'afternoon'] as const) {
       const slot = daySlots[slotKey]
       for (const group of slot.groups) {

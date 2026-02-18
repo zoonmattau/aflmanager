@@ -173,6 +173,30 @@ export type PlayerArchetype =
   | 'small-pressure-forward'
   | 'swingman'
 
+export type PlayerTrainingFocus =
+  | 'endurance'
+  | 'strength'
+  | 'kicking'
+  | 'contested-ball'
+  | 'marking'
+  | 'tackling'
+  | 'ruck-craft'
+
+export type UpskillStatus = 'active' | 'completed' | 'paused' | 'cancelled'
+
+export interface PlayerUpskillPlan {
+  id: string
+  type: 'position' | 'skill'
+  targetPosition?: PlayerPositionType
+  targetSkill?: PlayerTrainingFocus
+  progress: number
+  status: UpskillStatus
+  startedRound: number
+  startedDate: string
+  updatedDate: string
+  completedDate?: string
+}
+
 export interface PlayerTradeRequest {
   active: boolean
   requestedAt: string
@@ -309,4 +333,6 @@ export interface Player {
   suspension?: PlayerSuspension | null
   suspensionHistory?: PlayerSuspensionHistoryEntry[]
   tradeRequest?: PlayerTradeRequest | null
+  trainingFocus?: PlayerTrainingFocus | null
+  upskillPlans?: PlayerUpskillPlan[]
 }

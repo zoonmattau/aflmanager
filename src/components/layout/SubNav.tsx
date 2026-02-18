@@ -7,6 +7,7 @@ export function SubNav() {
   const group = getActiveGroup(pathname)
 
   if (!group) return null
+  if (group.items.length <= 1) return null
 
   return (
     <nav className="flex gap-1 border-b bg-background px-4">

@@ -4,6 +4,7 @@ import {
   Swords,
   DollarSign,
   Building2,
+  Settings,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -46,14 +47,16 @@ export const navGroups: NavGroup[] = [
     id: 'season',
     label: 'Season',
     icon: Swords,
-    defaultTo: '/match',
-    matchPaths: ['/match', '/ladder', '/league', '/calendar', '/state-leagues', '/offseason', '/development-report'],
+    defaultTo: '/fixture',
+    matchPaths: ['/fixture', '/match', '/ladder', '/league', '/calendar', '/state-leagues', '/offseason', '/development-report', '/tribunal', '/preseason-preview'],
     items: [
-      { to: '/match', label: 'Match Day' },
+      { to: '/fixture', label: 'Fixture' },
       { to: '/ladder', label: 'Ladder' },
       { to: '/league', label: 'League' },
       { to: '/calendar', label: 'Calendar' },
+      { to: '/tribunal', label: 'Tribunal' },
       { to: '/state-leagues', label: 'State Leagues' },
+      { to: '/preseason-preview', label: 'Season Preview' },
       { to: '/offseason', label: 'Offseason' },
       { to: '/development-report', label: 'Dev Report' },
     ],
@@ -82,6 +85,16 @@ export const navGroups: NavGroup[] = [
     items: [
       { to: '/club', label: 'Club' },
       { to: '/expansion', label: 'Expansion' },
+    ],
+  },
+  {
+    id: 'settings',
+    label: 'Settings',
+    icon: Settings,
+    defaultTo: '/game-settings',
+    matchPaths: ['/game-settings'],
+    items: [
+      { to: '/game-settings', label: 'Game Settings' },
     ],
   },
 ]

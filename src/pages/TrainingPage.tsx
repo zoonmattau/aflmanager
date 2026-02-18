@@ -1,15 +1,21 @@
 import { useMemo, useState, useCallback, useEffect } from 'react'
 import { useGameStore } from '@/stores/gameStore'
-import type { Player, PlayerPositionType } from '@/types/player'
+import type { Player, PlayerPositionType, PlayerTrainingFocus } from '@/types/player'
 import type { StaffMember } from '@/types/staff'
 import type { TrainingGroup, TrainingWeekPlan } from '@/engine/training/trainingEngine'
 import { getDefaultTrainingWeekPlan } from '@/engine/training/trainingEngine'
+import {
+  PLAYER_TRAINING_FOCUS_ATTRIBUTES,
+  PLAYER_TRAINING_FOCUS_LABELS,
+  PLAYER_TRAINING_FOCUS_OPTIONS,
+} from '@/engine/players/trainingFocus'
 import { addDays } from '@/engine/calendar/calendarEngine'
 import { WeekPlannerGrid } from '@/components/training/WeekPlannerGrid'
 import { WeekLoadSummary } from '@/components/training/WeekLoadSummary'
 import { EnhancedSquadFitness } from '@/components/training/EnhancedSquadFitness'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -24,28 +30,22 @@ import { cn } from '@/lib/utils'
 import {
   Dumbbell,
   Activity,
-  ArrowRightLeft,
+  Sparkles,
+  Target,
 } from 'lucide-react'
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Get the Monday of the week containing the given date. */
 function getWeekStart(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00')
-  const day = d.getDay() // 0=Sun, 1=Mon, ...
-  const diff = day === 0 ? -6 : 1 - day // Mon = 0 offset
+  const day = d.getDay()
+  const diff = day === 0 ? -6 : 1 - day
   d.setDate(d.getDate() + diff)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-/** Get 7 dates from Mon-Sun starting from a Monday. */
 function getWeekDates(monday: string): string[] {
   return Array.from({ length: 7 }, (_, i) => addDays(monday, i))
 }
 
-/** Find the match date for the current round and the player's club. */
 function getMatchDateForRound(
   season: { rounds: { fixtures: { homeClubId: string; awayClubId: string; matchDay?: string }[]; byeClubIds: string[] }[] },
   currentRound: number,
@@ -77,7 +77,6 @@ function getMatchDateForRound(
     return addDays(baseDate, offset)
   }
 
-  // Default to Saturday
   return addDays(baseDate, 5)
 }
 
@@ -87,9 +86,36 @@ function fitnessColor(val: number): string {
   return 'text-red-600 dark:text-red-400'
 }
 
-// ---------------------------------------------------------------------------
-// Constants for Position Retraining (unchanged)
-// ---------------------------------------------------------------------------
+const FOCUS_ATTR_LABELS: Record<string, string> = {
+  endurance: 'End',
+  recovery: 'Rec',
+  workRate: 'Work',
+  acceleration: 'Acc',
+  strength: 'Str',
+  hardness: 'Hard',
+  oneOnOne: '1v1',
+  tackling: 'Tackle',
+  kickingEfficiency: 'Kick Eff',
+  kickingDistance: 'Kick Dist',
+  setShot: 'Set Shot',
+  dropPunt: 'Drop Punt',
+  snap: 'Snap',
+  fieldKicking: 'Field Kick',
+  contested: 'Cont Ball',
+  clearance: 'Clear',
+  groundBallGet: 'Ground Ball',
+  markingOverhead: 'Overhead',
+  markingLeading: 'Lead Mark',
+  markingContested: 'Cont Mark',
+  markingUncontested: 'Uncont Mark',
+  pressure: 'Pressure',
+  hitouts: 'Hitouts',
+  ruckCreative: 'Ruck Craft',
+  followUp: 'Follow-up',
+  centreBounce: 'Centre',
+  boundaryThrowIn: 'Throw-in',
+  stoppage: 'Stoppage',
+}
 
 const POSITION_LABELS: Record<PlayerPositionType, string> = {
   BP: 'Back Pocket',
@@ -106,24 +132,12 @@ const POSITION_LABELS: Record<PlayerPositionType, string> = {
   FF: 'Full Forward',
 }
 
-const RETRAIN_TARGETS: Record<PlayerPositionType, PlayerPositionType[]> = {
-  BP: ['FB', 'HBF'],
-  FB: ['BP', 'CHB'],
-  HBF: ['CHB', 'W', 'BP'],
-  CHB: ['FB', 'HBF'],
-  W: ['OM', 'HBF', 'HFF'],
-  IM: ['OM', 'HFF'],
-  OM: ['IM', 'W', 'HBF'],
-  RK: ['FF', 'CHF'],
-  HFF: ['CHF', 'OM', 'W'],
-  CHF: ['FF', 'HFF', 'RK'],
-  FP: ['FF', 'HFF'],
-  FF: ['CHF', 'FP'],
-}
+const ALL_POSITION_TYPES: PlayerPositionType[] = ['BP', 'FB', 'HBF', 'CHB', 'W', 'IM', 'OM', 'RK', 'HFF', 'CHF', 'FP', 'FF']
 
-// ---------------------------------------------------------------------------
-// Tab: Enhanced Week Planner
-// ---------------------------------------------------------------------------
+type UpskillTypeFilter = 'all' | 'position' | 'skill'
+type UpskillStatusFilter = 'all' | 'active' | 'completed' | 'cancelled' | 'idle'
+type UpskillProgressFilter = 'all' | 'gt0' | 'gt25' | 'gt50' | 'gt75' | 'completed'
+type UpskillSort = 'progress-desc' | 'progress-asc' | 'name' | 'age'
 
 function EnhancedWeekPlanner({
   clubPlayers,
@@ -140,19 +154,15 @@ function EnhancedWeekPlanner({
   const trainingWeekPlan = useGameStore((s) => s.trainingWeekPlan)
   const setTrainingWeekPlan = useGameStore((s) => s.setTrainingWeekPlan)
   const updateTrainingSlotGroups = useGameStore((s) => s.updateTrainingSlotGroups)
-  const clearTrainingWeekPlan = useGameStore((s) => s.clearTrainingWeekPlan)
 
-  // Compute week dates
   const monday = getWeekStart(currentDate)
   const weekDates = useMemo(() => getWeekDates(monday), [monday])
 
-  // Compute match date
   const matchDate = useMemo(
     () => getMatchDateForRound(season, currentRound, playerClubId, settings.seasonStartDate),
     [season, currentRound, playerClubId, settings.seasonStartDate],
   )
 
-  // Auto-generate plan on first render if null
   useEffect(() => {
     if (!trainingWeekPlan) {
       const defaultPlan = getDefaultTrainingWeekPlan(weekDates, matchDate)
@@ -204,95 +214,305 @@ function EnhancedWeekPlanner({
   )
 }
 
-// ---------------------------------------------------------------------------
-// Tab: Position Retraining (unchanged)
-// ---------------------------------------------------------------------------
+function UpskillingTab({ clubPlayers }: { clubPlayers: Player[] }) {
+  const startPlayerUpskill = useGameStore((s) => s.startPlayerUpskill)
+  const cancelPlayerUpskill = useGameStore((s) => s.cancelPlayerUpskill)
+  const [error, setError] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [typeFilter, setTypeFilter] = useState<UpskillTypeFilter>('all')
+  const [statusFilter, setStatusFilter] = useState<UpskillStatusFilter>('all')
+  const [progressFilter, setProgressFilter] = useState<UpskillProgressFilter>('all')
+  const [sortBy, setSortBy] = useState<UpskillSort>('progress-desc')
+  const [positionTargets, setPositionTargets] = useState<Partial<Record<string, PlayerPositionType>>>({})
+  const [skillTargets, setSkillTargets] = useState<Partial<Record<string, PlayerTrainingFocus>>>({})
 
-interface RetrainState {
-  playerId: string
-  targetPosition: PlayerPositionType | null
-  status: 'idle' | 'in-progress'
-}
-
-function PositionRetrainingTab({ clubPlayers }: { clubPlayers: Player[] }) {
-  const [retrainMap, setRetrainMap] = useState<Record<string, RetrainState>>({})
-
-  const candidates = useMemo(() => {
-    return clubPlayers
-      .filter((p) => {
-        const targets = RETRAIN_TARGETS[p.position.primary] ?? []
-        return targets.length > 0 && p.age <= 28 && !p.injury
-      })
-      .sort((a, b) => a.age - b.age)
-  }, [clubPlayers])
-
-  const handleSelectTarget = useCallback(
-    (playerId: string, position: PlayerPositionType) => {
-      setRetrainMap((prev) => ({
-        ...prev,
-        [playerId]: { playerId, targetPosition: position, status: 'idle' },
-      }))
-    },
-    [],
-  )
-
-  const handleStartRetrain = useCallback((playerId: string) => {
-    setRetrainMap((prev) => ({
-      ...prev,
-      [playerId]: { ...prev[playerId], status: 'in-progress' },
-    }))
-  }, [])
-
-  const handleCancel = useCallback((playerId: string) => {
-    setRetrainMap((prev) => {
-      const next = { ...prev }
-      delete next[playerId]
-      return next
+  const rows = useMemo(() => {
+    const mapped = clubPlayers.map((player) => {
+      const plans = player.upskillPlans ?? []
+      const activePosition = plans.find((p) => p.status === 'active' && p.type === 'position')
+      const activeSkill = plans.find((p) => p.status === 'active' && p.type === 'skill')
+      const latestPlan = [...plans].sort((a, b) => b.updatedDate.localeCompare(a.updatedDate))[0]
+      const progress = Math.max(activePosition?.progress ?? 0, activeSkill?.progress ?? 0, latestPlan?.progress ?? 0)
+      const status: UpskillStatusFilter = activePosition || activeSkill
+        ? 'active'
+        : latestPlan?.status === 'completed'
+          ? 'completed'
+          : latestPlan?.status === 'cancelled'
+            ? 'cancelled'
+            : 'idle'
+      return { player, activePosition, activeSkill, progress, status }
     })
-  }, [])
 
-  if (candidates.length === 0) {
-    return (
-      <Card>
-        <CardContent className="py-12">
-          <div className="text-center">
-            <ArrowRightLeft className="h-8 w-8 mx-auto text-muted-foreground mb-3" />
-            <p className="text-lg font-medium text-muted-foreground">
-              No retraining candidates
-            </p>
-            <p className="text-sm text-muted-foreground mt-1">
-              No eligible players found for position retraining.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-    )
-  }
+    return mapped
+      .filter((row) => {
+        const q = search.trim().toLowerCase()
+        if (!q) return true
+        const fullName = `${row.player.firstName} ${row.player.lastName}`.toLowerCase()
+        return fullName.includes(q) || row.player.position.primary.toLowerCase().includes(q)
+      })
+      .filter((row) => {
+        if (typeFilter === 'all') return true
+        if (typeFilter === 'position') return !!row.activePosition
+        return !!row.activeSkill
+      })
+      .filter((row) => statusFilter === 'all' || row.status === statusFilter)
+      .filter((row) => {
+        if (progressFilter === 'all') return true
+        if (progressFilter === 'gt0') return row.progress > 0
+        if (progressFilter === 'gt25') return row.progress >= 25
+        if (progressFilter === 'gt50') return row.progress >= 50
+        if (progressFilter === 'gt75') return row.progress >= 75
+        return row.progress >= 100
+      })
+      .sort((a, b) => {
+        if (sortBy === 'progress-desc') return b.progress - a.progress
+        if (sortBy === 'progress-asc') return a.progress - b.progress
+        if (sortBy === 'age') return a.player.age - b.player.age
+        return `${a.player.lastName} ${a.player.firstName}`.localeCompare(`${b.player.lastName} ${b.player.firstName}`)
+      })
+  }, [clubPlayers, progressFilter, search, sortBy, statusFilter, typeFilter])
+
+  const handleStartPositionUpskill = useCallback((player: Player) => {
+    const targetPosition = positionTargets[player.id]
+    if (!targetPosition) return
+    const result = startPlayerUpskill(player.id, { type: 'position', targetPosition })
+    if (!result.success) {
+      setError(result.error ?? 'Failed to start position upskill.')
+      return
+    }
+    setError(null)
+  }, [positionTargets, startPlayerUpskill])
+
+  const handleStartSkillUpskill = useCallback((player: Player) => {
+    const targetSkill = skillTargets[player.id]
+    if (!targetSkill) return
+    const result = startPlayerUpskill(player.id, { type: 'skill', targetSkill })
+    if (!result.success) {
+      setError(result.error ?? 'Failed to start skill upskill.')
+      return
+    }
+    setError(null)
+  }, [skillTargets, startPlayerUpskill])
+
+  const handleCancel = useCallback((playerId: string, planId: string) => {
+    const result = cancelPlayerUpskill(playerId, planId)
+    if (!result.success) {
+      setError(result.error ?? 'Failed to cancel upskill plan.')
+      return
+    }
+    setError(null)
+  }, [cancelPlayerUpskill])
 
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Position Retraining</CardTitle>
+          <CardTitle className="text-base">Upskilling</CardTitle>
           <CardDescription>
-            Retrain players to learn a new position. Younger players adapt faster.
-            Players must be uninjured and 28 or younger.
+            All players can upskill positions and skill domains. Progress updates weekly from training and coaching quality.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {error ? <p className="text-xs text-red-500">{error}</p> : null}
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search player..." className="h-8 text-xs" />
+            <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as UpskillTypeFilter)}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Type" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="position">Position Upskill</SelectItem>
+                <SelectItem value="skill">Skill Upskill</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as UpskillStatusFilter)}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Status" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="completed">Completed</SelectItem>
+                <SelectItem value="cancelled">Cancelled</SelectItem>
+                <SelectItem value="idle">Idle</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={progressFilter} onValueChange={(v) => setProgressFilter(v as UpskillProgressFilter)}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Progress" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Progress</SelectItem>
+                <SelectItem value="gt0">{'>'} 0%</SelectItem>
+                <SelectItem value="gt25">{'>'}= 25%</SelectItem>
+                <SelectItem value="gt50">{'>'}= 50%</SelectItem>
+                <SelectItem value="gt75">{'>'}= 75%</SelectItem>
+                <SelectItem value="completed">Completed</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={sortBy} onValueChange={(v) => setSortBy(v as UpskillSort)}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Sort" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="progress-desc">Progress: High to Low</SelectItem>
+                <SelectItem value="progress-asc">Progress: Low to High</SelectItem>
+                <SelectItem value="name">Name</SelectItem>
+                <SelectItem value="age">Age</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="space-y-3">
+        {rows.map(({ player, activePosition, activeSkill, progress, status }) => {
+          const statusTone = status === 'active'
+            ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30'
+            : status === 'completed'
+              ? 'bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30'
+              : 'bg-muted text-muted-foreground border-border'
+          const positionOptions = ALL_POSITION_TYPES.filter((pos) => pos !== player.position.primary)
+          return (
+            <Card key={player.id}>
+              <CardContent className="pt-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="font-semibold text-sm">{player.firstName} {player.lastName}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <Badge variant="outline" className="text-xs">{player.position.primary}</Badge>
+                      <span className="text-xs text-muted-foreground">Age {player.age}</span>
+                    </div>
+                  </div>
+                  <Badge className={cn('text-xs', statusTone)}>{status.toUpperCase()}</Badge>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Upskill Progress</span>
+                    <span className={cn('font-semibold', fitnessColor(progress))}>{progress.toFixed(1)}%</span>
+                  </div>
+                  <Progress value={progress} className="h-1.5" />
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-muted-foreground">Position Upskill</p>
+                    {activePosition ? (
+                      <div className="rounded border border-blue-500/30 bg-blue-500/5 p-2 space-y-2">
+                        <p className="text-xs font-medium">
+                          Target: {activePosition.targetPosition ? `${POSITION_LABELS[activePosition.targetPosition]} (${activePosition.targetPosition})` : 'Position'}
+                        </p>
+                        <Progress value={activePosition.progress} className="h-1.5" />
+                        <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => handleCancel(player.id, activePosition.id)}>
+                          Cancel
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <Select
+                          value={positionTargets[player.id] ?? '__none__'}
+                          onValueChange={(v) => {
+                            if (v === '__none__') return
+                            setPositionTargets((prev) => ({ ...prev, [player.id]: v as PlayerPositionType }))
+                          }}
+                        >
+                          <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select position..." /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">Select position...</SelectItem>
+                            {positionOptions.map((pos) => (
+                              <SelectItem key={pos} value={pos}>{POSITION_LABELS[pos]} ({pos})</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button size="sm" className="h-8 text-xs" disabled={!positionTargets[player.id]} onClick={() => handleStartPositionUpskill(player)}>
+                          Start
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-muted-foreground">Skill Upskill</p>
+                    {activeSkill ? (
+                      <div className="rounded border border-blue-500/30 bg-blue-500/5 p-2 space-y-2">
+                        <p className="text-xs font-medium">
+                          Target: {activeSkill.targetSkill ? PLAYER_TRAINING_FOCUS_LABELS[activeSkill.targetSkill] : 'Skill'}
+                        </p>
+                        <Progress value={activeSkill.progress} className="h-1.5" />
+                        <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => handleCancel(player.id, activeSkill.id)}>
+                          Cancel
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <Select
+                          value={skillTargets[player.id] ?? '__none__'}
+                          onValueChange={(v) => {
+                            if (v === '__none__') return
+                            setSkillTargets((prev) => ({ ...prev, [player.id]: v as PlayerTrainingFocus }))
+                          }}
+                        >
+                          <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select skill..." /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">Select skill...</SelectItem>
+                            {PLAYER_TRAINING_FOCUS_OPTIONS.map((skill) => (
+                              <SelectItem key={skill} value={skill}>{PLAYER_TRAINING_FOCUS_LABELS[skill]}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button size="sm" className="h-8 text-xs" disabled={!skillTargets[player.id]} onClick={() => handleStartSkillUpskill(player)}>
+                          Start
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function PlayerFocusTab({ clubPlayers }: { clubPlayers: Player[] }) {
+  const setPlayerTrainingFocus = useGameStore((s) => s.setPlayerTrainingFocus)
+  const [error, setError] = useState<string | null>(null)
+
+  const sortedPlayers = useMemo(
+    () => [...clubPlayers].sort((a, b) => {
+      if (a.position.primary !== b.position.primary) return a.position.primary.localeCompare(b.position.primary)
+      return a.lastName.localeCompare(b.lastName)
+    }),
+    [clubPlayers],
+  )
+
+  const handleFocusChange = useCallback((playerId: string, value: string) => {
+    const nextFocus = value === '__none__' ? null : (value as PlayerTrainingFocus)
+    const result = setPlayerTrainingFocus(playerId, nextFocus)
+    if (!result.success) {
+      setError(result.error ?? 'Failed to update player focus.')
+      return
+    }
+    setError(null)
+  }, [setPlayerTrainingFocus])
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Player Development Focus</CardTitle>
+          <CardDescription>
+            Assign one focus per player. Focused attributes gain faster in weekly training and offseason growth.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-muted-foreground mb-1">
-            {candidates.length} eligible player{candidates.length !== 1 ? 's' : ''}
+          <p className="text-sm text-muted-foreground">
+            Available focuses: Endurance, Strength, Kicking, Contested Ball, Marking, Tackling, Ruck Craft.
           </p>
+          {error ? <p className="text-xs text-red-500 mt-2">{error}</p> : null}
         </CardContent>
       </Card>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {candidates.map((player) => {
-          const targets = RETRAIN_TARGETS[player.position.primary] ?? []
-          const state = retrainMap[player.id]
-          const posRating = state?.targetPosition
-            ? player.position.ratings[state.targetPosition] ?? 0
-            : null
+        {sortedPlayers.map((player) => {
+          const focus = player.trainingFocus ?? null
+          const focusAttrs = focus ? PLAYER_TRAINING_FOCUS_ATTRIBUTES[focus] : []
 
           return (
             <Card key={player.id}>
@@ -308,102 +528,45 @@ function PositionRetrainingTab({ clubPlayers }: { clubPlayers: Player[] }) {
                       </Badge>
                       <span className="text-xs text-muted-foreground">Age {player.age}</span>
                     </div>
-                    {player.position.secondary.length > 0 && (
-                      <p className="text-[10px] text-muted-foreground mt-1">
-                        Secondary: {player.position.secondary.join(', ')}
-                      </p>
-                    )}
                   </div>
-                  {state?.status === 'in-progress' && (
+                  {focus ? (
                     <Badge className="bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30 text-xs">
-                      Retraining
+                      {PLAYER_TRAINING_FOCUS_LABELS[focus]}
                     </Badge>
-                  )}
+                  ) : null}
                 </div>
 
-                {state?.status !== 'in-progress' ? (
-                  <div className="space-y-2">
-                    <label className="text-xs text-muted-foreground font-medium">
-                      Target Position
-                    </label>
-                    <Select
-                      value={state?.targetPosition ?? '__none__'}
-                      onValueChange={(v) => {
-                        if (v !== '__none__') {
-                          handleSelectTarget(player.id, v as PlayerPositionType)
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="h-8 text-xs">
-                        <SelectValue placeholder="Select position..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__" disabled>
-                          Select position...
+                <div className="space-y-2">
+                  <label className="text-xs text-muted-foreground font-medium">Development Focus</label>
+                  <Select
+                    value={focus ?? '__none__'}
+                    onValueChange={(v) => handleFocusChange(player.id, v)}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue placeholder="Select focus..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">No assigned focus</SelectItem>
+                      {PLAYER_TRAINING_FOCUS_OPTIONS.map((option) => (
+                        <SelectItem key={option} value={option}>
+                          {PLAYER_TRAINING_FOCUS_LABELS[option]}
                         </SelectItem>
-                        {targets.map((pos) => {
-                          const existingRating = player.position.ratings[pos] ?? 0
-                          return (
-                            <SelectItem key={pos} value={pos}>
-                              {POSITION_LABELS[pos]} ({pos})
-                              {existingRating > 0 && ` — ${existingRating}%`}
-                            </SelectItem>
-                          )
-                        })}
-                      </SelectContent>
-                    </Select>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-                    {posRating !== null && state?.targetPosition && (
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground">
-                            Current {state.targetPosition} aptitude
-                          </span>
-                          <span className={cn('font-semibold', fitnessColor(posRating))}>
-                            {posRating}%
-                          </span>
-                        </div>
-                        <Progress value={posRating} className="h-1.5" />
-                      </div>
-                    )}
-
-                    <Button
-                      size="sm"
-                      className="w-full h-8 text-xs"
-                      disabled={!state?.targetPosition}
-                      onClick={() => handleStartRetrain(player.id)}
-                    >
-                      <ArrowRightLeft className="mr-1 h-3 w-3" />
-                      Start Retraining
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="rounded-md border border-blue-500/30 bg-blue-500/5 p-3">
-                      <p className="text-xs font-medium">
-                        Retraining: {player.position.primary} → {state.targetPosition}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground mt-1">
-                        Progress will accumulate over training weeks. Estimated 4-8 weeks for
-                        meaningful improvement depending on age and attributes.
-                      </p>
-                      <div className="mt-2">
-                        <Progress value={15} className="h-1.5" />
-                        <p className="text-[10px] text-muted-foreground mt-1">
-                          ~15% complete (simulated)
-                        </p>
-                      </div>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full h-8 text-xs"
-                      onClick={() => handleCancel(player.id)}
-                    >
-                      Cancel Retraining
-                    </Button>
-                  </div>
-                )}
+                <div className="flex flex-wrap gap-1.5">
+                  {focusAttrs.length === 0 ? (
+                    <span className="text-[10px] text-muted-foreground">No focus bonus applied.</span>
+                  ) : (
+                    focusAttrs.map((attr) => (
+                      <Badge key={attr} variant="secondary" className="text-[10px]">
+                        {FOCUS_ATTR_LABELS[attr] ?? attr}
+                      </Badge>
+                    ))
+                  )}
+                </div>
               </CardContent>
             </Card>
           )
@@ -412,10 +575,6 @@ function PositionRetrainingTab({ clubPlayers }: { clubPlayers: Player[] }) {
     </div>
   )
 }
-
-// ---------------------------------------------------------------------------
-// Main Page Component
-// ---------------------------------------------------------------------------
 
 export function TrainingPage() {
   const playerClubId = useGameStore((s) => s.playerClubId)
@@ -447,18 +606,16 @@ export function TrainingPage() {
 
   return (
     <div className="space-y-6">
-      {/* Page Header */}
       <div className="flex items-center gap-3">
         <Dumbbell className="h-6 w-6" />
         <div>
           <h1 className="text-2xl font-bold">Training</h1>
           <p className="text-sm text-muted-foreground">
-            {club?.fullName ?? 'Your Club'} — {clubPlayers.length} players on list
+            {club?.fullName ?? 'Your Club'} - {clubPlayers.length} players on list
           </p>
         </div>
       </div>
 
-      {/* Tabs */}
       <Tabs defaultValue="planner">
         <TabsList>
           <TabsTrigger value="planner">
@@ -470,8 +627,12 @@ export function TrainingPage() {
             Squad Fitness
           </TabsTrigger>
           <TabsTrigger value="retrain">
-            <ArrowRightLeft className="mr-1 h-4 w-4" />
-            Position Retraining
+            <Sparkles className="mr-1 h-4 w-4" />
+            Upskilling
+          </TabsTrigger>
+          <TabsTrigger value="focus">
+            <Target className="mr-1 h-4 w-4" />
+            Player Focus
           </TabsTrigger>
         </TabsList>
 
@@ -484,7 +645,11 @@ export function TrainingPage() {
         </TabsContent>
 
         <TabsContent value="retrain">
-          <PositionRetrainingTab clubPlayers={clubPlayers} />
+          <UpskillingTab clubPlayers={clubPlayers} />
+        </TabsContent>
+
+        <TabsContent value="focus">
+          <PlayerFocusTab clubPlayers={clubPlayers} />
         </TabsContent>
       </Tabs>
     </div>

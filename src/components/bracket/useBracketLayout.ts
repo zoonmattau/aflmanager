@@ -72,11 +72,24 @@ export function useBracketLayout() {
 
   // Re-measure when measureVersion changes (triggered by structural changes)
   useEffect(() => {
-    // Use requestAnimationFrame to wait for layout to settle after DOM updates
-    const raf = requestAnimationFrame(() => {
+    // Measure immediately, then again after layout/drag transitions settle.
+    const raf1 = requestAnimationFrame(() => {
       measurePorts()
     })
-    return () => cancelAnimationFrame(raf)
+    const raf2 = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        measurePorts()
+      })
+    })
+    const timeout = window.setTimeout(() => {
+      measurePorts()
+    }, 260)
+
+    return () => {
+      cancelAnimationFrame(raf1)
+      cancelAnimationFrame(raf2)
+      window.clearTimeout(timeout)
+    }
   }, [measureVersion, measurePorts])
 
   const requestMeasure = useCallback(() => {

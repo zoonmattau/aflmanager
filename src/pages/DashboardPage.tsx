@@ -16,22 +16,26 @@ import {
   Play, FastForward, SkipForward, ChevronLeft, ChevronRight, ArrowRight,
   Plus, Moon, X,
   Users, ClipboardList, Shield, BarChart3, Gamepad2,
-  Swords, ArrowLeftRight, AlertTriangle, GraduationCap, FileText, Newspaper, Sparkles, Scale,
-  CheckCheck,
+  AlertTriangle, GraduationCap, Scale, Mail, FileText, Cog,
 } from 'lucide-react'
 import type { Match } from '@/types/match'
-import type { Player } from '@/types/player'
+import type { Player, PlayerPositionType } from '@/types/player'
 import type { StaffMember } from '@/types/staff'
-import type { NewsItem } from '@/types/game'
 import type { Club } from '@/types/club'
 import type { Fixture, LadderEntry } from '@/types/season'
 import type { GamePhase } from '@/types/game'
 import type { GameEvent, GameEventType, ScheduleSlot, WeekSchedule } from '@/types/calendar'
 import type { TrainingFocus, TrainingSession } from '@/engine/training/trainingEngine'
-import { runTrainingSessions, applyTrainingResults, getDefaultTrainingWeek, weekPlanToSessions } from '@/engine/training/trainingEngine'
+import {
+  runTrainingSessions,
+  applyTrainingResults,
+  getDefaultTrainingWeek,
+  weekPlanToSessions,
+  advanceClubUpskilling,
+} from '@/engine/training/trainingEngine'
 import { SeededRNG } from '@/engine/core/rng'
 import {
-  getEventsForDate,
+
   getNextEvent,
   addDays,
   formatDate,
@@ -39,6 +43,7 @@ import {
 import {
   getOffseasonPhaseLabel,
 } from '@/engine/season/offseasonFlow'
+import { getFinalsFormatById, hasTopFourDoubleChanceAdvantage } from '@/engine/season/finalsFormats'
 import {
   formatOffseasonDateTime,
 } from '@/engine/offseason/offseasonCalendar'
@@ -46,6 +51,12 @@ import { RecommendedActions } from '@/components/dashboard/RecommendedActions'
 import { OffseasonPhaseCard } from '@/components/dashboard/OffseasonPhaseCard'
 import { PhaseProgressCard } from '@/components/dashboard/PhaseProgressCard'
 import { OffseasonCalendarOverlay } from '@/components/dashboard/OffseasonCalendarOverlay'
+import { MatchupFieldPreview } from '@/components/lineup/MatchupFieldPreview'
+import { selectBestLineup } from '@/engine/ai/lineupSelection'
+import { getLineupSlots } from '@/engine/core/constants'
+import { calculateClubSalaryTotal, calculateLuxuryTax } from '@/engine/contracts/negotiation'
+import { isPlayerSuspended } from '@/engine/players/availability'
+import { PLAYER_TRAINING_FOCUS_LABELS } from '@/engine/players/trainingFocus'
 
 // ---------------------------------------------------------------------------
 // Calendar constants
@@ -59,6 +70,8 @@ const EVENT_COLORS: Record<GameEventType, string> = {
   'preseason-friendly': 'bg-teal-500',
   bye: 'bg-gray-400',
   milestone: 'bg-pink-500',
+  'special-event': 'bg-amber-500',
+  tribunal: 'bg-orange-500',
 }
 
 const EVENT_LABELS: Record<GameEventType, string> = {
@@ -70,9 +83,26 @@ const EVENT_LABELS: Record<GameEventType, string> = {
   'preseason-friendly': 'Friendly',
   bye: 'Bye',
   milestone: 'Event',
+  'special-event': 'Exhibition',
+  tribunal: 'Tribunal',
 }
 
 const SHORT_DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+const POSITION_LABELS: Record<PlayerPositionType, string> = {
+  BP: 'Back Pocket',
+  FB: 'Full Back',
+  HBF: 'Half Back Flank',
+  CHB: 'Centre Half Back',
+  W: 'Wing',
+  IM: 'Inside Mid',
+  OM: 'Outside Mid',
+  RK: 'Ruckman',
+  HFF: 'Half Forward Flank',
+  CHF: 'Centre Half Forward',
+  FP: 'Forward Pocket',
+  FF: 'Full Forward',
+}
 
 // ---------------------------------------------------------------------------
 // Training focus picker options
@@ -151,20 +181,9 @@ function getSlotLabel(activity: TrainingFocus | 'rest'): string {
   return TRAINING_FOCUS_OPTIONS.find((o) => o.value === activity)?.label ?? activity
 }
 
-// ---------------------------------------------------------------------------
-// News category config
-// ---------------------------------------------------------------------------
-type NewsCategory = NewsItem['category']
-
-const NEWS_CATEGORY_CONFIG: Record<NewsCategory, { icon: React.ElementType; color: string; label: string }> = {
-  match:    { icon: Swords,          color: 'bg-blue-500/15 text-blue-400',   label: 'Match' },
-  trade:    { icon: ArrowLeftRight,  color: 'bg-purple-500/15 text-purple-400', label: 'Trade' },
-  injury:   { icon: AlertTriangle,   color: 'bg-red-500/15 text-red-400',    label: 'Injury' },
-  discipline:{ icon: Scale,          color: 'bg-orange-500/15 text-orange-400', label: 'Tribunal' },
-  draft:    { icon: GraduationCap,   color: 'bg-green-500/15 text-green-400', label: 'Draft' },
-  contract: { icon: FileText,        color: 'bg-amber-500/15 text-amber-400', label: 'Contract' },
-  milestone:{ icon: Sparkles,        color: 'bg-cyan-500/15 text-cyan-400',  label: 'Milestone' },
-  general:  { icon: Newspaper,       color: 'bg-zinc-500/15 text-zinc-400',  label: 'General' },
+function formatMoneyShort(value: number): string {
+  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}m`
+  return `$${Math.round(value / 1000)}k`
 }
 
 // ---------------------------------------------------------------------------
@@ -246,12 +265,48 @@ function hashCode(str: string): number {
   return hash >>> 0
 }
 
-/** Get the Monday of the week containing `dateStr`. */
+/** Return yesterday so "today" is always the second column from the left. */
 function getWeekStart(dateStr: string): string {
-  const d = new Date(dateStr + 'T00:00:00')
-  const day = d.getDay() // 0=Sun
-  const diff = day === 0 ? -6 : 1 - day // Monday=0 offset
-  return addDays(dateStr, diff)
+  return addDays(dateStr, -1)
+}
+
+type MatchupOption =
+  | {
+      key: string
+      kind: 'match'
+      round: number
+      roundDate: string
+      opponentId: string
+      homeAway: 'home' | 'away'
+      venue: string
+    }
+  | {
+      key: string
+      kind: 'bye'
+      round: number
+      roundDate: string
+    }
+
+function sanitizePreviewLineup(
+  rawLineup: Record<string, string>,
+  players: Record<string, Player>,
+  clubId: string,
+  interchangePlayers: number,
+): Record<string, string> {
+  const validSlots = new Set<string>(getLineupSlots(interchangePlayers))
+  const next: Record<string, string> = {}
+  const seen = new Set<string>()
+  for (const [slot, playerId] of Object.entries(rawLineup)) {
+    if (!validSlots.has(slot)) continue
+    if (!playerId || seen.has(playerId)) continue
+    const player = players[playerId]
+    if (!player) continue
+    if (player.clubId !== clubId) continue
+    if (player.injury || isPlayerSuspended(player) || player.fitness < 50) continue
+    next[slot] = playerId
+    seen.add(playerId)
+  }
+  return next
 }
 
 // ---------------------------------------------------------------------------
@@ -363,8 +418,12 @@ export function DashboardPage() {
   const players = useGameStore((s) => s.players)
   const staff = useGameStore((s) => s.staff)
   const newsLog = useGameStore((s) => s.newsLog)
-  const markNewsRead = useGameStore((s) => s.markNewsRead)
-  const markAllNewsRead = useGameStore((s) => s.markAllNewsRead)
+  const manager = useGameStore((s) => s.manager)
+  const reserves = useGameStore((s) => s.reserves)
+  const selectedLineup = useGameStore((s) => s.selectedLineup)
+  const trainingWeekPlan = useGameStore((s) => s.trainingWeekPlan)
+  const currentDate = useGameStore((s) => s.currentDate)
+  const simulationActive = useGameStore((s) => s.simulation.active)
 
   const settings = useGameStore((s) => s.settings)
   const enterOffseason = useGameStore((s) => s.enterOffseason)
@@ -375,32 +434,22 @@ export function DashboardPage() {
   const simFullDay = useGameStore((s) => s.simOffseasonFullDay)
   const simToMilestone = useGameStore((s) => s.simOffseasonToMilestone)
 
-  // Actual game date (season starts from settings, each round is 1 week)
-  const seasonStartDate = settings?.seasonStartDate ?? '2026-03-20'
-  const gameDate = useMemo(
-    () => addDays(seasonStartDate, Math.max(0, currentRound) * 7),
-    [seasonStartDate, currentRound],
-  )
-
   // Offseason derived state
   const isOffseason = phase === 'offseason'
-  const offseasonDate = offseasonState?.calendarState?.currentDate ?? gameDate
-  const effectiveDate = isOffseason ? offseasonDate : gameDate
+  const offseasonDate = offseasonState?.calendarState?.currentDate ?? currentDate
+  const effectiveDate = isOffseason ? offseasonDate : currentDate
 
   const [lastResult, setLastResult] = useState<Match | null>(null)
   const [simming, setSimming] = useState(false)
   const [premierMsg, setPremierMsg] = useState<string | null>(null)
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [weekStart, setWeekStart] = useState(() => getWeekStart(effectiveDate))
-  const [expandedNewsId, setExpandedNewsId] = useState<string | null>(null)
 
   // Auto-scroll calendar to current week when effective date changes
   useEffect(() => {
     setWeekStart(getWeekStart(effectiveDate))
   }, [effectiveDate])
 
-  // News: latest 10, newest first
-  const recentNews = useMemo(() => [...newsLog].reverse().slice(0, 10), [newsLog])
   const unreadCount = useMemo(() => newsLog.filter((n) => !n.read).length, [newsLog])
 
   const club = clubs[playerClubId]
@@ -457,19 +506,72 @@ export function DashboardPage() {
   const isBye = ((nextRound?.byeClubIds ?? []).includes(playerClubId))
     || (nextRound && !nextFixture && phase === 'regular-season')
 
+  const potentialMatchups = useMemo(() => {
+    if (phase !== 'regular-season') return [] as MatchupOption[]
+    const out: MatchupOption[] = []
+    for (let idx = currentRound; idx < Math.min(season.rounds.length, currentRound + 5); idx++) {
+      const round = season.rounds[idx]
+      if (!round) continue
+      const roundDate = addDays(getWeekStart(effectiveDate), (idx - currentRound) * 7)
+      if ((round.byeClubIds ?? []).includes(playerClubId)) {
+        out.push({
+          key: `bye-${idx}`,
+          kind: 'bye',
+          round: idx + 1,
+          roundDate,
+        })
+        continue
+      }
+      const fixture = round.fixtures.find((f) => f.homeClubId === playerClubId || f.awayClubId === playerClubId)
+      if (!fixture) continue
+      const oppId = fixture.homeClubId === playerClubId ? fixture.awayClubId : fixture.homeClubId
+      out.push({
+        key: `match-${idx}-${oppId}`,
+        kind: 'match',
+        round: idx + 1,
+        roundDate,
+        opponentId: oppId,
+        homeAway: fixture.homeClubId === playerClubId ? 'home' : 'away',
+        venue: fixture.venue,
+      })
+    }
+    return out
+  }, [phase, currentRound, season.rounds, effectiveDate, playerClubId])
+
   // Week days for the current view
-  // During offseason, inject milestone events into the week
+  // During offseason, inject milestone events into the week — but skip milestones
+  // whose date already has a matching calendar event to avoid duplicates (e.g.
+  // buildSeasonCalendar already creates offseason events (draft, trade-deadline,
+  // etc.) that overlap with offseason milestones. Deduplicate by normalised title
+  // and map milestone labels to the correct event type so colours match the legend.
   const effectiveEvents = useMemo(() => {
     if (!isOffseason || !offseasonState?.calendarState?.milestones) return calendar.events
-    // Merge calendar events with offseason milestone "virtual events"
-    const milestoneEvents: GameEvent[] = offseasonState.calendarState.milestones.map((m) => ({
-      id: m.id,
-      date: m.date,
-      type: 'milestone' as const,
-      title: m.label,
-      description: `Offseason: ${m.label}`,
-      resolved: m.date < effectiveDate,
-    }))
+
+    // Map milestone labels → correct GameEventType
+    const labelTypeMap: Record<string, GameEventType> = {
+      'National Draft': 'draft',
+      'Rookie Draft': 'draft',
+      'Trade Period Opens': 'trade-deadline',
+      'Trade Period Closes': 'trade-deadline',
+      'Free Agency Opens': 'contract-deadline',
+      'Free Agency Closes': 'contract-deadline',
+    }
+
+    // Normalised titles already in calendar.events (lowercase, trimmed)
+    const existingTitles = new Set(
+      calendar.events.map((e) => e.title.toLowerCase().trim()),
+    )
+
+    const milestoneEvents: GameEvent[] = offseasonState.calendarState.milestones
+      .filter((m) => !existingTitles.has(m.label.toLowerCase().trim()))
+      .map((m) => ({
+        id: m.id,
+        date: m.date,
+        type: labelTypeMap[m.label] ?? ('milestone' as const),
+        title: m.label,
+        description: `Offseason: ${m.label}`,
+        resolved: m.date < effectiveDate,
+      }))
     return [...calendar.events, ...milestoneEvents]
   }, [isOffseason, offseasonState?.calendarState?.milestones, calendar.events, effectiveDate])
 
@@ -490,19 +592,20 @@ export function DashboardPage() {
     return `${s.getDate()} ${sMonth} – ${e.getDate()} ${eMonth}`
   }, [weekStart])
 
-  // Selected date events
+  // Selected date events — use effectiveEvents so offseason milestones are included
   const selectedEvents = useMemo(
-    () => (selectedDate ? getEventsForDate(calendar, selectedDate) : []),
-    [calendar, selectedDate],
+    () => (selectedDate ? effectiveEvents.filter((e) => e.date === selectedDate) : []),
+    [effectiveEvents, selectedDate],
   )
 
   // Can simulate to selected date?
   const canSimToDate = useMemo(() => {
     if (!selectedDate || phase !== 'regular-season') return false
-    return selectedDate > gameDate
-  }, [selectedDate, gameDate, phase])
+    return selectedDate > effectiveDate
+  }, [selectedDate, effectiveDate, phase])
 
   const handleSimToDate = () => {
+    if (simulationActive) return
     if (!selectedDate || phase !== 'regular-season') return
     setSimming(true)
     setLastResult(null)
@@ -525,6 +628,7 @@ export function DashboardPage() {
   }
 
   const handleSimWeek = () => {
+    if (simulationActive) return
     setSimming(true)
     setLastResult(null)
     setPremierMsg(null)
@@ -573,6 +677,42 @@ export function DashboardPage() {
       // Apply results to the store's players
       useGameStore.setState((s) => {
         applyTrainingResults(s.players, userResults)
+        const clubPlayersForUpskill: Record<string, Player> = {}
+        for (const [pid, p] of Object.entries(s.players)) {
+          if (p.clubId === s.playerClubId) clubPlayersForUpskill[pid] = p
+        }
+        const completions = advanceClubUpskilling(
+          clubPlayersForUpskill,
+          userSessions,
+          userClubStaff,
+          trainingRng,
+          s.currentRound,
+          s.currentDate,
+        )
+        for (const completion of completions) {
+          const player = s.players[completion.playerId]
+          if (!player) continue
+
+          let targetLabel = completion.targetLabel
+          if (completion.type === 'position') {
+            const pos = completion.targetLabel as PlayerPositionType
+            targetLabel = POSITION_LABELS[pos] ?? completion.targetLabel
+          } else {
+            targetLabel = PLAYER_TRAINING_FOCUS_LABELS[completion.targetLabel as keyof typeof PLAYER_TRAINING_FOCUS_LABELS] ?? completion.targetLabel
+          }
+
+          s.newsLog.push({
+            id: crypto.randomUUID(),
+            date: s.currentDate,
+            headline: `${player.firstName} ${player.lastName} completed ${targetLabel} upskilling`,
+            body: completion.type === 'position'
+              ? `${player.firstName} ${player.lastName} has completed position upskilling for ${targetLabel}. Review line-up flexibility and secondary role usage.`
+              : `${player.firstName} ${player.lastName} has completed ${targetLabel} skill upskilling and received a targeted attribute boost.`,
+            category: 'milestone',
+            clubIds: [s.playerClubId],
+            playerIds: [player.id],
+          })
+        }
       })
     }
 
@@ -596,6 +736,18 @@ export function DashboardPage() {
       const aiResults = runTrainingSessions(aiPlayers, defaultWeek.sessions, aiStaff, aiFacilities, aiRng)
       useGameStore.setState((s) => {
         applyTrainingResults(s.players, aiResults)
+        const aiPlayersForUpskill: Record<string, Player> = {}
+        for (const [pid, p] of Object.entries(s.players)) {
+          if (p.clubId === cid) aiPlayersForUpskill[pid] = p
+        }
+        advanceClubUpskilling(
+          aiPlayersForUpskill,
+          defaultWeek.sessions,
+          aiStaff,
+          aiRng,
+          s.currentRound,
+          s.currentDate,
+        )
       })
     }
 
@@ -621,6 +773,7 @@ export function DashboardPage() {
   }
 
   const handleSimToEnd = () => {
+    if (simulationActive) return
     setSimming(true)
     setLastResult(null)
     simToEnd()
@@ -661,12 +814,30 @@ export function DashboardPage() {
   // Next event context for the subtitle
   const nextEvent = useMemo(() => getNextEvent(calendar), [calendar])
 
-  // Next match date (same as game date if there's a fixture this round)
+  // Next match date aligned to the current week and fixture match day
   const nextMatchDate = useMemo(() => {
     if (phase === 'finals' || phase === 'post-season') return null
     if (!nextFixture) return null
-    return gameDate
-  }, [gameDate, phase, nextFixture])
+    const weekStart = getWeekStart(effectiveDate)
+    const matchDayToOffset: Record<string, number> = {
+      monday: 0,
+      tuesday: 1,
+      wednesday: 2,
+      thursday: 3,
+      friday: 4,
+      saturday: 5,
+      sunday: 6,
+    }
+    const offset = matchDayToOffset[nextFixture.matchDay ?? ''] ?? 5
+    return addDays(weekStart, offset)
+  }, [effectiveDate, phase, nextFixture])
+
+  const daysToNextMatch = useMemo(() => {
+    if (!nextMatchDate) return null
+    const now = new Date(effectiveDate + 'T00:00:00').getTime()
+    const then = new Date(nextMatchDate + 'T00:00:00').getTime()
+    return Math.max(0, Math.round((then - now) / 86_400_000))
+  }, [effectiveDate, nextMatchDate])
 
   // Pending actions
   // Training schedule summary
@@ -736,18 +907,185 @@ export function DashboardPage() {
     }
   }, [weekSchedule])
 
+  const clubPlayers = useMemo(
+    () => Object.values(players).filter((p) => p.clubId === playerClubId),
+    [players, playerClubId],
+  )
+
+  const seniorPlayers = useMemo(
+    () => clubPlayers.filter((p) => p.listStatus !== 'reserves'),
+    [clubPlayers],
+  )
+  const reservePlayers = useMemo(
+    () => clubPlayers.filter((p) => p.listStatus === 'reserves'),
+    [clubPlayers],
+  )
+  const injuredPlayers = useMemo(
+    () => clubPlayers.filter((p) => Boolean(p.injury)),
+    [clubPlayers],
+  )
+  const suspendedPlayers = useMemo(
+    () => clubPlayers.filter((p) => isPlayerSuspended(p)),
+    [clubPlayers],
+  )
+
+  const selectedLineupIds = useMemo(
+    () => new Set(Object.values(selectedLineup ?? {}).filter((id): id is string => Boolean(id))),
+    [selectedLineup],
+  )
+
+  const availablePlayers = useMemo(
+    () => clubPlayers.filter((p) => !p.injury && !isPlayerSuspended(p)),
+    [clubPlayers],
+  )
+  const availableNotSelected = useMemo(
+    () => availablePlayers.filter((p) => !selectedLineupIds.has(p.id)),
+    [availablePlayers, selectedLineupIds],
+  )
+
+  const avgFitness = useMemo(
+    () => (clubPlayers.length ? Math.round(clubPlayers.reduce((sum, p) => sum + p.fitness, 0) / clubPlayers.length) : 0),
+    [clubPlayers],
+  )
+  const avgFatigue = useMemo(
+    () => (clubPlayers.length ? Math.round(clubPlayers.reduce((sum, p) => sum + p.fatigue, 0) / clubPlayers.length) : 0),
+    [clubPlayers],
+  )
+  const avgMorale = useMemo(
+    () => (clubPlayers.length ? Math.round(clubPlayers.reduce((sum, p) => sum + p.morale, 0) / clubPlayers.length) : 0),
+    [clubPlayers],
+  )
+  const avgForm = useMemo(
+    () => (clubPlayers.length ? Math.round(clubPlayers.reduce((sum, p) => sum + p.form, 0) / clubPlayers.length) : 0),
+    [clubPlayers],
+  )
+
+  const youngCoreCount = useMemo(() => clubPlayers.filter((p) => p.age <= 22).length, [clubPlayers])
+  const veteranCount = useMemo(() => clubPlayers.filter((p) => p.age >= 30).length, [clubPlayers])
+
+  const salaryCapAmount = settings.salaryCapAmount
+  const softCapEnabled = settings.realism.softCapSpending
+  const totalSpend = useMemo(
+    () => calculateClubSalaryTotal(clubPlayers, playerClubId),
+    [clubPlayers, playerClubId],
+  )
+  const capRatio = salaryCapAmount > 0 ? totalSpend / salaryCapAmount : 0
+  const effectiveCap = softCapEnabled ? salaryCapAmount * 1.1 : salaryCapAmount
+  const capSpace = Math.round(effectiveCap - totalSpend)
+  const luxuryTax = useMemo(
+    () => (softCapEnabled ? calculateLuxuryTax(clubPlayers, playerClubId, salaryCapAmount) : 0),
+    [softCapEnabled, clubPlayers, playerClubId, salaryCapAmount],
+  )
+
+  const jobSecurity = Math.round(manager.jobSecurity)
+  const boardStatus = jobSecurity >= 75
+    ? 'Stable'
+    : jobSecurity >= 55
+      ? 'Watch'
+      : jobSecurity >= 35
+        ? 'Under Pressure'
+        : 'Critical'
+
+  const boardStatusClass = jobSecurity >= 75
+    ? 'text-green-400'
+    : jobSecurity >= 55
+      ? 'text-yellow-400'
+      : jobSecurity >= 35
+        ? 'text-orange-400'
+        : 'text-red-400'
+
+  const upcomingWeekEvents = useMemo(() => {
+    const weekEnd = addDays(effectiveDate, 6)
+    return effectiveEvents.filter((e) => e.date >= effectiveDate && e.date <= weekEnd)
+  }, [effectiveEvents, effectiveDate])
+
+  const scheduledSlotCount = useMemo(() => {
+    let count = 0
+    for (const day of Object.values(weekSchedule)) {
+      if (day.morning) count++
+      if (day.afternoon) count++
+    }
+    return count
+  }, [weekSchedule])
+
+  const plannedGroupCount = useMemo(() => {
+    if (!trainingWeekPlan) return 0
+    let count = 0
+    for (const day of Object.values(trainingWeekPlan.slots)) {
+      count += day.morning.groups.length + day.afternoon.groups.length
+    }
+    return count
+  }, [trainingWeekPlan])
+
+  const reservesTopRating = useMemo(() => {
+    const ownPerformances = reserves.lastRoundPerformances
+      .filter((p) => p.clubId === playerClubId)
+      .sort((a, b) => b.rating - a.rating)
+    return ownPerformances[0]?.rating ?? null
+  }, [reserves.lastRoundPerformances, playerClubId])
+
+  const expiringContractsCount = useMemo(
+    () => clubPlayers.filter((p) => p.contract.yearsRemaining <= 1).length,
+    [clubPlayers],
+  )
+  const rookieCount = useMemo(
+    () => clubPlayers.filter((p) => p.isRookie).length,
+    [clubPlayers],
+  )
+  const facilitiesAverage = useMemo(() => {
+    const f = club?.facilities
+    if (!f) return 0
+    const vals = [f.trainingGround, f.gym, f.medicalCentre, f.recoveryPool, f.analysisSuite, f.youthAcademy]
+    return vals.reduce((sum, v) => sum + v, 0) / vals.length
+  }, [club?.facilities])
+
+  const finalsQualifyingTeams = useMemo(() => {
+    const finals = getFinalsFormatById(settings.finals.finalsFormat, settings.finals.customFinalsFormat)
+    const fallback = settings.finals.finalsQualifyingTeams
+    const count = finals.qualifyingTeams ?? fallback
+    return Math.max(0, Math.min(ladder.length, count))
+  }, [settings.finals, ladder.length])
+
+  const hasTop4FinalsAdvantage = useMemo(() => {
+    const finals = getFinalsFormatById(settings.finals.finalsFormat, settings.finals.customFinalsFormat)
+    return hasTopFourDoubleChanceAdvantage(finals)
+  }, [settings.finals])
+
 
   return (
     <div className="space-y-6">
       {/* Header + Date + Controls */}
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-4">
           <div
             className="h-12 w-12 rounded-full"
             style={{ backgroundColor: club?.colors.primary ?? '#666' }}
           />
           <div>
-            <h1 className="text-2xl font-bold">{club?.fullName}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold">{club?.fullName}</h1>
+              <Button size="sm" className="h-7 px-3">
+                Dashboard
+              </Button>
+              <Button variant="outline" size="sm" className="h-7 gap-1.5 px-3" onClick={() => navigate('/inbox')}>
+                <Mail className="h-3.5 w-3.5" />
+                Inbox
+                {unreadCount > 0 && (
+                  <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-semibold text-white">
+                    {unreadCount}
+                  </span>
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => navigate('/game-settings')}
+                aria-label="Open game settings"
+              >
+                <Cog className="h-4 w-4" />
+              </Button>
+            </div>
             <p className="text-muted-foreground">
               {isOffseason ? (
                 <>Offseason · {offseasonState ? getOffseasonPhaseLabel(offseasonState.currentPhase) : 'In Progress'}</>
@@ -768,7 +1106,7 @@ export function DashboardPage() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center justify-end gap-2">
           <div className="text-right">
             <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
               {isOffseason ? 'Offseason Date' : 'Game Date'}
@@ -777,18 +1115,20 @@ export function DashboardPage() {
             <p className="text-xs text-muted-foreground">
               {isOffseason && offseasonState?.calendarState
                 ? formatOffseasonDateTime(offseasonState.calendarState)
-                : `Round ${currentRound + 1} of ${season.rounds.length}`
+                : nextFixture
+                  ? `${nextFixture.matchDay} ${nextFixture.scheduledTime} · ${daysToNextMatch === null ? 'TBC' : daysToNextMatch === 0 ? 'Game day' : `${daysToNextMatch} day${daysToNextMatch === 1 ? '' : 's'} to match`}`
+                  : `Round ${currentRound + 1} of ${season.rounds.length}`
               }
             </p>
           </div>
           {isOffseason ? (
             /* Offseason sim controls */
             <div className="flex flex-col items-end gap-1">
-              <div className="flex gap-1.5">
+              <div className="flex gap-1">
                 <TooltipProvider delayDuration={300}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button size="lg" className="h-12 px-4" onClick={simHalfDay}>
+                      <Button size="lg" className="h-11 px-3.5" onClick={simHalfDay}>
                         <Play className="h-5 w-5" />
                       </Button>
                     </TooltipTrigger>
@@ -796,7 +1136,7 @@ export function DashboardPage() {
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button size="lg" variant="outline" className="h-12 px-4" onClick={simFullDay}>
+                      <Button size="lg" variant="outline" className="h-11 px-3.5" onClick={simFullDay}>
                         <FastForward className="h-5 w-5" />
                       </Button>
                     </TooltipTrigger>
@@ -804,7 +1144,7 @@ export function DashboardPage() {
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button size="lg" variant="outline" className="h-12 px-4" onClick={simToMilestone}>
+                      <Button size="lg" variant="outline" className="h-11 px-3.5" onClick={simToMilestone}>
                         <SkipForward className="h-5 w-5" />
                       </Button>
                     </TooltipTrigger>
@@ -817,9 +1157,9 @@ export function DashboardPage() {
             <div className="flex flex-col items-end gap-1">
               <Button
                 size="lg"
-                className="h-12 px-6 text-base font-bold"
+                className="h-11 px-5 text-base font-bold"
                 onClick={handleSimWeek}
-                disabled={simming}
+                disabled={simming || simulationActive}
               >
                 <Play className="mr-2 h-5 w-5" />
                 Continue
@@ -879,7 +1219,7 @@ export function DashboardPage() {
                   key={day.date}
                   onClick={() => setSelectedDate(day.date === selectedDate ? null : day.date)}
                   className={`
-                    rounded-lg text-left transition-colors border min-h-[100px]
+                    rounded-lg text-left transition-colors border min-h-[84px]
                     flex flex-col cursor-pointer
                     ${day.isToday
                       ? 'border-primary border-2 bg-primary/20 ring-2 ring-primary/50 shadow-lg shadow-primary/25'
@@ -910,9 +1250,9 @@ export function DashboardPage() {
                   </div>
 
                   {/* Day content: events, training slots, or offseason overlay */}
-                  {day.hasMatch || day.events.some((e) => e.type === 'milestone') ? (
-                    <div className="flex flex-col gap-0.5 mt-auto w-full px-1.5 pb-1.5">
-                      {day.events.map((evt) => (
+                  {day.events.some((e) => e.type !== 'training') ? (
+                    <div className="flex flex-col gap-0.5 my-auto w-full px-1.5">
+                      {day.events.filter((e) => e.type !== 'training').map((evt) => (
                         <div
                           key={evt.id}
                           className={`flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-white ${EVENT_COLORS[evt.type]}`}
@@ -1016,7 +1356,7 @@ export function DashboardPage() {
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm font-medium">{formatDate(selectedDate)}</p>
                 {canSimToDate && (
-                  <Button size="sm" onClick={handleSimToDate} disabled={simming}>
+                  <Button size="sm" onClick={handleSimToDate} disabled={simming || simulationActive}>
                     <FastForward className="mr-1 h-3.5 w-3.5" />
                     Simulate To
                   </Button>
@@ -1050,264 +1390,355 @@ export function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Training Schedule Summary (hidden during offseason) */}
-      {!isOffseason && scheduleSummary && (
-        <Card>
-          <CardContent className="py-4 space-y-4">
-            {/* Fatigue + Injury Risk — big and clear */}
-            <div className="grid grid-cols-2 gap-3">
-              {/* Fatigue */}
-              <div className={`rounded-lg p-3 ${
-                scheduleSummary.fatigueLevel === 'extreme' ? 'bg-red-500/15 border border-red-500/30' :
-                scheduleSummary.fatigueLevel === 'high' ? 'bg-orange-500/15 border border-orange-500/30' :
-                scheduleSummary.fatigueLevel === 'moderate' ? 'bg-yellow-500/10 border border-yellow-500/20' :
-                'bg-green-500/10 border border-green-500/20'
-              }`}>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Weekly Fatigue</p>
-                <p className={`text-xl font-bold ${
-                  scheduleSummary.fatigueLevel === 'extreme' ? 'text-red-400' :
-                  scheduleSummary.fatigueLevel === 'high' ? 'text-orange-400' :
-                  scheduleSummary.fatigueLevel === 'moderate' ? 'text-yellow-400' :
-                  'text-green-400'
-                }`}>
-                  {scheduleSummary.fatigueLevel === 'extreme' ? 'Extreme' :
-                   scheduleSummary.fatigueLevel === 'high' ? 'Heavy' :
-                   scheduleSummary.fatigueLevel === 'moderate' ? 'Moderate' : 'Light'}
-                </p>
-                {/* Visual bar */}
-                <div className="mt-2 h-2 w-full rounded-full bg-muted overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${
-                      scheduleSummary.fatigueLevel === 'extreme' ? 'bg-red-500' :
-                      scheduleSummary.fatigueLevel === 'high' ? 'bg-orange-500' :
-                      scheduleSummary.fatigueLevel === 'moderate' ? 'bg-yellow-500' :
-                      'bg-green-500'
-                    }`}
-                    style={{ width: `${Math.min(100, (scheduleSummary.totalFatigue / 60) * 100)}%` }}
-                  />
-                </div>
-                <p className="text-[10px] text-muted-foreground mt-1.5">
-                  {scheduleSummary.fatigueLevel === 'extreme'
-                    ? 'Players will be exhausted. Expect poor match performance.'
-                    : scheduleSummary.fatigueLevel === 'high'
-                      ? 'Heavy load. Consider adding recovery sessions.'
-                      : scheduleSummary.fatigueLevel === 'moderate'
-                        ? 'Solid training week. Players can handle this.'
-                        : 'Light week. Good for recovery or pre-match taper.'}
-                </p>
-              </div>
-
-              {/* Injury Risk */}
-              <div className={`rounded-lg p-3 ${
-                scheduleSummary.injuryRisk === 'elevated' ? 'bg-red-500/15 border border-red-500/30' :
-                scheduleSummary.injuryRisk === 'moderate' ? 'bg-orange-500/15 border border-orange-500/30' :
-                'bg-green-500/10 border border-green-500/20'
-              }`}>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Injury Risk</p>
-                <p className={`text-xl font-bold ${
-                  scheduleSummary.injuryRisk === 'elevated' ? 'text-red-400' :
-                  scheduleSummary.injuryRisk === 'moderate' ? 'text-orange-400' :
-                  'text-green-400'
-                }`}>
-                  {scheduleSummary.injuryRisk === 'elevated' ? 'Elevated' :
-                   scheduleSummary.injuryRisk === 'moderate' ? 'Moderate' : 'Low'}
-                </p>
-                {/* Visual bar */}
-                <div className="mt-2 h-2 w-full rounded-full bg-muted overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${
-                      scheduleSummary.injuryRisk === 'elevated' ? 'bg-red-500' :
-                      scheduleSummary.injuryRisk === 'moderate' ? 'bg-orange-500' :
-                      'bg-green-500'
-                    }`}
-                    style={{ width: scheduleSummary.injuryRisk === 'elevated' ? '85%' : scheduleSummary.injuryRisk === 'moderate' ? '50%' : '20%' }}
-                  />
-                </div>
-                <p className="text-[10px] text-muted-foreground mt-1.5">
-                  {scheduleSummary.injuryRisk === 'elevated'
-                    ? 'Too many intense sessions without recovery. Add a rest day.'
-                    : scheduleSummary.injuryRisk === 'moderate'
-                      ? 'Some risk. A recovery session would help.'
-                      : 'Well balanced. Low chance of training injuries.'}
-                </p>
-              </div>
-            </div>
-
-            {/* Development overview — one compact line */}
-            <div className="flex items-center gap-2 flex-wrap text-xs">
-              <span className="text-muted-foreground font-medium">
-                {scheduleSummary.training} session{scheduleSummary.training !== 1 ? 's' : ''}
-                {scheduleSummary.rest > 0 ? ` + ${scheduleSummary.rest} rest` : ''}
-                {' · '}
-              </span>
-              <span className="text-muted-foreground">Developing</span>
-              {scheduleSummary.skillAreas.map((area) => (
-                <span key={area} className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium">
-                  {area}
-                </span>
-              ))}
-              {scheduleSummary.specificGroups.length > 0 && (
-                <>
-                  <span className="text-muted-foreground">for</span>
-                  {scheduleSummary.hitsAll && <span className="text-[10px] font-medium">All</span>}
-                  {scheduleSummary.specificGroups.map((g) => (
-                    <span key={g} className="text-[10px] font-medium">{g}</span>
-                  ))}
-                </>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* 3-column row: Inbox | Ladder Position | Pending Actions */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* LEFT: Inbox */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Inbox
-              {unreadCount > 0 && (
-                <span className="ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-600 px-1.5 text-[10px] font-semibold text-white">
-                  {unreadCount}
-                </span>
-              )}
-            </CardTitle>
-            {unreadCount > 0 && (
-              <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2" onClick={markAllNewsRead}>
-                <CheckCheck className="mr-1 h-3 w-3" />
-                Read All
-              </Button>
-            )}
-          </CardHeader>
-          <CardContent>
-            {recentNews.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-4 text-center">No messages yet</p>
-            ) : (
-              <div className="max-h-[250px] overflow-y-auto divide-y divide-border -mx-6">
-                {recentNews.map((item) => {
-                  const config = NEWS_CATEGORY_CONFIG[item.category]
-                  const Icon = config.icon
-                  const isUnread = !item.read
-                  const isExpanded = expandedNewsId === item.id
-
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => {
-                        if (isUnread) markNewsRead(item.id)
-                        setExpandedNewsId(isExpanded ? null : item.id)
-                      }}
-                      className={`flex w-full flex-col gap-1 px-4 py-2 text-left transition-colors hover:bg-muted/50 ${
-                        isExpanded ? 'bg-muted/30' : ''
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        {isUnread && <span className="h-1.5 w-1.5 rounded-full bg-blue-500 flex-shrink-0" />}
-                        {!isUnread && <span className="w-1.5 flex-shrink-0" />}
-                        <div className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded ${config.color}`}>
-                          <Icon className="h-3 w-3" />
-                        </div>
-                        <span className={`flex-1 truncate text-xs ${isUnread ? 'font-semibold' : 'text-muted-foreground'}`}>
-                          {item.headline}
-                        </span>
-                      </div>
-                      {isExpanded && (
-                        <div className="ml-7 mt-1">
-                          <p className="text-xs text-foreground">{item.body}</p>
-                          <span className="text-[10px] text-muted-foreground">{item.date}</span>
-                        </div>
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-            {newsLog.length > 10 && (
-              <div className="mt-2 text-center">
-                <Button variant="link" size="sm" className="text-xs h-auto p-0" onClick={() => navigate('/inbox')}>
-                  View All <ArrowRight className="ml-1 h-3 w-3" />
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* MIDDLE: Ladder Position / Phase Progress */}
-        {isOffseason ? (
-          <PhaseProgressCard />
-        ) : (
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Ladder Position</CardTitle>
-              <Trophy className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-center">
-                <div className="text-4xl font-bold">
-                  {ladderPosition > 0 ? `${ladderPosition}${ordinal(ladderPosition)}` : '-'}
-                </div>
-                {ladderEntry ? (
-                  <div className="mt-3 space-y-1 text-sm text-muted-foreground">
-                    <p>
-                      <span className="font-semibold text-foreground">{ladderEntry.points}</span> pts
-                      {' · '}
-                      <span className="font-semibold text-foreground">{ladderEntry.percentage.toFixed(1)}%</span>
-                    </p>
-                    <p>{ladderEntry.pointsFor} PF / {ladderEntry.pointsAgainst} PA</p>
-                    <p>{ladderEntry.wins}W {ladderEntry.draws}D {ladderEntry.losses}L</p>
-                  </div>
-                ) : (
-                  <p className="mt-2 text-sm text-muted-foreground">Season not started</p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* RIGHT: Recommended Actions */}
-        <RecommendedActions />
-      </div>
-
-      {/* Main Card: Matchup or Offseason Phase */}
-      {isOffseason ? (
-        <OffseasonPhaseCard />
-      ) : (
-        <MatchupCard
-          phase={phase}
-          seasonComplete={seasonComplete}
-          currentRound={currentRound}
-          totalRounds={season.rounds.length}
-          finalsWeek={season.finalsRounds.length + 1}
-          isBye={!!isBye}
-          nextFixture={nextFixture ?? null}
-          club={club}
-          opponent={opponent}
-          isHome={isHome}
-          opponentLadderPosition={opponentLadderPosition}
-          opponentLadderEntry={opponentLadderEntry ?? null}
-          opponentForm={opponentForm}
+      {/* Priority Row: Match Focus + Decision Support */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+        <div className="xl:col-span-8">
+          {isOffseason ? (
+            <OffseasonPhaseCard />
+          ) : (
+            <MatchupCard
+              phase={phase}
+              seasonComplete={seasonComplete}
+              currentRound={currentRound}
+              totalRounds={season.rounds.length}
+              finalsWeek={season.finalsRounds.length + 1}
+              isBye={!!isBye}
+              nextFixture={nextFixture ?? null}
+              club={club}
+              opponent={opponent}
+              isHome={isHome}
+              opponentLadderPosition={opponentLadderPosition}
+              opponentLadderEntry={opponentLadderEntry ?? null}
+              opponentForm={opponentForm}
           ladderPosition={ladderPosition}
           matchDay={nextFixture?.matchDay ?? null}
           nextMatchDate={nextMatchDate}
-          simming={simming}
-          onSimWeek={handleSimWeek}
-          onSimToEnd={handleSimToEnd}
-          onEnterOffseason={enterOffseason}
-          userForm={userForm}
-          userLadderEntry={ladderEntry ?? null}
-          headToHead={headToHead}
-        />
-      )}
+          currentDate={effectiveDate}
+          simming={simming || simulationActive}
+              onSimWeek={handleSimWeek}
+              onSimToEnd={handleSimToEnd}
+              onEnterOffseason={enterOffseason}
+              userForm={userForm}
+              userLadderEntry={ladderEntry ?? null}
+              headToHead={headToHead}
+              playerClubId={playerClubId}
+              players={players}
+              clubs={clubs}
+              selectedLineup={selectedLineup}
+              interchangePlayers={settings.matchRules.interchangePlayers}
+              potentialMatchups={potentialMatchups}
+            />
+          )}
+        </div>
+        <div className="xl:col-span-4 space-y-4">
+          {isOffseason ? (
+            <PhaseProgressCard />
+          ) : (
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Ladder Position</CardTitle>
+                <Trophy className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-center">
+                  <div className="text-4xl font-bold">
+                    {ladderPosition > 0 ? `${ladderPosition}${ordinal(ladderPosition)}` : '-'}
+                  </div>
+                  {ladderEntry ? (
+                    <div className="mt-2.5 space-y-1 text-sm text-muted-foreground">
+                      <p>
+                        <span className="font-semibold text-foreground">{ladderEntry.points}</span> pts
+                        {' · '}
+                        <span className="font-semibold text-foreground">{ladderEntry.percentage.toFixed(1)}%</span>
+                      </p>
+                      <p>{ladderEntry.pointsFor} PF / {ladderEntry.pointsAgainst} PA</p>
+                      <p>{ladderEntry.wins}W {ladderEntry.draws}D {ladderEntry.losses}L</p>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-sm text-muted-foreground">Season not started</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          <RecommendedActions />
+        </div>
+      </div>
 
+      {/* Secondary: Ladder + Hub */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-medium">Ladder Snapshot</CardTitle>
+              <Button variant="link" size="sm" className="text-xs h-auto p-0" onClick={() => navigate('/ladder')}>
+                Full Ladder <ArrowRight className="ml-1 h-3 w-3" />
+              </Button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+              {hasTop4FinalsAdvantage && (
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-sm bg-cyan-500/60" />
+                  Top 4
+                </span>
+              )}
+              {finalsQualifyingTeams > 0 && (
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-sm bg-emerald-500/50" />
+                  Finals
+                </span>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="max-h-[300px] overflow-y-auto space-y-1 pr-1">
+              {ladder.map((entry, i) => {
+                const ladderClub = clubs[entry.clubId]
+                const isPlayer = entry.clubId === playerClubId
+                const inFinalsZone = i < finalsQualifyingTeams
+                const inTop4Zone = hasTop4FinalsAdvantage && i < 4
+                const inLowerFinalsZone = inFinalsZone && !inTop4Zone
+                const isTop4CutLine = hasTop4FinalsAdvantage && i === 3
+                const isFinalsCutLine = finalsQualifyingTeams > 0 && i === finalsQualifyingTeams - 1
+                return (
+                  <div
+                    key={entry.clubId}
+                    className={`flex items-center justify-between rounded px-3 py-1 text-sm ${
+                      inTop4Zone ? 'bg-cyan-500/12' : ''
+                    } ${
+                      inLowerFinalsZone ? 'bg-emerald-500/5' : ''
+                    } ${isPlayer ? 'bg-accent font-semibold' : ''} ${
+                      isTop4CutLine ? 'border-b-2 border-dashed border-cyan-500/50' : ''
+                    } ${
+                      isFinalsCutLine ? 'border-b-2 border-dashed border-emerald-500/40' : ''
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="w-5 text-right text-muted-foreground">{i + 1}</span>
+                      <div
+                        className="h-3 w-3 rounded-full"
+                        style={{ backgroundColor: ladderClub?.colors.primary }}
+                      />
+                      <span>{ladderClub?.abbreviation}</span>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <span>{entry.wins}-{entry.draws}-{entry.losses}</span>
+                      <span className="w-12 text-right">{entry.percentage.toFixed(1)}%</span>
+                      <Badge variant="secondary" className="w-8 justify-center">
+                        {entry.points}
+                      </Badge>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Training Overview</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Weekly load, risk, and focus coverage for your high performance staff.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {isOffseason ? (
+              <div className="rounded border px-3 py-2 text-xs text-muted-foreground">
+                Offseason mode: run sessions from the offseason planner.
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded border px-2 py-1.5">
+                  <p className="text-muted-foreground">Scheduled Slots</p>
+                  <p className="font-semibold">{scheduledSlotCount}</p>
+                </div>
+                <div className="rounded border px-2 py-1.5">
+                  <p className="text-muted-foreground">Training Groups</p>
+                  <p className="font-semibold">{plannedGroupCount}</p>
+                </div>
+                <div className="rounded border px-2 py-1.5">
+                  <p className="text-muted-foreground">Weekly Load</p>
+                  <p className="font-semibold">
+                    {scheduleSummary ? scheduleSummary.fatigueLevel : 'Not set'}
+                  </p>
+                </div>
+                <div className="rounded border px-2 py-1.5">
+                  <p className="text-muted-foreground">Injury Risk</p>
+                  <p className="font-semibold">
+                    {scheduleSummary ? scheduleSummary.injuryRisk : 'Not set'}
+                  </p>
+                </div>
+                <div className="rounded border px-2 py-1.5 col-span-2">
+                  <p className="text-muted-foreground">Focus Areas</p>
+                  <p className="font-semibold truncate">
+                    {scheduleSummary && scheduleSummary.skillAreas.length > 0
+                      ? scheduleSummary.skillAreas.join(', ')
+                      : 'No focus areas configured'}
+                  </p>
+                </div>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="outline" size="sm" onClick={() => navigate('/training')}>
+                Open Planner
+              </Button>
+              {!isOffseason && (
+                <Button variant="outline" size="sm" onClick={handleAutoFillTraining}>
+                  Auto-fill Week
+                </Button>
+              )}
+              {isOffseason && (
+                <Button variant="outline" size="sm" onClick={() => navigate('/offseason')}>
+                  Open Offseason
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={() => navigate('/lineup')}>
+                Review Selection
+              </Button>
+            </div>
+            {!isOffseason && (
+              <div className="text-xs text-muted-foreground">
+                Week events in next 7 days: {upcomingWeekEvents.length}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+      {/* Compact club intelligence cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <Card className="cursor-pointer transition-colors hover:bg-accent/40" onClick={() => navigate('/squad')}>
+          <CardContent className="px-4 py-3 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Team Pulse</p>
+              <Users className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+            <p className="text-sm font-semibold">{clubPlayers.length} listed</p>
+            <p className="text-xs text-muted-foreground">
+              {seniorPlayers.length} senior · {reservePlayers.length} reserves
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Avg fit {avgFitness} · form {avgForm} · morale {avgMorale}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer transition-colors hover:bg-accent/40" onClick={() => navigate('/salary-cap')}>
+          <CardContent className="px-4 py-3 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Salary Cap</p>
+              <Scale className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+            <p className="text-sm font-semibold">{(capRatio * 100).toFixed(1)}% used</p>
+            <p className="text-xs text-muted-foreground">
+              {formatMoneyShort(totalSpend)} / {formatMoneyShort(salaryCapAmount)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {capSpace >= 0 ? `${formatMoneyShort(capSpace)} space` : `${formatMoneyShort(Math.abs(capSpace))} over`}
+              {luxuryTax > 0 ? ` · Tax ${formatMoneyShort(luxuryTax)}` : ''}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer transition-colors hover:bg-accent/40" onClick={() => navigate('/club')}>
+          <CardContent className="px-4 py-3 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Board Room</p>
+              <Shield className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+            <p className={`text-sm font-semibold ${boardStatusClass}`}>{boardStatus} ({jobSecurity}%)</p>
+            <p className="text-xs text-muted-foreground line-clamp-2">{manager.seasonExpectation}</p>
+            <p className="text-xs text-muted-foreground">Reputation {Math.round(manager.reputation)}/100</p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer transition-colors hover:bg-accent/40" onClick={() => navigate('/contracts')}>
+          <CardContent className="px-4 py-3 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Contract Watch</p>
+              <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+            <p className="text-sm font-semibold">{expiringContractsCount} expiring</p>
+            <p className="text-xs text-muted-foreground">Deals ending this season</p>
+            <p className="text-xs text-muted-foreground">Review before trade and free agency</p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer transition-colors hover:bg-accent/40" onClick={() => navigate('/club')}>
+          <CardContent className="px-4 py-3 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Facilities</p>
+              <BarChart3 className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+            <p className="text-sm font-semibold">{facilitiesAverage.toFixed(1)} / 5.0 average</p>
+            <p className="text-xs text-muted-foreground">
+              Training {club?.facilities.trainingGround ?? '-'} · Medical {club?.facilities.medicalCentre ?? '-'}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Recovery {club?.facilities.recoveryPool ?? '-'} · Academy {club?.facilities.youthAcademy ?? '-'}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer transition-colors hover:bg-accent/40" onClick={() => navigate('/reserves')}>
+          <CardContent className="px-4 py-3 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Reserves</p>
+              <Gamepad2 className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+            <p className="text-sm font-semibold">
+              {reserves.delegationEnabled ? 'Delegated' : 'Manual control'}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Watchlist {reserves.promotionWatchlist.length} · lineup {reserves.managedLineupPlayerIds.length}/23
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Top reserves rating {reservesTopRating ? reservesTopRating.toFixed(1) : '-'}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer transition-colors hover:bg-accent/40" onClick={() => navigate('/lineup')}>
+          <CardContent className="px-4 py-3 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Selection Status</p>
+              <AlertTriangle className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+            <p className="text-sm font-semibold">{availablePlayers.length} available</p>
+            <p className="text-xs text-muted-foreground">
+              Injured {injuredPlayers.length} · Suspended {suspendedPlayers.length}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Unselected available {availableNotSelected.length} · avg fatigue {avgFatigue}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="cursor-pointer transition-colors hover:bg-accent/40" onClick={() => navigate('/squad')}>
+          <CardContent className="px-4 py-3 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">List Mix</p>
+              <GraduationCap className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+            <p className="text-sm font-semibold">
+              Youth {youngCoreCount} · vets {veteranCount}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              List limits: {seniorPlayers.length}/{settings.listRules.seniorListSize} senior
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Rookies {rookieCount}/{settings.listRules.rookieListSize}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
       {/* Last Match Result (hidden during offseason) */}
       {!isOffseason && lastResult?.result && (
         <Card>
-          <CardHeader>
+          <CardHeader className="pb-2">
             <CardTitle className="text-sm">Your Last Result</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="pt-1">
             <div className="flex items-center justify-center gap-6">
               <div className="flex items-center gap-2">
                 <div
@@ -1332,8 +1763,8 @@ export function DashboardPage() {
                 />
               </div>
             </div>
-            <div className="mt-2 text-center">
-              <Button variant="link" size="sm" onClick={() => navigate('/match')}>
+            <div className="mt-1.5 text-center">
+              <Button variant="link" size="sm" onClick={() => navigate('/fixture')}>
                 View Full Stats <ChevronRight className="ml-1 h-3 w-3" />
               </Button>
             </div>
@@ -1341,46 +1772,6 @@ export function DashboardPage() {
         </Card>
       )}
 
-      {/* Full Scrollable Ladder */}
-      {ladder.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Ladder</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="max-h-[400px] overflow-y-auto space-y-1">
-              {ladder.map((entry, i) => {
-                const ladderClub = clubs[entry.clubId]
-                const isPlayer = entry.clubId === playerClubId
-                return (
-                  <div
-                    key={entry.clubId}
-                    className={`flex items-center justify-between rounded px-3 py-1.5 text-sm ${
-                      isPlayer ? 'bg-accent font-semibold' : ''
-                    } ${i === 7 ? 'border-b-2 border-dashed border-muted-foreground/30' : ''}`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="w-5 text-right text-muted-foreground">{i + 1}</span>
-                      <div
-                        className="h-3 w-3 rounded-full"
-                        style={{ backgroundColor: ladderClub?.colors.primary }}
-                      />
-                      <span>{ladderClub?.abbreviation}</span>
-                    </div>
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                      <span>{entry.wins}-{entry.draws}-{entry.losses}</span>
-                      <span className="w-12 text-right">{entry.percentage.toFixed(1)}%</span>
-                      <Badge variant="secondary" className="w-8 justify-center">
-                        {entry.points}
-                      </Badge>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
     </div>
   )
 }
@@ -1406,6 +1797,7 @@ interface MatchupCardProps {
   ladderPosition: number
   matchDay: string | null
   nextMatchDate: string | null
+  currentDate: string
   simming: boolean
   onSimWeek: () => void
   onSimToEnd: () => void
@@ -1413,6 +1805,12 @@ interface MatchupCardProps {
   userForm: string[]
   userLadderEntry: LadderEntry | null
   headToHead: { userScore: number; oppScore: number } | null
+  playerClubId: string
+  players: Record<string, Player>
+  clubs: Record<string, Club>
+  selectedLineup: Record<string, string> | null
+  interchangePlayers: number
+  potentialMatchups: MatchupOption[]
 }
 
 function FormBadges({ form }: { form: string[] }) {
@@ -1454,6 +1852,7 @@ function MatchupCard({
   ladderPosition,
   matchDay,
   nextMatchDate,
+  currentDate,
   simming,
   onSimWeek,
   onSimToEnd,
@@ -1461,7 +1860,39 @@ function MatchupCard({
   userForm,
   userLadderEntry,
   headToHead,
+  playerClubId,
+  players,
+  clubs,
+  selectedLineup,
+  interchangePlayers,
+  potentialMatchups,
 }: MatchupCardProps) {
+  const [showStrategies, setShowStrategies] = useState(false)
+  const [showPotential, setShowPotential] = useState(false)
+  const [selectedPotentialKey, setSelectedPotentialKey] = useState<string | null>(null)
+  const selectedPotential = useMemo(() => {
+    if (potentialMatchups.length === 0) return null
+    if (selectedPotentialKey) {
+      const found = potentialMatchups.find((opt) => opt.key === selectedPotentialKey)
+      if (found) return found
+    }
+    return potentialMatchups[0]
+  }, [potentialMatchups, selectedPotentialKey])
+  const userPreviewLineup = useMemo(() => {
+    const fallback = selectBestLineup(Object.values(players), playerClubId).lineup
+    return sanitizePreviewLineup(selectedLineup ?? fallback, players, playerClubId, interchangePlayers)
+  }, [players, playerClubId, selectedLineup, interchangePlayers])
+  const oppositionPreviewLineup = useMemo(() => {
+    if (!selectedPotential || selectedPotential.kind !== 'match') return {}
+    return selectBestLineup(Object.values(players), selectedPotential.opponentId).lineup
+  }, [players, selectedPotential])
+  const previewCountdown = useMemo(() => {
+    if (!selectedPotential) return null
+    const now = new Date(currentDate + 'T00:00:00').getTime()
+    const then = new Date(selectedPotential.roundDate + 'T00:00:00').getTime()
+    return Math.max(0, Math.round((then - now) / 86_400_000))
+  }, [selectedPotential, currentDate])
+
   if (seasonComplete) {
     return (
       <Card>
@@ -1548,15 +1979,49 @@ function MatchupCard({
     const oppPaPg = opponentLadderEntry && opponentLadderEntry.played > 0
       ? (opponentLadderEntry.pointsAgainst / opponentLadderEntry.played).toFixed(0)
       : '-'
-
+    const daysToGame = (() => {
+      if (!nextMatchDate) return null
+      const now = new Date(currentDate + 'T00:00:00').getTime()
+      const then = new Date(nextMatchDate + 'T00:00:00').getTime()
+      const days = Math.round((then - now) / 86_400_000)
+      return Math.max(0, days)
+    })()
     return (
       <Card>
         <CardContent className="py-6">
           <div className="text-center mb-4">
+            <div className="mb-2 flex justify-start gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => setShowPotential((v) => !v)}
+              >
+                {showPotential ? 'Hide' : 'Show'} Potential Matchups
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => setShowStrategies((v) => !v)}
+              >
+                {showStrategies ? 'Hide' : 'Show'} Strategies
+              </Button>
+            </div>
             <p className="text-sm text-muted-foreground">
               Round {currentRound + 1} of {totalRounds}
               {matchDayLabel ? ` · ${matchDayLabel}` : ''}
             </p>
+            {nextMatchDate && (
+              <p className="text-xs text-muted-foreground mt-1">
+                {formatDate(nextMatchDate)} · {nextFixture.scheduledTime}
+              </p>
+            )}
+            {daysToGame !== null && (
+              <p className="text-xs text-muted-foreground mt-1">
+                {daysToGame === 0 ? 'Game day' : `${daysToGame} day${daysToGame === 1 ? '' : 's'} to game`}
+              </p>
+            )}
           </div>
 
           {/* Teams */}
@@ -1587,6 +2052,70 @@ function MatchupCard({
           <p className="text-center text-sm text-muted-foreground mt-3">
             {nextFixture.venue}
           </p>
+
+          {showStrategies && (
+            <div className="mt-3 rounded border p-2.5 space-y-1.5">
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Strategy Notes</p>
+              <p className="text-xs text-muted-foreground">
+                {opponentLadderPosition > 0 && opponentLadderPosition <= 4
+                  ? 'Top-tier opposition: prioritise territory control and reduce turnover risk.'
+                  : 'Mid/lower ladder opposition: back your pressure game and attack corridor transition.'}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {Number(oppPfPg) > Number(userPaPg)
+                  ? 'Defensive focus: set stronger team defence and limit forward-half entries.'
+                  : 'Attacking focus: commit more overlap run to expose their defensive setup.'}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {opponentForm.filter((r) => r === 'W').length >= 3
+                  ? 'Opponent is in form: start conservatively, then open up once control is established.'
+                  : 'Opponent form is mixed: pressure early and force selection/tactical changes.'}
+              </p>
+            </div>
+          )}
+
+          {showPotential && (
+            <div className="mt-3 rounded border p-2.5 space-y-2.5">
+              <div className="flex flex-wrap gap-1.5">
+                {potentialMatchups.map((opt) => (
+                  <Button
+                    key={opt.key}
+                    variant={selectedPotential?.key === opt.key ? 'default' : 'outline'}
+                    size="sm"
+                    className="h-6 px-2 text-[10px]"
+                    onClick={() => setSelectedPotentialKey(opt.key)}
+                  >
+                    R{opt.round}{opt.kind === 'bye' ? ' BYE' : ` ${clubs[opt.opponentId]?.abbreviation ?? opt.opponentId}`}
+                  </Button>
+                ))}
+              </div>
+              <div className="max-h-[560px] overflow-y-auto pr-1">
+                {!selectedPotential ? (
+                  <p className="text-xs text-muted-foreground">No upcoming matchups available.</p>
+                ) : selectedPotential.kind === 'bye' ? (
+                  <div className="rounded border bg-muted/20 p-2 text-xs text-muted-foreground">
+                    Round {selectedPotential.round} is a bye
+                    {previewCountdown !== null && ` · ${previewCountdown === 0 ? 'current week' : `${previewCountdown} day${previewCountdown === 1 ? '' : 's'} away`}`}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="rounded border bg-muted/20 p-2 text-xs text-muted-foreground">
+                      {formatDate(selectedPotential.roundDate)} · {selectedPotential.homeAway.toUpperCase()} · {selectedPotential.venue}
+                      {previewCountdown !== null && ` · ${previewCountdown === 0 ? 'game week' : `${previewCountdown} day${previewCountdown === 1 ? '' : 's'} to game`}`}
+                    </div>
+                    <MatchupFieldPreview
+                      userLineup={userPreviewLineup}
+                      opponentLineup={oppositionPreviewLineup}
+                      players={players}
+                      userClub={clubs[playerClubId]}
+                      opponentClub={clubs[selectedPotential.opponentId]}
+                      interchangeCount={interchangePlayers}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Stats comparison */}
           <div className="mt-4 border-t pt-4">

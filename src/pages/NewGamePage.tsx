@@ -35,14 +35,21 @@ import {
 import clubsData from '@/data/clubs.json'
 import { FINALS_FORMATS } from '@/engine/season/finalsFormats'
 import { DIFFICULTY_PRESETS } from '@/engine/core/difficultyPresets'
-import { createDefaultSettings, GF_VENUES } from '@/engine/core/defaultSettings'
-import { computeDefaultGameStartDate, formatDate } from '@/engine/calendar/calendarEngine'
+import { createDefaultSettings, GF_VENUES, DEFAULT_ORIGIN_CONFIG } from '@/engine/core/defaultSettings'
+import { addDays, computeDefaultGameStartDate, diffDays, formatDate } from '@/engine/calendar/calendarEngine'
 import { generateFictionalLeague } from '@/engine/league/leagueGenerator'
+import { buildClubsFromTemplate, buildLeagueConfigFromTemplate, buildSettingsFromTemplate } from '@/engine/league/customLeagueBuilder'
 import type { Club } from '@/types/club'
+import type { CustomLeagueTemplate } from '@/types/customLeague'
+import type { LeagueConfig } from '@/types/expansion'
+import type { OffseasonPhase } from '@/engine/season/offseasonFlow'
 import { AdvancedSection } from '@/pages/wizard/AdvancedSection'
 import { MatchSlotGrid } from '@/pages/wizard/MatchSlotGrid'
 import { BlockbusterEditor } from '@/pages/wizard/BlockbusterEditor'
 import { FinalsFormatEditor } from '@/pages/wizard/FinalsFormatEditor'
+import { SPECIAL_EVENT_DEFINITIONS } from '@/engine/specialEvents/eventDefinitions'
+import type { SpecialEventId, OriginEligibility, OriginConfig, OriginState, OriginCompetitionFormat, OriginScheduleMode } from '@/types/specialEvents'
+import { ALL_ORIGIN_STATES } from '@/types/specialEvents'
 
 interface ClubData {
   id: string
@@ -67,6 +74,340 @@ const STEPS = [
   { number: 7, label: 'Confirm', icon: CheckCircle2 },
 ] as const
 
+const OFFSEASON_STAGE_START_OFFSETS: Record<OffseasonPhase, number> = {
+  'season-end': 0,
+  retirements: 7,
+  delistings: 10,
+  'trade-period': 14,
+  'free-agency': 35,
+  'national-draft': 49,
+  'rookie-draft': 52,
+  'supplemental-signing': 54,
+  preseason: 56,
+  'venue-allocation': 70,
+  'practice-matches': 77,
+  ready: 84,
+}
+
+const OFFSEASON_STAGE_OPTIONS: Array<{ value: OffseasonPhase; label: string }> = [
+  { value: 'season-end', label: 'Awards Night' },
+  { value: 'retirements', label: 'Retirements' },
+  { value: 'delistings', label: 'Delistings' },
+  { value: 'trade-period', label: 'Trade Period' },
+  { value: 'free-agency', label: 'Free Agency' },
+  { value: 'national-draft', label: 'National Draft' },
+  { value: 'rookie-draft', label: 'Rookie Draft' },
+  { value: 'supplemental-signing', label: 'Supplemental Signing' },
+  { value: 'preseason', label: 'Preseason' },
+  { value: 'venue-allocation', label: 'Venue Allocation' },
+  { value: 'practice-matches', label: 'Practice Matches' },
+  { value: 'ready', label: 'Season Ready' },
+]
+
+function getGameStartDateForStage(seasonStartDate: string, stage: OffseasonPhase): string {
+  const year = parseInt(seasonStartDate.slice(0, 4), 10) || 2026
+  const offseasonStartDate = computeDefaultGameStartDate(year)
+  return addDays(offseasonStartDate, OFFSEASON_STAGE_START_OFFSETS[stage] ?? 0)
+}
+
+function inferOffseasonStageFromDate(seasonStartDate: string, gameStartDate: string): OffseasonPhase {
+  const year = parseInt(seasonStartDate.slice(0, 4), 10) || 2026
+  const offseasonStartDate = computeDefaultGameStartDate(year)
+  const dayOffset = diffDays(offseasonStartDate, gameStartDate)
+  let inferred: OffseasonPhase = 'season-end'
+  for (const option of OFFSEASON_STAGE_OPTIONS) {
+    const start = OFFSEASON_STAGE_START_OFFSETS[option.value]
+    if (dayOffset >= start) inferred = option.value
+  }
+  return inferred
+}
+
+// ---------------------------------------------------------------------------
+// Origin Config Panel
+// ---------------------------------------------------------------------------
+
+const ORIGIN_FORMAT_LABELS: Record<OriginCompetitionFormat, string> = {
+  'best-of-3': 'Best of 3',
+  'round-robin': 'Round Robin',
+  'single-annual': 'Single Annual',
+}
+
+const ORIGIN_SCHEDULE_LABELS: Record<OriginScheduleMode, string> = {
+  'mid-season-block': 'Mid-season block (bye rounds)',
+  'weeknight-spread': 'Weeknight spread',
+  'pre-finals': 'Pre-finals showcase',
+  'post-season': 'Post-season',
+}
+
+const ORIGIN_STATE_LABELS: Record<OriginState, string> = {
+  VIC: 'Victoria',
+  SA: 'South Australia',
+  WA: 'Western Australia',
+  QLD: 'Queensland',
+  NSW: 'New South Wales',
+  TAS: 'Tasmania',
+  NT: 'Northern Territory',
+}
+
+function computeDefaultMatchCount(format: OriginCompetitionFormat, teamCount: number): number {
+  switch (format) {
+    case 'best-of-3': return 3
+    case 'round-robin': return Math.max(1, (teamCount * (teamCount - 1)) / 2)
+    case 'single-annual': return 1
+  }
+}
+
+function getEffectiveTeamCount(config: OriginConfig): number {
+  const alliesSet = new Set<string>(config.alliesEnabled ? config.alliesStates : [])
+  let count = 0
+  for (const s of config.participatingStates) {
+    if (!alliesSet.has(s)) count++
+  }
+  if (config.alliesEnabled && config.alliesStates.length > 0) count++
+  return count
+}
+
+function OriginConfigPanel({
+  config,
+  onChange,
+}: {
+  config: OriginConfig
+  onChange: (c: OriginConfig) => void
+}) {
+  const update = (patch: Partial<OriginConfig>) => onChange({ ...config, ...patch })
+
+  const teamCount = getEffectiveTeamCount(config)
+  const defaultMatchCount = computeDefaultMatchCount(config.format, teamCount)
+
+  // Build summary text
+  const alliesSet = new Set<string>(config.alliesEnabled ? config.alliesStates : [])
+  const stateNames = config.participatingStates.filter((s) => !alliesSet.has(s))
+  const summaryParts = [
+    ORIGIN_FORMAT_LABELS[config.format],
+    `${config.matchCount} match${config.matchCount !== 1 ? 'es' : ''}`,
+    stateNames.join(', ') + (config.alliesEnabled ? ` + ${config.alliesName} (${config.alliesStates.join('/')})` : ''),
+    `${config.matchDay.charAt(0).toUpperCase() + config.matchDay.slice(1)} nights`,
+    config.scheduleMode === 'mid-season-block' ? 'mid-season' : config.scheduleMode,
+  ]
+
+  return (
+    <div className="space-y-4 border-t border-zinc-800 pt-3">
+      <div>
+        <Label className="text-sm font-medium text-amber-400">State of Origin Configuration</Label>
+        <p className="text-[10px] text-zinc-500 mt-1">{summaryParts.join(' — ')}</p>
+      </div>
+
+      {/* Competition Format */}
+      <div className="space-y-1.5">
+        <Label className="text-zinc-200">Competition Format</Label>
+        <Select
+          value={config.format}
+          onValueChange={(val) => {
+            const fmt = val as OriginCompetitionFormat
+            const newCount = computeDefaultMatchCount(fmt, teamCount)
+            update({ format: fmt, matchCount: newCount })
+          }}
+        >
+          <SelectTrigger className="w-full border-zinc-700 bg-zinc-800 text-zinc-200">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {(Object.keys(ORIGIN_FORMAT_LABELS) as OriginCompetitionFormat[]).map((f) => (
+              <SelectItem key={f} value={f}>{ORIGIN_FORMAT_LABELS[f]}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Number of Matches */}
+      <div className="space-y-1.5">
+        <Label className="text-zinc-200">Number of Matches</Label>
+        <p className="text-[10px] text-zinc-500">Default: {defaultMatchCount} for {ORIGIN_FORMAT_LABELS[config.format].toLowerCase()} with {teamCount} teams</p>
+        <Input
+          type="number"
+          min={1}
+          max={20}
+          value={config.matchCount}
+          onChange={(e) => update({ matchCount: Math.max(1, Math.min(20, parseInt(e.target.value, 10) || 1)) })}
+          className="w-24 border-zinc-700 bg-zinc-800 text-zinc-200"
+        />
+      </div>
+
+      {/* Participating States */}
+      <div className="space-y-1.5">
+        <Label className="text-zinc-200">Participating States</Label>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {ALL_ORIGIN_STATES.map((state) => {
+            const checked = config.participatingStates.includes(state)
+            return (
+              <label key={state} className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => {
+                    const next = checked
+                      ? config.participatingStates.filter((s) => s !== state)
+                      : [...config.participatingStates, state]
+                    const newTeamCount = getEffectiveTeamCount({ ...config, participatingStates: next })
+                    const newMatchCount = computeDefaultMatchCount(config.format, newTeamCount)
+                    update({ participatingStates: next, matchCount: newMatchCount })
+                  }}
+                  className="accent-amber-500"
+                />
+                {ORIGIN_STATE_LABELS[state]} ({state})
+              </label>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Allies Team */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <Label className="text-zinc-200">Allies Team</Label>
+            <p className="text-xs text-zinc-500">Merge smaller states into a combined team</p>
+          </div>
+          <Switch
+            checked={config.alliesEnabled}
+            onCheckedChange={(val) => {
+              const newConfig = { ...config, alliesEnabled: val }
+              const newTeamCount = getEffectiveTeamCount(newConfig)
+              const newMatchCount = computeDefaultMatchCount(config.format, newTeamCount)
+              update({ alliesEnabled: val, matchCount: newMatchCount })
+            }}
+          />
+        </div>
+        {config.alliesEnabled && (
+          <div className="space-y-2 pl-4 border-l-2 border-zinc-700">
+            <div className="space-y-1">
+              <Label className="text-zinc-400 text-xs">Team Name</Label>
+              <Input
+                value={config.alliesName}
+                onChange={(e) => update({ alliesName: e.target.value || 'Allies' })}
+                className="w-48 border-zinc-700 bg-zinc-800 text-zinc-200"
+                placeholder="Allies"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-zinc-400 text-xs">States in Allies</Label>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {ALL_ORIGIN_STATES.map((state) => {
+                  const checked = config.alliesStates.includes(state)
+                  return (
+                    <label key={state} className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          const next = checked
+                            ? config.alliesStates.filter((s) => s !== state)
+                            : [...config.alliesStates, state]
+                          const newConfig = { ...config, alliesStates: next }
+                          const newTeamCount = getEffectiveTeamCount(newConfig)
+                          const newMatchCount = computeDefaultMatchCount(config.format, newTeamCount)
+                          update({ alliesStates: next, matchCount: newMatchCount })
+                        }}
+                        className="accent-amber-500"
+                      />
+                      {state}
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Scheduling Mode */}
+      <div className="space-y-1.5">
+        <Label className="text-zinc-200">Scheduling</Label>
+        <Select
+          value={config.scheduleMode}
+          onValueChange={(val) => update({ scheduleMode: val as OriginScheduleMode })}
+        >
+          <SelectTrigger className="w-full border-zinc-700 bg-zinc-800 text-zinc-200">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {(Object.keys(ORIGIN_SCHEDULE_LABELS) as OriginScheduleMode[]).map((m) => (
+              <SelectItem key={m} value={m}>{ORIGIN_SCHEDULE_LABELS[m]}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Match Day */}
+      <div className="space-y-1.5">
+        <Label className="text-zinc-200">Match Day</Label>
+        <Select
+          value={config.matchDay}
+          onValueChange={(val) => update({ matchDay: val as 'tuesday' | 'wednesday' | 'thursday' })}
+        >
+          <SelectTrigger className="w-full border-zinc-700 bg-zinc-800 text-zinc-200">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="tuesday">Tuesday</SelectItem>
+            <SelectItem value="wednesday">Wednesday</SelectItem>
+            <SelectItem value="thursday">Thursday</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Showdown Final */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <Label className="text-zinc-200">Showdown Final</Label>
+            <p className="text-xs text-zinc-500">Grand-final-adjacent showcase match between top 2 Origin teams</p>
+          </div>
+          <Switch
+            checked={config.includeShowdownFinal}
+            onCheckedChange={(val) => update({ includeShowdownFinal: val })}
+          />
+        </div>
+        {config.includeShowdownFinal && (
+          <div className="space-y-2 pl-4 border-l-2 border-zinc-700">
+            <div className="space-y-1">
+              <Label className="text-zinc-400 text-xs">Timing</Label>
+              <Select
+                value={config.showdownFinalTiming}
+                onValueChange={(val) => update({ showdownFinalTiming: val as 'before-gf' | 'after-gf' })}
+              >
+                <SelectTrigger className="w-48 border-zinc-700 bg-zinc-800 text-zinc-200">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="before-gf">Before Grand Final</SelectItem>
+                  <SelectItem value="after-gf">After Grand Final</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-zinc-400 text-xs">Venue</Label>
+              <Select
+                value={config.showdownFinalVenue}
+                onValueChange={(val) => update({ showdownFinalVenue: val })}
+              >
+                <SelectTrigger className="w-48 border-zinc-700 bg-zinc-800 text-zinc-200">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {GF_VENUES.map((v) => (
+                    <SelectItem key={v} value={v}>{v}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function NewGamePage() {
   const [currentStep, setCurrentStep] = useState(1)
   const [managerName, setManagerName] = useState('')
@@ -79,13 +420,26 @@ export function NewGamePage() {
   const initializeGame = useGameStore((s) => s.initializeGame)
   const setScreen = useAppStore((s) => s.setScreen)
   const saveCurrentGame = useAppStore((s) => s.saveCurrentGame)
+  const customLeagueTemplates = useAppStore((s) => s.customLeagueTemplates)
   const realClubs = clubsData as ClubData[]
 
-  // Game start date override state
-  const [gameStartDateOverridden, setGameStartDateOverridden] = useState(false)
+  const [gameStartStage, setGameStartStage] = useState<OffseasonPhase>(() =>
+    inferOffseasonStageFromDate(settings.seasonStartDate, settings.gameStartDate),
+  )
 
   // League mode state
   const [fictionalClubs, setFictionalClubs] = useState<Club[]>([])
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('')
+
+  const selectedTemplate: CustomLeagueTemplate | null = useMemo(
+    () => customLeagueTemplates.find((t) => t.id === selectedTemplateId) ?? null,
+    [customLeagueTemplates, selectedTemplateId],
+  )
+
+  const customTemplateClubs = useMemo(
+    () => (selectedTemplate ? buildClubsFromTemplate(selectedTemplate) : []),
+    [selectedTemplate],
+  )
 
   // Derive available clubs based on league mode
   const clubs = useMemo(() => {
@@ -103,8 +457,22 @@ export function NewGamePage() {
         colors: c.colors,
       }))
     }
+    if (settings.leagueMode === 'custom') {
+      return customTemplateClubs.map((c) => ({
+        id: c.id,
+        name: c.name,
+        fullName: c.fullName,
+        abbreviation: c.abbreviation,
+        mascot: c.mascot,
+        homeGround: c.homeGround,
+        established: c.established,
+        premierships: c.premierships,
+        tier: c.tier,
+        colors: c.colors,
+      }))
+    }
     return realClubs
-  }, [settings.leagueMode, fictionalClubs, realClubs])
+  }, [settings.leagueMode, fictionalClubs, customTemplateClubs, realClubs])
 
   const selectedClubData = useMemo(
     () => clubs.find((c) => c.id === selectedClub) ?? null,
@@ -128,7 +496,7 @@ export function NewGamePage() {
       case 1:
         return saveName.trim().length > 0
       case 2:
-        return true
+        return settings.leagueMode !== 'custom' || Boolean(selectedTemplate)
       case 3:
         return selectedClub !== null || startUnemployed
       case 4:
@@ -150,6 +518,13 @@ export function NewGamePage() {
         setSelectedClub(null)
         setStartUnemployed(false)
       }
+      if (currentStep === 2 && settings.leagueMode === 'custom') {
+        setSelectedClub(null)
+        setStartUnemployed(false)
+        if (selectedTemplate) {
+          setSettings(buildSettingsFromTemplate(selectedTemplate))
+        }
+      }
       setCurrentStep((s) => s + 1)
     }
   }
@@ -162,13 +537,25 @@ export function NewGamePage() {
 
   const handleStartGame = async () => {
     if (!selectedClub && !startUnemployed) return
+    const customOverrideSettings = selectedTemplate ? buildSettingsFromTemplate(selectedTemplate) : settings
+    const leagueConfigOverride: LeagueConfig | undefined = selectedTemplate
+      ? buildLeagueConfigFromTemplate(selectedTemplate)
+      : undefined
+    const clubsOverride: Club[] | undefined =
+      settings.leagueMode === 'fictional'
+        ? fictionalClubs
+        : settings.leagueMode === 'custom'
+          ? customTemplateClubs
+          : undefined
+
     initializeGame(
       selectedClub ?? '',
       saveName,
-      settings,
-      settings.leagueMode === 'fictional' ? fictionalClubs : undefined,
+      settings.leagueMode === 'custom' ? customOverrideSettings : settings,
+      clubsOverride,
       managerName.trim(),
       startUnemployed,
+      leagueConfigOverride,
     )
     // Save the new game to a slot and navigate to game screen
     const gameState = useGameStore.getState()
@@ -177,7 +564,9 @@ export function NewGamePage() {
   }
 
   const handleResetSettings = () => {
-    setSettings(createDefaultSettings())
+    const defaults = createDefaultSettings()
+    setSettings(defaults)
+    setGameStartStage(inferOffseasonStageFromDate(defaults.seasonStartDate, defaults.gameStartDate))
   }
 
   const updateRealism = (key: keyof RealismSettings, value: boolean) => {
@@ -368,6 +757,11 @@ export function NewGamePage() {
                     label: 'Fictional League',
                     description: 'Procedurally generated clubs and players',
                   },
+                  {
+                    id: 'custom' as const,
+                    label: 'Custom Template',
+                    description: 'Use a saved custom world from the League Builder',
+                  },
                 ]).map((mode) => (
                   <Card
                     key={mode.id}
@@ -425,6 +819,44 @@ export function NewGamePage() {
                     <p className="text-xs text-blue-400">
                       {settings.teamCount} teams will be generated
                     </p>
+                  </CardContent>
+                </Card>
+              )}
+
+              {settings.leagueMode === 'custom' && (
+                <Card className="border-zinc-800 bg-zinc-900/50">
+                  <CardHeader>
+                    <CardTitle className="text-white">Custom Template</CardTitle>
+                    <CardDescription>Select a saved custom world</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <Select value={selectedTemplateId} onValueChange={setSelectedTemplateId}>
+                      <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-white">
+                        <SelectValue placeholder="Choose template" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {customLeagueTemplates.map((t) => (
+                          <SelectItem key={t.id} value={t.id}>
+                            {t.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <div className="flex justify-between">
+                      <p className="text-xs text-zinc-400">
+                        {selectedTemplate
+                          ? `${selectedTemplate.teams.length} teams, ${selectedTemplate.fixtureRules.roundCount} rounds`
+                          : 'No template selected'}
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-zinc-700 bg-zinc-800/50 text-zinc-100"
+                        onClick={() => setScreen('custom-league-builder')}
+                      >
+                        Open Builder
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               )}
@@ -670,48 +1102,39 @@ export function NewGamePage() {
                     )}
                   </div>
 
-                  {/* Game Start Date */}
+                  {/* Game Start Stage */}
                   <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <Label className="text-zinc-200">Game Start Date</Label>
-                        <p className="text-xs text-zinc-500">
-                          Day after the previous season Grand Final. Offseason events start from this date.
-                        </p>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 shrink-0 border-zinc-700 text-xs text-zinc-300 hover:bg-zinc-800"
-                        onClick={() => {
-                          if (gameStartDateOverridden) {
-                            // Reset to computed default
-                            const year = parseInt(settings.seasonStartDate.slice(0, 4), 10) || 2026
-                            setSettings((prev) => ({
-                              ...prev,
-                              gameStartDate: computeDefaultGameStartDate(year),
-                            }))
-                          }
-                          setGameStartDateOverridden((v) => !v)
-                        }}
-                      >
-                        {gameStartDateOverridden ? 'Reset' : 'Override'}
-                      </Button>
-                    </div>
-                    {gameStartDateOverridden ? (
-                      <Input
-                        type="date"
-                        value={settings.gameStartDate}
-                        onChange={(e) =>
-                          setSettings((prev) => ({ ...prev, gameStartDate: e.target.value }))
-                        }
-                        className="border-zinc-700 bg-zinc-800/50 text-white"
-                      />
-                    ) : (
-                      <p className="rounded-md border border-zinc-700 bg-zinc-800/30 px-3 py-2 text-sm text-zinc-200">
-                        {formatDate(settings.gameStartDate)}
+                    <div>
+                      <Label className="text-zinc-200">Game Start Stage</Label>
+                      <p className="text-xs text-zinc-500">
+                        Choose which offseason stage to begin from. The date is set automatically.
                       </p>
-                    )}
+                    </div>
+                    <Select
+                      value={gameStartStage}
+                      onValueChange={(val) => {
+                        const stage = val as OffseasonPhase
+                        setGameStartStage(stage)
+                        setSettings((prev) => ({
+                          ...prev,
+                          gameStartDate: getGameStartDateForStage(prev.seasonStartDate, stage),
+                        }))
+                      }}
+                    >
+                      <SelectTrigger className="w-full border-zinc-700 bg-zinc-800/50 text-white">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {OFFSEASON_STAGE_OPTIONS.map((stage) => (
+                          <SelectItem key={stage.value} value={stage.value}>
+                            {stage.label} ({formatDate(getGameStartDateForStage(settings.seasonStartDate, stage.value))})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="rounded-md border border-zinc-700 bg-zinc-800/30 px-3 py-2 text-sm text-zinc-200">
+                      {formatDate(settings.gameStartDate)}
+                    </p>
                   </div>
 
                   {/* Season Start Date */}
@@ -735,13 +1158,8 @@ export function NewGamePage() {
                         if (dateMap[val]) {
                           setSettings((prev) => {
                             const newDate = dateMap[val]
-                            const newYear = parseInt(newDate.slice(0, 4), 10)
-                            const oldYear = parseInt(prev.seasonStartDate.slice(0, 4), 10)
                             const updated = { ...prev, seasonStartDate: newDate }
-                            // Recompute gameStartDate if year changed and not overridden
-                            if (newYear !== oldYear && !gameStartDateOverridden) {
-                              updated.gameStartDate = computeDefaultGameStartDate(newYear)
-                            }
+                            updated.gameStartDate = getGameStartDateForStage(newDate, gameStartStage)
                             return updated
                           })
                         }
@@ -767,12 +1185,8 @@ export function NewGamePage() {
                         onChange={(e) =>
                           setSettings((prev) => {
                             const newDate = e.target.value
-                            const newYear = parseInt(newDate.slice(0, 4), 10)
-                            const oldYear = parseInt(prev.seasonStartDate.slice(0, 4), 10)
                             const updated = { ...prev, seasonStartDate: newDate }
-                            if (newYear !== oldYear && !gameStartDateOverridden) {
-                              updated.gameStartDate = computeDefaultGameStartDate(newYear)
-                            }
+                            updated.gameStartDate = getGameStartDateForStage(newDate, gameStartStage)
                             return updated
                           })
                         }
@@ -788,6 +1202,123 @@ export function NewGamePage() {
                       setSettings((prev) => ({ ...prev, finals }))
                     }
                   />
+                </CardContent>
+              </Card>
+
+              {/* Special Events & Exhibitions */}
+              <Card className="border-zinc-800 bg-zinc-900/50">
+                <CardHeader>
+                  <CardTitle className="text-white">Special Events & Exhibitions</CardTitle>
+                  <CardDescription>Optional exhibition matches that appear in the calendar</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-zinc-200">Enable Special Events</Label>
+                      <p className="text-xs text-zinc-500">Exhibition matches throughout the season</p>
+                    </div>
+                    <Switch
+                      checked={settings.specialEvents.enabled}
+                      onCheckedChange={(val) =>
+                        setSettings((prev) => ({
+                          ...prev,
+                          specialEvents: { ...prev.specialEvents, enabled: val },
+                        }))
+                      }
+                    />
+                  </div>
+
+                  {settings.specialEvents.enabled && (
+                    <div className="space-y-3 border-t border-zinc-800 pt-3">
+                      {SPECIAL_EVENT_DEFINITIONS.map((def) => (
+                        <div key={def.id} className="flex items-center justify-between">
+                          <div>
+                            <Label className="text-zinc-200">{def.name}</Label>
+                            <p className="text-xs text-zinc-500">{def.description}</p>
+                          </div>
+                          <Switch
+                            checked={settings.specialEvents.events[def.id as SpecialEventId]}
+                            onCheckedChange={(val) =>
+                              setSettings((prev) => ({
+                                ...prev,
+                                specialEvents: {
+                                  ...prev.specialEvents,
+                                  events: { ...prev.specialEvents.events, [def.id]: val },
+                                },
+                              }))
+                            }
+                          />
+                        </div>
+                      ))}
+                      <div className="flex items-center justify-between border-t border-zinc-800 pt-3">
+                        <div>
+                          <Label className="text-zinc-200">Auto-Schedule</Label>
+                          <p className="text-xs text-zinc-500">Automatically place events at realistic dates</p>
+                        </div>
+                        <Switch
+                          checked={settings.specialEvents.autoSchedule}
+                          onCheckedChange={(val) =>
+                            setSettings((prev) => ({
+                              ...prev,
+                              specialEvents: { ...prev.specialEvents, autoSchedule: val },
+                            }))
+                          }
+                        />
+                      </div>
+
+                      {/* Origin Eligibility Rule */}
+                      <div className="space-y-1.5 border-t border-zinc-800 pt-3">
+                        <Label className="text-zinc-200">Origin Eligibility</Label>
+                        <p className="text-xs text-zinc-500">
+                          How players qualify for state-based representative teams (State of Origin, Preseason Showcase)
+                        </p>
+                        <Select
+                          value={settings.specialEvents.originEligibility}
+                          onValueChange={(val) =>
+                            setSettings((prev) => ({
+                              ...prev,
+                              specialEvents: {
+                                ...prev.specialEvents,
+                                originEligibility: val as OriginEligibility,
+                              },
+                            }))
+                          }
+                        >
+                          <SelectTrigger className="w-full border-zinc-700 bg-zinc-800 text-zinc-200">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="birthplace">Birthplace / Pathway</SelectItem>
+                            <SelectItem value="current-club">Current Club State</SelectItem>
+                            <SelectItem value="state-league">State League Affiliation</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-[10px] text-zinc-600">
+                          {settings.specialEvents.originEligibility === 'birthplace'
+                            ? 'Players represent the state they grew up in, reflecting underage talent pathways'
+                            : settings.specialEvents.originEligibility === 'current-club'
+                              ? 'Players represent the state of the AFL club they currently play for'
+                              : 'Players represent the state league system their AFL club is affiliated with'}
+                        </p>
+                      </div>
+
+                      {/* State of Origin Configuration */}
+                      {settings.specialEvents.events['state-of-origin'] && (
+                        <OriginConfigPanel
+                          config={settings.specialEvents.originConfig ?? DEFAULT_ORIGIN_CONFIG}
+                          onChange={(newConfig) =>
+                            setSettings((prev) => ({
+                              ...prev,
+                              specialEvents: {
+                                ...prev.specialEvents,
+                                originConfig: newConfig,
+                              },
+                            }))
+                          }
+                        />
+                      )}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -1427,6 +1958,48 @@ export function NewGamePage() {
                       </div>
                       <div className="flex items-center justify-between">
                         <div>
+                          <Label className="text-zinc-200">AFL Expansion Evolution</Label>
+                          <p className="text-xs text-zinc-500">AFL House may add new clubs slowly over time</p>
+                        </div>
+                        <Switch checked={settings.realism.aflHouseExpansionEvolution} onCheckedChange={(val) => updateRealism('aflHouseExpansionEvolution', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-zinc-200">AFL Competition Evolution</Label>
+                          <p className="text-xs text-zinc-500">AFL House may switch to conferences or divisions</p>
+                        </div>
+                        <Switch checked={settings.realism.aflHouseCompetitionEvolution} onCheckedChange={(val) => updateRealism('aflHouseCompetitionEvolution', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-zinc-200">AFL Finals Evolution</Label>
+                          <p className="text-xs text-zinc-500">AFL House may change finals format between seasons</p>
+                        </div>
+                        <Switch checked={settings.realism.aflHouseFinalsEvolution} onCheckedChange={(val) => updateRealism('aflHouseFinalsEvolution', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-zinc-200">AFL List Rules Evolution</Label>
+                          <p className="text-xs text-zinc-500">AFL House may adjust senior and rookie list limits</p>
+                        </div>
+                        <Switch checked={settings.realism.aflHouseListRulesEvolution} onCheckedChange={(val) => updateRealism('aflHouseListRulesEvolution', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-zinc-200">AFL Salary Cap Evolution</Label>
+                          <p className="text-xs text-zinc-500">AFL House may revise salary cap settings year-to-year</p>
+                        </div>
+                        <Switch checked={settings.realism.aflHouseSalaryCapEvolution} onCheckedChange={(val) => updateRealism('aflHouseSalaryCapEvolution', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-zinc-200">AFL Fixture Evolution</Label>
+                          <p className="text-xs text-zinc-500">AFL House may tweak fixture and season structure policy</p>
+                        </div>
+                        <Switch checked={settings.realism.aflHouseFixtureEvolution} onCheckedChange={(val) => updateRealism('aflHouseFixtureEvolution', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
                           <Label className="text-zinc-200">List Size Enforcement</Label>
                           <p className="text-xs text-zinc-500">Enforce senior (38) and rookie (6) list limits</p>
                         </div>
@@ -1451,7 +2024,7 @@ export function NewGamePage() {
 
                   {/* Awards */}
                   <div className="space-y-3">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Awards</p>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Awards & Events</p>
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
                         <div>
@@ -1459,6 +2032,13 @@ export function NewGamePage() {
                           <p className="text-xs text-zinc-500">Votes hidden until the Brownlow ceremony before the Grand Final</p>
                         </div>
                         <Switch checked={settings.realism.brownlowNight} onCheckedChange={(val) => updateRealism('brownlowNight', val)} />
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-zinc-200">Exhibition Match Impact</Label>
+                          <p className="text-xs text-zinc-500">Special event matches affect player fatigue, injury risk, and form</p>
+                        </div>
+                        <Switch checked={settings.realism.specialEventPlayerImpact} onCheckedChange={(val) => updateRealism('specialEventPlayerImpact', val)} />
                       </div>
                     </div>
                   </div>
@@ -1638,8 +2218,8 @@ export function NewGamePage() {
                   }
                 />
                 <SummaryRow
-                  label="Game Start Date"
-                  value={formatDate(settings.gameStartDate)}
+                  label="Game Start"
+                  value={`${OFFSEASON_STAGE_OPTIONS.find((o) => o.value === gameStartStage)?.label ?? 'Offseason'} (${formatDate(settings.gameStartDate)})`}
                 />
                 <SummaryRow
                   label="Blockbusters"
@@ -1649,6 +2229,20 @@ export function NewGamePage() {
                       : 'N/A'
                   }
                 />
+                <SummaryRow
+                  label="Special Events"
+                  value={
+                    settings.specialEvents.enabled
+                      ? `${Object.values(settings.specialEvents.events).filter(Boolean).length} of 5 enabled`
+                      : 'Disabled'
+                  }
+                />
+                {settings.specialEvents.enabled && settings.specialEvents.events['state-of-origin'] && settings.specialEvents.originConfig && (
+                  <SummaryRow
+                    label="State of Origin"
+                    value={`${ORIGIN_FORMAT_LABELS[settings.specialEvents.originConfig.format]}, ${settings.specialEvents.originConfig.matchCount} matches — ${settings.specialEvents.originConfig.participatingStates.join(', ')}${settings.specialEvents.originConfig.alliesEnabled ? ' + ' + settings.specialEvents.originConfig.alliesName : ''}`}
+                  />
+                )}
               </SummaryCard>
 
               {/* Match Rules Summary */}

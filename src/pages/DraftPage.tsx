@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useGameStore } from '@/stores/gameStore'
 import { Link } from 'react-router-dom'
 import type { DraftProspect, DraftPick, ScoutingRegion } from '@/types/draft'
@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/dialog'
 import { getProspectOverall } from '@/engine/draft/prospects'
 import type { DraftPickTradeOffer } from '@/types/draft'
+import type { SuggestNextPickResult, DelegatedPickRecord, DraftSuggestionRationale } from '@/engine/draft/draftEngine'
 import { ALL_POSITION_TYPES } from '@/engine/core/constants'
 import {
   getProspectEligiblePositionTypes,
@@ -166,6 +167,188 @@ function deriveTeamNeeds(players: Record<string, import('@/types/player').Player
     .sort((a, b) => b.deficit - a.deficit)
     .map((x) => x.pos)
   return needs
+}
+
+const RATIONALE_LABELS: Record<DraftSuggestionRationale, string> = {
+  'best-available': 'Best Available',
+  'team-need': 'Team Need',
+  upside: 'Upside',
+  character: 'Character',
+  'local-talent': 'Local Talent',
+  'father-son': 'Father-Son / Academy',
+}
+
+const RATIONALE_COLORS: Record<DraftSuggestionRationale, string> = {
+  'best-available': 'bg-blue-600 text-white',
+  'team-need': 'bg-green-600 text-white',
+  upside: 'bg-purple-600 text-white',
+  character: 'bg-cyan-600 text-white',
+  'local-talent': 'bg-amber-500 text-black',
+  'father-son': 'bg-pink-600 text-white',
+}
+
+// ---------------------------------------------------------------------------
+// Staff Suggestion Card
+// ---------------------------------------------------------------------------
+
+function StaffSuggestionCard({
+  suggestion,
+  prospects,
+  playerClubId,
+  onAccept,
+  onDismiss,
+}: {
+  suggestion: SuggestNextPickResult
+  prospects: DraftProspect[]
+  playerClubId: string
+  onAccept: (prospectId: string) => void
+  onDismiss: () => void
+}) {
+  const rec = suggestion.recommendation
+  const prospect = prospects.find((p) => p.id === rec.prospectId)
+  if (!prospect) return null
+
+  return (
+    <Card className="border-primary/50 bg-primary/5">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm">Staff Recommendation</CardTitle>
+          <Badge variant="outline" className="text-xs">{rec.staffRole}</Badge>
+        </div>
+        <p className="text-xs text-muted-foreground">{rec.staffName} says:</p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {/* Top recommendation */}
+        <div className="rounded border p-3 bg-background/50">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="font-bold text-sm">{prospect.firstName} {prospect.lastName}</span>
+            <Badge variant="outline">{prospect.position.primary}</Badge>
+            <TierBadge tier={prospect.tier} />
+            <Badge className={RATIONALE_COLORS[rec.rationale]}>
+              {RATIONALE_LABELS[rec.rationale]}
+            </Badge>
+          </div>
+          <div className="flex items-center gap-3 text-xs text-muted-foreground mb-1.5">
+            <span>{prospect.age}yo</span>
+            <span>{prospect.region}</span>
+            <span>Scouted: {getScoutedOverall(prospect, playerClubId)}</span>
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed">{rec.rationaleText}</p>
+          <div className="mt-2 flex gap-2">
+            <Button size="sm" onClick={() => onAccept(rec.prospectId)}>
+              Accept Suggestion
+            </Button>
+            <Button size="sm" variant="outline" onClick={onDismiss}>
+              Dismiss
+            </Button>
+          </div>
+        </div>
+
+        {/* Alternatives */}
+        {suggestion.alternatives.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-muted-foreground">Alternatives considered:</p>
+            {suggestion.alternatives.map((alt) => {
+              const altProspect = prospects.find((p) => p.id === alt.prospectId)
+              if (!altProspect) return null
+              return (
+                <div key={alt.prospectId} className="flex items-center justify-between gap-2 rounded border px-2.5 py-1.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-xs font-medium truncate">
+                      {altProspect.firstName} {altProspect.lastName}
+                    </span>
+                    <Badge variant="outline" className="text-[10px] h-5">{altProspect.position.primary}</Badge>
+                    <Badge className={`${RATIONALE_COLORS[alt.rationale]} text-[10px] h-5`}>
+                      {RATIONALE_LABELS[alt.rationale]}
+                    </Badge>
+                  </div>
+                  <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => onAccept(alt.prospectId)}>
+                    Draft
+                  </Button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Delegated Draft Recap
+// ---------------------------------------------------------------------------
+
+function DelegatedDraftRecap({
+  records,
+  onDismiss,
+}: {
+  records: DelegatedPickRecord[]
+  onDismiss: () => void
+}) {
+  if (records.length === 0) return null
+
+  return (
+    <Card className="border-amber-500/50 bg-amber-500/5">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm">Delegated Draft Recap</CardTitle>
+          <Button size="sm" variant="ghost" onClick={onDismiss}>Dismiss</Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Your staff made {records.length} selection{records.length !== 1 ? 's' : ''} on your behalf. Here's how each pick was decided:
+        </p>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-14 text-center">Pick</TableHead>
+              <TableHead>Player</TableHead>
+              <TableHead>Pos</TableHead>
+              <TableHead>Tier</TableHead>
+              <TableHead>Influenced By</TableHead>
+              <TableHead>Rationale</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {records.map((rec) => (
+              <TableRow key={rec.pickNumber}>
+                <TableCell className="text-center font-mono font-bold">{rec.pickNumber}</TableCell>
+                <TableCell>
+                  <Link to={`/player/${rec.prospectId}`} className="font-medium hover:underline">
+                    {rec.prospectName}
+                  </Link>
+                </TableCell>
+                <TableCell>
+                  <Badge variant="outline">{rec.position}</Badge>
+                </TableCell>
+                <TableCell>
+                  <TierBadge tier={rec.tier} />
+                </TableCell>
+                <TableCell>
+                  <div className="text-xs">
+                    <span className="font-medium">{rec.staffName}</span>
+                    <span className="text-muted-foreground ml-1">({rec.staffRole})</span>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-1.5">
+                    <Badge className={`${RATIONALE_COLORS[rec.rationale]} text-[10px] h-5`}>
+                      {RATIONALE_LABELS[rec.rationale]}
+                    </Badge>
+                    <span className="text-[11px] text-muted-foreground max-w-[200px] truncate" title={rec.rationaleText}>
+                      {rec.rationaleText}
+                    </span>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -1107,9 +1290,15 @@ export function DraftPage() {
   const advanceDraftToNextUserPickAction = useGameStore((s) => s.advanceDraftToNextUserPickAction)
   const makeUserDraftSelectionAction = useGameStore((s) => s.makeUserDraftSelectionAction)
   const respondToDraftPickTradeOfferAction = useGameStore((s) => s.respondToDraftPickTradeOfferAction)
+  const suggestNextDraftPickAction = useGameStore((s) => s.suggestNextDraftPickAction)
+  const runDelegatedDraftAction = useGameStore((s) => s.runDelegatedDraftAction)
   const players = useGameStore((s) => s.players)
+  const simulationActive = useGameStore((s) => s.simulation.active)
 
   const [shortlistIds, setShortlistIds] = useState<string[]>([])
+  const [suggestion, setSuggestion] = useState<SuggestNextPickResult | null>(null)
+  const [delegatedRecords, setDelegatedRecords] = useState<DelegatedPickRecord[]>([])
+  const [showDelegateConfirm, setShowDelegateConfirm] = useState(false)
 
   const picks: DraftPick[] = useMemo(() => {
     if (!draft) return []
@@ -1155,6 +1344,7 @@ export function DraftPage() {
   )
 
   const handleSelectProspect = (pickIndex: number, prospectId: string) => {
+    if (simulationActive) return
     if (!draft || pickIndex !== draft.currentPickIndex) return
     makeUserDraftSelectionAction(prospectId)
   }
@@ -1164,6 +1354,35 @@ export function DraftPage() {
       prev.includes(prospectId) ? prev.filter((id) => id !== prospectId) : [...prev, prospectId],
     )
   }
+
+  const handleSuggestPick = () => {
+    const result = suggestNextDraftPickAction()
+    setSuggestion(result)
+  }
+
+  const handleAcceptSuggestion = (prospectId: string) => {
+    if (simulationActive) return
+    if (!draft || draft.currentPickIndex < 0) return
+    const pick = draft.nationalDraftPicks[draft.currentPickIndex]
+    if (!pick || pick.clubId !== playerClubId) return
+    setSuggestion(null)
+    makeUserDraftSelectionAction(prospectId)
+  }
+
+  const handleDelegateDraft = () => {
+    if (simulationActive) return
+    setShowDelegateConfirm(false)
+    const result = runDelegatedDraftAction()
+    if (result.success && result.records.length > 0) {
+      setDelegatedRecords(result.records)
+    }
+  }
+
+  // Clear suggestion when pick changes
+  const currentPickIndexForEffect = draft?.currentPickIndex ?? -1
+  useEffect(() => {
+    setSuggestion(null)
+  }, [currentPickIndexForEffect])
 
   const pendingPickTradeOffers = useMemo(
     () => (draft?.pickTradeOffers ?? []).filter((o) => o.status === 'pending'),
@@ -1237,7 +1456,7 @@ export function DraftPage() {
             size="sm"
             variant="outline"
             onClick={() => runDraftCombineAction()}
-            disabled={draft.combineCompleted}
+            disabled={draft.combineCompleted || simulationActive}
           >
             Run Draft Combine
           </Button>
@@ -1245,7 +1464,7 @@ export function DraftPage() {
             size="sm"
             variant="default"
             onClick={() => startLiveDraftAction()}
-            disabled={draft.nationalDraftComplete}
+            disabled={draft.nationalDraftComplete || simulationActive}
           >
             {draft.currentPickIndex < 0 ? 'Start Live Draft' : 'Resume Draft'}
           </Button>
@@ -1253,18 +1472,80 @@ export function DraftPage() {
             size="sm"
             variant="outline"
             onClick={() => advanceDraftToNextUserPickAction()}
-            disabled={draft.nationalDraftComplete}
+            disabled={draft.nationalDraftComplete || simulationActive}
           >
             Advance To My Pick
+          </Button>
+          <Separator orientation="vertical" className="h-6 mx-1" />
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleSuggestPick}
+            disabled={
+              draft.nationalDraftComplete ||
+              simulationActive ||
+              draft.currentPickIndex < 0 ||
+              draft.nationalDraftPicks[draft.currentPickIndex]?.clubId !== playerClubId
+            }
+          >
+            Suggest Pick
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setShowDelegateConfirm(true)}
+            disabled={draft.nationalDraftComplete || simulationActive}
+          >
+            Delegate to Staff
           </Button>
         </CardContent>
       </Card>
 
+      {/* Delegate Confirmation Dialog */}
+      <Dialog open={showDelegateConfirm} onOpenChange={setShowDelegateConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delegate Draft to Staff?</DialogTitle>
+            <DialogDescription>
+              Your recruiting staff will make all remaining draft picks on your behalf.
+              You won't be able to intervene once the draft starts running.
+              A full recap with staff rationale for each pick will be shown when complete.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setShowDelegateConfirm(false)}>Cancel</Button>
+            <Button onClick={handleDelegateDraft}>Delegate All Picks</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <DraftPickTradeOffersCard
         offers={pendingPickTradeOffers}
         clubs={clubs}
-        onRespond={(offerId, decision) => respondToDraftPickTradeOfferAction(offerId, decision)}
+        onRespond={(offerId, decision) => {
+          if (simulationActive) return
+          respondToDraftPickTradeOfferAction(offerId, decision)
+        }}
       />
+
+      {/* Staff Suggestion */}
+      {suggestion && !draft.nationalDraftComplete && (
+        <StaffSuggestionCard
+          suggestion={suggestion}
+          prospects={draft.prospects}
+          playerClubId={playerClubId}
+          onAccept={handleAcceptSuggestion}
+          onDismiss={() => setSuggestion(null)}
+        />
+      )}
+
+      {/* Delegated Draft Recap */}
+      {delegatedRecords.length > 0 && (
+        <DelegatedDraftRecap
+          records={delegatedRecords}
+          onDismiss={() => setDelegatedRecords([])}
+        />
+      )}
 
       {/* Tabs */}
       <Tabs defaultValue="board">

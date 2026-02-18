@@ -29,6 +29,8 @@ const EVENT_COLORS: Record<GameEventType, string> = {
   'preseason-friendly': 'bg-teal-500',
   bye: 'bg-gray-400',
   milestone: 'bg-pink-500',
+  'special-event': 'bg-amber-500',
+  tribunal: 'bg-orange-500',
 }
 
 const EVENT_LABELS: Record<GameEventType, string> = {
@@ -40,6 +42,8 @@ const EVENT_LABELS: Record<GameEventType, string> = {
   'preseason-friendly': 'Friendly',
   bye: 'Bye',
   milestone: 'Event',
+  'special-event': 'Exhibition',
+  tribunal: 'Tribunal',
 }
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']

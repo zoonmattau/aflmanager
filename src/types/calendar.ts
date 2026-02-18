@@ -19,6 +19,8 @@ export type GameEventType =
   | 'preseason-friendly'
   | 'bye'
   | 'milestone'
+  | 'special-event'
+  | 'tribunal'
 
 export interface GameEvent {
   id: string

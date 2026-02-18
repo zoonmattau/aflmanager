@@ -415,6 +415,7 @@ function generateAttributes(
   primaryPosition: PlayerPositionType,
   rng: SeededRNG,
   classAttributeShift: number,
+  stateLeagueShift: number,
 ): PlayerAttributes {
   const config = TIER_CONFIG[tier]
   const biasKeys = new Set(POSITION_BIAS_KEYS[primaryPosition])
@@ -422,9 +423,9 @@ function generateAttributes(
 
   for (const key of ALL_ATTRIBUTE_KEYS) {
     if (biasKeys.has(key)) {
-      attrs[key] = clamp(rng.nextInt(config.baseMin, config.biasMax) + classAttributeShift, 20, 99)
+      attrs[key] = clamp(rng.nextInt(config.baseMin, config.biasMax) + classAttributeShift + stateLeagueShift, 20, 99)
     } else {
-      attrs[key] = clamp(rng.nextInt(config.baseMin, config.baseMax) + classAttributeShift, 15, 95)
+      attrs[key] = clamp(rng.nextInt(config.baseMin, config.baseMax) + classAttributeShift + stateLeagueShift, 15, 95)
     }
   }
 
@@ -669,6 +670,17 @@ function buildTierPlan(tuning: ClassStrengthTuning, rng: SeededRNG): ProspectTie
   return prospects
 }
 
+function getStateLeagueShift(homeState: HomeState, pathway: DraftProspect['pathway']): number {
+  if (pathway !== 'State League') return 0
+  // State league strength hierarchy:
+  // VFL (best) > SANFL/WAFL (close behind) > others (TFL/NTFL lower).
+  if (homeState === 'VIC' || homeState === 'NSW' || homeState === 'ACT' || homeState === 'QLD') return 10 // VFL pathway
+  if (homeState === 'SA' || homeState === 'WA') return 8 // SANFL / WAFL
+  if (homeState === 'TAS') return 2 // TFL
+  if (homeState === 'NT') return 0 // NTFL
+  return 0
+}
+
 function generateProspect(
   index: number,
   year: number,
@@ -689,10 +701,11 @@ function generateProspect(
   const height = rng.nextInt(physicals.heightMin, physicals.heightMax)
   const weight = rng.nextInt(physicals.weightMin, physicals.weightMax)
 
-  const trueAttributes = generateAttributes(tier, primaryPosition, rng, tuning.attributeShift)
+  const pathway = determinePathway(region, rng)
+  const stateLeagueShift = getStateLeagueShift(homeState, pathway)
+  const trueAttributes = generateAttributes(tier, primaryPosition, rng, tuning.attributeShift, stateLeagueShift)
   const hiddenAttributes = generateHiddenAttributes(tier, rng, tuning.potentialShift)
   const personality = generatePersonality(rng)
-  const pathway = determinePathway(region, rng)
 
   const config = TIER_CONFIG[tier]
   const basePick = rng.nextInt(config.pickRangeMin, config.pickRangeMax)

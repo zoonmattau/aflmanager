@@ -28,6 +28,17 @@ export interface LeagueConfig {
   activeClubIds: string[]
   /** Expansion plans for future clubs */
   expansionPlans: ExpansionPlan[]
+  /** AFL competition structure model */
+  competitionModel?: 'single-table' | 'conferences' | 'divisions'
+  /** Number of conferences when model is 'conferences' */
+  conferenceCount?: number
+  /** Number of divisions when model is 'divisions' */
+  divisionCount?: number
+  /** Multi-tier support for custom worlds */
+  enablePromotionRelegation?: boolean
+  tierCount?: number
+  promotionRelegationSpots?: number
+  clubTierMap?: Record<string, number>
   /** Total teams in the league (computed from activeClubIds.length) */
   totalTeams: number
 }

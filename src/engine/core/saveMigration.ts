@@ -96,6 +96,9 @@ export function migrateGameState(state: AnyGameState): void {
       if (club && !club.tacticalIdentity) {
         club.tacticalIdentity = KNOWN_IDENTITIES[club.id] ?? inferFromGameplan(club.gameplan)
       }
+      if (club && !Array.isArray(club.hallOfFame)) {
+        club.hallOfFame = []
+      }
       // lastSeasonLadderPosition: no-op for old saves (optional field, undefined is valid)
     }
   }

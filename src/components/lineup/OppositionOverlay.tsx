@@ -3,6 +3,7 @@ import type { Player } from '@/types/player'
 import type { Club } from '@/types/club'
 import type { LineupSlot } from '@/types/player'
 import { selectBestLineup } from '@/engine/ai/lineupSelection'
+import { OPPOSITE_SLOT } from './fieldConstants'
 
 export interface OppositionOverlayProps {
   oppositionClubId: string
@@ -11,34 +12,6 @@ export interface OppositionOverlayProps {
   slotPositions: Array<{ slot: LineupSlot; top: number; left: number }>
 }
 
-const OPPOSITE_SLOT: Record<LineupSlot, LineupSlot> = {
-  LBP: 'RFP',
-  FB: 'FF',
-  RBP: 'LFP',
-  LHB: 'RHF',
-  CHB: 'CHF',
-  RHB: 'LHF',
-  LW: 'RW',
-  C: 'C',
-  RW: 'LW',
-  RK: 'RK',
-  RR: 'ROV',
-  ROV: 'RR',
-  LHF: 'RHB',
-  CHF: 'CHB',
-  RHF: 'LHB',
-  LFP: 'RBP',
-  FF: 'FB',
-  RFP: 'LBP',
-  I1: 'I1',
-  I2: 'I2',
-  I3: 'I3',
-  I4: 'I4',
-  I5: 'I5',
-  I6: 'I6',
-  I7: 'I7',
-  I8: 'I8',
-}
 
 export function OppositionOverlay({
   oppositionClubId,

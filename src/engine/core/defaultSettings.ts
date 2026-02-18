@@ -9,22 +9,33 @@ import type {
   FinalsSettings,
   RealismSettings,
 } from '@/types/game'
+import type { SpecialEventsSettings, OriginConfig } from '@/types/specialEvents'
 import { computeDefaultGameStartDate } from '@/engine/calendar/calendarEngine'
 
 // ---------------------------------------------------------------------------
-// Default match time slots (9 slots spanning Thu–Mon)
+// Default realistic match time slots (expanded AFL-style pool spanning Thu–Mon)
 // ---------------------------------------------------------------------------
 
 export const DEFAULT_MATCH_SLOTS: MatchTimeSlot[] = [
-  { id: 'thu-night',      day: 'Thursday',          time: '7:20pm', enabled: true },
-  { id: 'fri-night',      day: 'Friday',            time: '7:50pm', enabled: true },
-  { id: 'sat-early',      day: 'Saturday-Early',    time: '1:45pm', enabled: true },
-  { id: 'sat-twilight',   day: 'Saturday-Twilight',  time: '4:35pm', enabled: true },
-  { id: 'sat-night',      day: 'Saturday-Night',    time: '7:25pm', enabled: true },
-  { id: 'sun-early',      day: 'Sunday-Early',      time: '1:10pm', enabled: true },
-  { id: 'sun-twilight-1', day: 'Sunday-Twilight',    time: '3:20pm', enabled: true },
-  { id: 'sun-twilight-2', day: 'Sunday-Twilight',    time: '4:40pm', enabled: true },
-  { id: 'mon-arvo',       day: 'Monday',            time: '3:20pm', enabled: true },
+  { id: 'thu-night',          day: 'Thursday',          time: '7:20pm', enabled: true },
+  { id: 'fri-night-early',    day: 'Friday',            time: '7:10pm', enabled: true },
+  { id: 'fri-night-late',     day: 'Friday',            time: '8:10pm', enabled: true },
+  { id: 'sat-early-1235',     day: 'Saturday-Early',    time: '12:35pm', enabled: true },
+  { id: 'sat-early-110',      day: 'Saturday-Early',    time: '1:10pm', enabled: true },
+  { id: 'sat-early-120',      day: 'Saturday-Early',    time: '1:20pm', enabled: true },
+  { id: 'sat-twilight-320',   day: 'Saturday-Twilight', time: '3:20pm', enabled: true },
+  { id: 'sat-twilight-415',   day: 'Saturday-Twilight', time: '4:15pm', enabled: true },
+  { id: 'sat-twilight-440',   day: 'Saturday-Twilight', time: '4:40pm', enabled: true },
+  { id: 'sat-night-710',      day: 'Saturday-Night',    time: '7:10pm', enabled: true },
+  { id: 'sat-night-735',      day: 'Saturday-Night',    time: '7:35pm', enabled: true },
+  { id: 'sat-night-740',      day: 'Saturday-Night',    time: '7:40pm', enabled: true },
+  { id: 'sat-night-750',      day: 'Saturday-Night',    time: '7:50pm', enabled: true },
+  { id: 'sat-night-810',      day: 'Saturday-Night',    time: '8:10pm', enabled: true },
+  { id: 'sun-early-1210',     day: 'Sunday-Early',      time: '12:10pm', enabled: true },
+  { id: 'sun-early-110',      day: 'Sunday-Early',      time: '1:10pm', enabled: true },
+  { id: 'sun-twilight-320',   day: 'Sunday-Twilight',   time: '3:20pm', enabled: true },
+  { id: 'sun-twilight-620',   day: 'Sunday-Twilight',   time: '6:20pm', enabled: true },
+  { id: 'mon-afternoon',      day: 'Monday',            time: '3:20pm', enabled: true },
 ]
 
 // ---------------------------------------------------------------------------
@@ -310,6 +321,42 @@ export const DEFAULT_RIVALRY_PAIRS: [string, string][] = [
 ]
 
 // ---------------------------------------------------------------------------
+// Default Origin configuration
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_ORIGIN_CONFIG: OriginConfig = {
+  format: 'best-of-3',
+  matchCount: 3,
+  participatingStates: ['VIC', 'SA', 'WA'],
+  alliesEnabled: false,
+  alliesStates: ['QLD', 'NSW', 'TAS', 'NT'],
+  alliesName: 'Allies',
+  scheduleMode: 'mid-season-block',
+  matchDay: 'wednesday',
+  includeShowdownFinal: false,
+  showdownFinalTiming: 'before-gf',
+  showdownFinalVenue: 'MCG',
+}
+
+// ---------------------------------------------------------------------------
+// Default special events settings
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_SPECIAL_EVENTS: SpecialEventsSettings = {
+  enabled: true,
+  events: {
+    'international-rules': true,
+    'state-of-origin': true,
+    'aboriginal-all-stars': true,
+    'preseason-showcase': true,
+    'all-australian-vs-rest': true,
+  },
+  autoSchedule: true,
+  originEligibility: 'birthplace',
+  originConfig: { ...DEFAULT_ORIGIN_CONFIG, participatingStates: [...DEFAULT_ORIGIN_CONFIG.participatingStates], alliesStates: [...DEFAULT_ORIGIN_CONFIG.alliesStates] },
+}
+
+// ---------------------------------------------------------------------------
 // Default realism settings
 // ---------------------------------------------------------------------------
 
@@ -332,10 +379,22 @@ export const DEFAULT_REALISM: RealismSettings = {
   boardPressure: true,
   boardPolitics: true,
   aflHouseInterference: false,
+  aflHouseExpansionEvolution: true,
+  aflHouseCompetitionEvolution: true,
+  aflHouseFinalsEvolution: true,
+  aflHouseListRulesEvolution: true,
+  aflHouseSalaryCapEvolution: true,
+  aflHouseFixtureEvolution: true,
   listSizeEnforcement: true,
   mediaLeaks: true,
   negotiationDelays: true,
+  tacticalInjuryConsequences: true,
+  tacticalSuspensionConsequences: true,
   brownlowNight: true,
+  specialEventPlayerImpact: true,
+  tribunalEarlyPleaDiscount: true,
+  tribunalLegalRepresentation: true,
+  tribunalPriorRecord: true,
 }
 
 // ---------------------------------------------------------------------------
@@ -361,6 +420,17 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
     matchSlots: DEFAULT_MATCH_SLOTS.map((s) => ({ ...s })),
   },
   blockbusters: DEFAULT_BLOCKBUSTERS.map((b) => ({ ...b })),
+  ladderSorting: {
+    primary: 'points',
+    tieBreakers: ['percentage', 'wins', 'pointsFor', 'clubId'],
+  },
+  fixturePolicy: {
+    homeAwayBalance: true,
+    travelWeighting: 40,
+    venueSharingRules: true,
+  },
+  customRivalryPairs: [],
+  specialEvents: { ...DEFAULT_SPECIAL_EVENTS, events: { ...DEFAULT_SPECIAL_EVENTS.events } },
   seasonStartDate: '2026-03-20',
   gameStartDate: computeDefaultGameStartDate(2026),
 }
@@ -379,6 +449,24 @@ export function createDefaultSettings(): GameSettings {
       matchSlots: DEFAULT_MATCH_SLOTS.map((s) => ({ ...s })),
     },
     blockbusters: DEFAULT_BLOCKBUSTERS.map((b) => ({ ...b })),
+    ladderSorting: {
+      ...(DEFAULT_GAME_SETTINGS.ladderSorting ?? {
+        primary: 'points',
+        tieBreakers: ['percentage', 'wins', 'pointsFor', 'clubId'],
+      }),
+      tieBreakers: [...(DEFAULT_GAME_SETTINGS.ladderSorting?.tieBreakers ?? ['percentage', 'wins', 'pointsFor', 'clubId'])],
+    },
+    fixturePolicy: { ...(DEFAULT_GAME_SETTINGS.fixturePolicy ?? { homeAwayBalance: true, travelWeighting: 40, venueSharingRules: true }) },
+    customRivalryPairs: [...(DEFAULT_GAME_SETTINGS.customRivalryPairs ?? [])],
+    specialEvents: {
+      ...DEFAULT_SPECIAL_EVENTS,
+      events: { ...DEFAULT_SPECIAL_EVENTS.events },
+      originConfig: {
+        ...DEFAULT_ORIGIN_CONFIG,
+        participatingStates: [...DEFAULT_ORIGIN_CONFIG.participatingStates],
+        alliesStates: [...DEFAULT_ORIGIN_CONFIG.alliesStates],
+      },
+    },
   }
 }
 

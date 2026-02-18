@@ -847,6 +847,8 @@ export function convertProspectToPlayer(
     careerStats: emptyStats(),
     seasonStats: emptyStats(),
     injuryHistory: [],
+    trainingFocus: null,
+    upskillPlans: [],
   }
 }
 
@@ -999,4 +1001,303 @@ export function transferFuturePickOwnership(
   })
 
   return updated
+}
+
+// ---------------------------------------------------------------------------
+// Suggest Next Pick
+// ---------------------------------------------------------------------------
+
+export type DraftSuggestionRationale =
+  | 'best-available'
+  | 'team-need'
+  | 'upside'
+  | 'character'
+  | 'local-talent'
+  | 'father-son'
+
+export interface DraftPickSuggestion {
+  prospectId: string
+  score: number
+  rationale: DraftSuggestionRationale
+  rationaleText: string
+  staffName: string
+  staffRole: string
+}
+
+export interface SuggestNextPickResult {
+  recommendation: DraftPickSuggestion
+  alternatives: DraftPickSuggestion[]
+}
+
+/**
+ * Generate a staff-driven pick suggestion for the user's current draft pick.
+ *
+ * Mirrors the AI scoring logic but exposes the reasoning. The designated staff
+ * member "recommends" based on club needs, scouting, strategy, and shortlist.
+ *
+ * @param club              - The user's club
+ * @param pick              - The current draft pick
+ * @param availableProspects - Prospects not yet drafted
+ * @param players           - Current roster
+ * @param shortlistIds      - User's shortlisted prospect IDs
+ * @param staffName         - Name of the staff member making the suggestion
+ * @param staffRole         - Role title of that staff member
+ * @param staffRecruitment  - Staff's recruitment rating (1-100)
+ * @param context           - Scouting/draft accuracy modifiers
+ * @param options           - NGA/academy settings
+ */
+export function suggestNextPick(
+  club: Club,
+  pick: DraftPick,
+  availableProspects: DraftProspect[],
+  players: Record<string, Player>,
+  shortlistIds: string[],
+  staffName: string,
+  staffRole: string,
+  staffRecruitment: number,
+  context?: {
+    scoutingAccuracy?: number
+    draftSuccess?: number
+  },
+  options?: { ngaAcademyEnabled?: boolean; ngaAcademyZoneMatching?: boolean },
+): SuggestNextPickResult {
+  if (availableProspects.length === 0) {
+    throw new Error('No available prospects to suggest')
+  }
+
+  // Father-Son / Academy: always suggest linked prospect
+  const ngaEnabled = options?.ngaAcademyEnabled !== false
+  if (ngaEnabled) {
+    const linkedProspect = availableProspects.find(
+      (p) => p.linkedClubId === club.id && canLinkedClubMatchByType(p.linkedType, options),
+    )
+    if (linkedProspect) {
+      const linkedType = linkedProspect.linkedType === 'father-son' ? 'Father-Son'
+        : linkedProspect.linkedType === 'academy' ? 'Academy' : 'NGA'
+      return {
+        recommendation: {
+          prospectId: linkedProspect.id,
+          score: 999,
+          rationale: 'father-son',
+          rationaleText: `${linkedProspect.firstName} ${linkedProspect.lastName} is linked to our club via ${linkedType}. We should match the bid and secure him.`,
+          staffName,
+          staffRole,
+        },
+        alternatives: [],
+      }
+    }
+  }
+
+  const { draftPhilosophy, competitiveWindow } = club.aiPersonality
+  const neededPositions = identifyPositionalNeeds(players, club.id)
+  const roleNeeds = roleNeedsByClub(players, club.id)
+  const ageProfile = computeAgeProfile(players, club.id)
+  const shortlistSet = new Set(shortlistIds)
+
+  // Score all prospects and keep the rationale
+  const scored: Array<{
+    prospectId: string
+    score: number
+    rationale: DraftSuggestionRationale
+    rationaleText: string
+  }> = []
+
+  for (const prospect of availableProspects) {
+    const valuation = estimateProspectValueForClub(prospect, club.id, context)
+
+    // Determine primary rationale
+    const primaryNeedIndex = neededPositions.indexOf(prospect.position.primary)
+    const secondaryNeedHit = prospect.position.secondary.some((s) => neededPositions.indexOf(s) !== -1)
+    const isNeed = primaryNeedIndex !== -1 || secondaryNeedHit
+    const isHighUpside = valuation.potential - valuation.overall >= 12
+    const isCharacter = prospect.personality.professionalism >= 70 && prospect.personality.temperament >= 65
+    const isLocalTalent = prospect.homeState !== undefined && club.tier === 'small'
+    const isShortlisted = shortlistSet.has(prospect.id)
+
+    // Compute score using same logic as AI
+    let score: number
+    const strategyBase = (() => {
+      switch (draftPhilosophy) {
+        case 'best-available':
+          return scoreBestAvailable(valuation.overall)
+        case 'positional-need':
+          return scorePositionalNeed(prospect, neededPositions, valuation.overall)
+        case 'high-upside':
+          return valuation.overall * 0.35 + valuation.potential * 0.65
+      }
+    })()
+
+    score = strategyBase
+    score = applyWindowModifier(score, prospect.age, valuation.overall, valuation.potential, competitiveWindow)
+
+    if (ageProfile.over29Ratio > 0.28) {
+      score += prospect.age <= 18 ? 3.5 : prospect.age === 19 ? 2 : 0
+    }
+    if (competitiveWindow === 'win-now' && ageProfile.under23Ratio > 0.45) {
+      score += prospect.age === 19 ? 2.2 : 0
+      score -= prospect.age <= 17 ? 2.5 : 0
+    }
+
+    score += identityArchetypeBonus(club, prospect)
+    score += clubIdentityModelBonus(club, prospect, valuation, ageProfile)
+    score += getRoleNeedBonus(mapDraftProspectToPreferredRole(prospect), roleNeeds)
+
+    const uncertaintyPenaltyByRisk: Record<Club['aiPersonality']['riskTolerance'], number> = {
+      aggressive: 0.25,
+      moderate: 0.45,
+      conservative: 0.7,
+    }
+    const scoutingPenalty = (1 - valuation.confidence) * 16 * uncertaintyPenaltyByRisk[club.aiPersonality.riskTolerance]
+    score -= scoutingPenalty
+
+    if (club.tier === 'small' && (prospect.role === 'utility' || prospect.role === 'ground-pressure')) {
+      score += 1.8
+    }
+    if (
+      club.aiPersonality.riskTolerance === 'conservative' &&
+      valuation.confidence < 0.35 &&
+      valuation.potential - valuation.overall >= 16
+    ) {
+      score -= 2.8
+    }
+
+    // Shortlist bonus: staff respects user's shortlist
+    if (isShortlisted) {
+      score += 4.0
+    }
+
+    // Staff recruitment quality affects noise reduction
+    const recruitmentFactor = Math.max(0.5, staffRecruitment / 100)
+    score *= (0.85 + recruitmentFactor * 0.15)
+
+    // Determine the most salient rationale
+    let rationale: DraftSuggestionRationale
+    let rationaleText: string
+    const name = `${prospect.firstName} ${prospect.lastName}`
+
+    if (isNeed && primaryNeedIndex <= 1) {
+      rationale = 'team-need'
+      rationaleText = `${name} fills a critical need at ${prospect.position.primary}. ` +
+        `Our list is thin in this area and he's the best available fit.`
+    } else if (isHighUpside && (draftPhilosophy === 'high-upside' || competitiveWindow === 'rebuilding')) {
+      rationale = 'upside'
+      rationaleText = `${name} has significant upside (est. potential ${Math.round(valuation.potential)}). ` +
+        `A project player who could develop into a star if given time.`
+    } else if (isCharacter && valuation.confidence >= 0.5) {
+      rationale = 'character'
+      rationaleText = `${name} rates highly for professionalism and temperament. ` +
+        `A low-risk pick who'll fit the culture and develop steadily.`
+    } else if (isLocalTalent) {
+      rationale = 'local-talent'
+      rationaleText = `${name} is a local talent from ${prospect.region} who could connect with our supporter base. ` +
+        `Rated ${Math.round(valuation.overall)} overall with room to grow.`
+    } else {
+      rationale = 'best-available'
+      rationaleText = `${name} is the best available talent on the board at pick ${pick.pickNumber}. ` +
+        `Rated ${Math.round(valuation.overall)} overall with ${Math.round(valuation.confidence * 100)}% scouting confidence.`
+    }
+
+    scored.push({ prospectId: prospect.id, score, rationale, rationaleText })
+  }
+
+  scored.sort((a, b) => b.score - a.score)
+
+  const recommendation: DraftPickSuggestion = {
+    ...scored[0],
+    staffName,
+    staffRole,
+  }
+
+  // 2-3 alternatives from different rationales where possible
+  const altCandidates = scored.slice(1, 20)
+  const usedRationales = new Set<DraftSuggestionRationale>([recommendation.rationale])
+  const alternatives: DraftPickSuggestion[] = []
+
+  // First pass: pick alternatives with different rationales
+  for (const c of altCandidates) {
+    if (alternatives.length >= 3) break
+    if (!usedRationales.has(c.rationale)) {
+      usedRationales.add(c.rationale)
+      alternatives.push({ ...c, staffName, staffRole })
+    }
+  }
+  // Fill remaining slots with next-best regardless of rationale
+  for (const c of altCandidates) {
+    if (alternatives.length >= 3) break
+    if (!alternatives.some((a) => a.prospectId === c.prospectId)) {
+      alternatives.push({ ...c, staffName, staffRole })
+    }
+  }
+
+  return { recommendation, alternatives }
+}
+
+// ---------------------------------------------------------------------------
+// Delegated Draft - pick rationale for recap
+// ---------------------------------------------------------------------------
+
+export interface DelegatedPickRecord {
+  pickNumber: number
+  round: number
+  prospectId: string
+  prospectName: string
+  position: string
+  tier: DraftProspect['tier']
+  staffName: string
+  staffRole: string
+  rationale: DraftSuggestionRationale
+  rationaleText: string
+}
+
+/**
+ * Select a prospect for the user's club using staff-driven AI logic.
+ * Returns the prospect ID and a detailed rationale record for the recap.
+ */
+export function delegatedStaffPick(
+  club: Club,
+  pick: DraftPick,
+  availableProspects: DraftProspect[],
+  players: Record<string, Player>,
+  rng: SeededRNG,
+  staffName: string,
+  staffRole: string,
+  staffRecruitment: number,
+  context?: {
+    scoutingAccuracy?: number
+    draftSuccess?: number
+  },
+  options?: { ngaAcademyEnabled?: boolean; ngaAcademyZoneMatching?: boolean },
+): { prospectId: string; record: DelegatedPickRecord } {
+  // Use the suggestion engine (without shortlist for delegation)
+  const result = suggestNextPick(
+    club, pick, availableProspects, players,
+    [], // no shortlist for delegation
+    staffName, staffRole, staffRecruitment,
+    context, options,
+  )
+
+  // Add slight randomness to avoid always picking #1
+  const candidatePool = [result.recommendation, ...result.alternatives]
+  let selected = result.recommendation
+  if (candidatePool.length > 1 && rng.next() < 0.15) {
+    // 15% chance of picking the 2nd choice for variety
+    selected = candidatePool[1]
+  }
+
+  const prospect = availableProspects.find((p) => p.id === selected.prospectId)!
+  return {
+    prospectId: selected.prospectId,
+    record: {
+      pickNumber: pick.pickNumber,
+      round: pick.round,
+      prospectId: selected.prospectId,
+      prospectName: `${prospect.firstName} ${prospect.lastName}`,
+      position: prospect.position.primary,
+      tier: prospect.tier,
+      staffName: selected.staffName,
+      staffRole: selected.staffRole,
+      rationale: selected.rationale,
+      rationaleText: selected.rationaleText,
+    },
+  }
 }

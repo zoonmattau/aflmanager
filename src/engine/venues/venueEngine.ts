@@ -125,7 +125,8 @@ export function generateSoldGameOffers(
   club: Club,
   rng: SeededRNG,
 ): VenueNegotiationOffer[] {
-  const numOffers = rng.nextInt(1, 3)
+  const roll = rng.next()
+  const numOffers = roll < 0.65 ? 0 : roll < 0.92 ? 1 : 2
   const offers: VenueNegotiationOffer[] = []
 
   const availableVenues = rng.shuffle([...SOLD_GAME_VENUES])
@@ -183,9 +184,14 @@ export function applyVenueAllocationsToFixture(
     remaining[clubId] = {
       primary: config.homeGamesAtPrimary,
       secondary: config.homeGamesAtSecondary,
-      sold: [...config.soldHomeGames],
+      sold: [...config.soldHomeGames].slice(0, 2),
     }
   }
+
+  const regularRounds = season.rounds.filter((r) => !r.isFinals)
+  const totalRegularRounds = regularRounds.length
+  const soldWindowStart = Math.max(5, Math.floor(totalRegularRounds * 0.25))
+  const soldWindowEnd = Math.max(soldWindowStart, Math.min(totalRegularRounds - 4, Math.ceil(totalRegularRounds * 0.8)))
 
   // Track per-round venue usage to detect conflicts
   for (const round of season.rounds) {
@@ -243,11 +249,12 @@ export function applyVenueAllocationsToFixture(
       let venueId: string
       let isSecondary = false
       let isSold = false
+      const inSoldWindow = round.number !== 1 && round.number >= soldWindowStart && round.number <= soldWindowEnd
 
       if (!clubRemaining) {
         venueId = config.primaryVenueId
-      } else if (clubRemaining.sold.length > 0) {
-        // Assign sold game first (spread them out)
+      } else if (clubRemaining.sold.length > 0 && inSoldWindow) {
+        // Sold games should be rare and mainly mid-season.
         const soldGame = clubRemaining.sold.pop()!
         venueId = soldGame.venueId
         isSold = true

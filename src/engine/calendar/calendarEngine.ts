@@ -1,7 +1,9 @@
 import type { GameEvent, GameCalendar, GameEventType } from '@/types/calendar'
 import type { Season } from '@/types/season'
 import type { FinalsSettings } from '@/types/game'
+import type { SpecialEventsState } from '@/types/specialEvents'
 import { getFinalsFormatById } from '@/engine/season/finalsFormats'
+import { getEventDefinition } from '@/engine/specialEvents/eventDefinitions'
 
 // ---------------------------------------------------------------------------
 // Date helpers
@@ -258,6 +260,49 @@ export function buildSeasonCalendar(
     events,
     currentDate: seasonStart,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Special event injection
+// ---------------------------------------------------------------------------
+
+/**
+ * Inject special event instances into an existing calendar.
+ * Each scheduled event becomes a 'special-event' GameEvent.
+ */
+export function injectSpecialEvents(
+  calendar: GameCalendar,
+  specialEvents: SpecialEventsState,
+): void {
+  // Build a set of existing special-event IDs to avoid duplicates if called
+  // multiple times on the same calendar (e.g. after save/load).
+  const existingIds = new Set(calendar.events.map((e) => e.id))
+
+  for (const instance of specialEvents.events) {
+    if (instance.status === 'cancelled') continue
+    const eventId = `evt-spe-${instance.id}`
+    if (existingIds.has(eventId)) continue
+
+    const def = getEventDefinition(instance.eventId)
+    const eventName = def?.name ?? instance.eventId
+    const seriesLabel =
+      instance.seriesTotal > 1
+        ? ` (Match ${instance.matchNumber} of ${instance.seriesTotal})`
+        : ''
+
+    calendar.events.push({
+      id: eventId,
+      date: instance.scheduledDate,
+      type: 'special-event',
+      title: `${instance.teamA.name} vs ${instance.teamB.name}`,
+      description: `${eventName}${seriesLabel}`,
+      data: { specialEventId: instance.id, eventType: instance.eventId },
+      resolved: instance.status === 'completed',
+    })
+  }
+
+  // Re-sort by date
+  calendar.events.sort((a, b) => a.date.localeCompare(b.date))
 }
 
 // ---------------------------------------------------------------------------

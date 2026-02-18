@@ -23,6 +23,7 @@ import {
 } from '@/engine/player/roles'
 import { deriveAgentArchetype } from '@/engine/player/agentPersonality'
 import { getClubState } from '@/engine/venues/venueEngine'
+import { MINIMUM_SALARY } from '@/engine/core/constants'
 
 // ---------------------------------------------------------------------------
 // Types internal to generation
@@ -37,6 +38,14 @@ interface RoleTemplate {
   /** Attribute biases – keys are PlayerAttributes fields, values 0-1 weight. */
   biases: Partial<Record<keyof PlayerAttributes, number>>
   isRookie?: boolean
+}
+
+type CompetitionStrength = 'afl' | 'state-strong' | 'state-weak'
+
+interface GeneratePlayersOptions {
+  salaryCapAmount?: number
+  enforceCapCompliance?: boolean
+  competitionStrength?: CompetitionStrength
 }
 
 // ---------------------------------------------------------------------------
@@ -348,6 +357,68 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
+const ALL_ATTRIBUTE_KEYS: (keyof PlayerAttributes)[] = [
+  'kickingEfficiency', 'kickingDistance', 'setShot', 'dropPunt', 'snap',
+  'handballEfficiency', 'handballDistance', 'handballReceive',
+  'markingOverhead', 'markingLeading', 'markingContested', 'markingUncontested',
+  'speed', 'acceleration', 'endurance', 'strength', 'agility', 'leap', 'recovery',
+  'tackling', 'contested', 'clearance', 'hardness',
+  'disposalDecision', 'fieldKicking', 'positioning', 'creativity', 'anticipation', 'composure',
+  'goalkicking', 'groundBallGet', 'insideForward', 'leadingPatterns', 'scoringInstinct',
+  'intercept', 'spoiling', 'oneOnOne', 'zonalAwareness', 'rebounding',
+  'hitouts', 'ruckCreative', 'followUp',
+  'pressure', 'leadership', 'workRate', 'consistency', 'determination', 'teamPlayer', 'clutch',
+  'centreBounce', 'boundaryThrowIn', 'stoppage',
+]
+
+function getOverall(attrs: PlayerAttributes): number {
+  let total = 0
+  for (const key of ALL_ATTRIBUTE_KEYS) total += attrs[key]
+  return total / ALL_ATTRIBUTE_KEYS.length
+}
+
+function pickTargetOverall(
+  rng: SeededRNG,
+  isRookie: boolean,
+  competitionStrength: CompetitionStrength,
+): number {
+  const roll = rng.nextFloat(0, 1)
+
+  if (competitionStrength === 'state-strong') {
+    // Average ~55, some quality state-level standouts, with depth down to scrub tier.
+    if (roll < 0.06) return rng.nextInt(75, 86)
+    if (roll < 0.26) return rng.nextInt(60, 74)
+    if (roll < 0.66) return rng.nextInt(50, 59)
+    if (roll < 0.9) return rng.nextInt(35, 49)
+    return rng.nextInt(22, 34)
+  }
+  if (competitionStrength === 'state-weak') {
+    // Average ~40 with occasional solid contributors and many replacement-level players.
+    if (roll < 0.03) return rng.nextInt(65, 76)
+    if (roll < 0.15) return rng.nextInt(50, 64)
+    if (roll < 0.55) return rng.nextInt(38, 49)
+    if (roll < 0.88) return rng.nextInt(28, 37)
+    return rng.nextInt(18, 27)
+  }
+
+  // AFL: average around 70 with clear star/good/depth spread.
+  if (roll < 0.08) return isRookie ? rng.nextInt(74, 84) : rng.nextInt(90, 97) // stars
+  if (roll < 0.30) return isRookie ? rng.nextInt(66, 76) : rng.nextInt(80, 89) // good players
+  if (roll < 0.63) return isRookie ? rng.nextInt(58, 70) : rng.nextInt(68, 79) // regular AFL standard
+  if (roll < 0.88) return isRookie ? rng.nextInt(46, 60) : rng.nextInt(55, 67) // lower-end AFL list
+  return isRookie ? rng.nextInt(28, 48) : rng.nextInt(30, 54) // scrubbers / fringe
+}
+
+function ageOverallAdjustment(age: number): number {
+  if (age <= 19) return -10
+  if (age <= 21) return -7
+  if (age <= 23) return -3
+  if (age <= 28) return 0
+  if (age <= 31) return -2
+  if (age <= 34) return -5
+  return -8
+}
+
 /**
  * Build the full PlayerAttributes object for a player.
  */
@@ -356,51 +427,23 @@ function generateAttributes(
   age: number,
   biases: Partial<Record<keyof PlayerAttributes, number>>,
   isRookie: boolean,
+  competitionStrength: CompetitionStrength,
 ): PlayerAttributes {
-  const ALL_ATTRS: (keyof PlayerAttributes)[] = [
-    // Kicking (5)
-    'kickingEfficiency', 'kickingDistance', 'setShot', 'dropPunt', 'snap',
-    // Handball (3)
-    'handballEfficiency', 'handballDistance', 'handballReceive',
-    // Marking (4)
-    'markingOverhead', 'markingLeading', 'markingContested', 'markingUncontested',
-    // Physical (7)
-    'speed', 'acceleration', 'endurance', 'strength', 'agility', 'leap', 'recovery',
-    // Contested (4)
-    'tackling', 'contested', 'clearance', 'hardness',
-    // Game Sense (6)
-    'disposalDecision', 'fieldKicking', 'positioning', 'creativity', 'anticipation', 'composure',
-    // Offensive (5)
-    'goalkicking', 'groundBallGet', 'insideForward', 'leadingPatterns', 'scoringInstinct',
-    // Defensive (5)
-    'intercept', 'spoiling', 'oneOnOne', 'zonalAwareness', 'rebounding',
-    // Ruck (3)
-    'hitouts', 'ruckCreative', 'followUp',
-    // Mental (7)
-    'pressure', 'leadership', 'workRate', 'consistency', 'determination', 'teamPlayer', 'clutch',
-    // Set Pieces (3)
-    'centreBounce', 'boundaryThrowIn', 'stoppage',
-  ]
-
-  const rookieDebuff = isRookie ? 0.78 : 1.0
+  const baseTarget = pickTargetOverall(rng, isRookie, competitionStrength)
+  const targetOverall = clamp(baseTarget + ageOverallAdjustment(age) + (isRookie ? -3 : 0), 18, 98)
 
   const attrs = {} as Record<keyof PlayerAttributes, number>
-  for (const attr of ALL_ATTRS) {
+  for (const attr of ALL_ATTRIBUTE_KEYS) {
     const bias = biases[attr] ?? 0
     const cat = attrCategory(attr)
-    const ageMul = ageMultiplier(age, cat)
+    const catWeight =
+      cat === 'physical' ? ageMultiplier(age, 'physical') * 1.02
+      : cat === 'mental' ? ageMultiplier(age, 'mental') * 0.98
+      : ageMultiplier(age, 'general')
 
-    // Base range: 30-65 for unbiased, pushed up by bias
-    const baseFloor = 30 + bias * 12
-    const baseCeiling = 65 + bias * 20
-
-    const raw = rng.nextFloat(baseFloor, Math.min(baseCeiling, 98))
-    const scaled = raw * ageMul * rookieDebuff
-
-    // Add a small random jitter so not every attribute for a position feels identical
-    const jitter = rng.nextFloat(-3, 3)
-
-    attrs[attr] = clamp(Math.round(scaled + jitter), 1, 100)
+    const base = targetOverall + rng.nextFloat(-14, 14)
+    const biasBoost = bias > 0 ? rng.nextFloat(3, 12) * bias : -rng.nextFloat(0, 5) * (1 - bias)
+    attrs[attr] = clamp(Math.round(base + biasBoost + (catWeight - 1) * 10), 1, 99)
   }
 
   // Special: hitouts, ruckCreative, and followUp should be very low for non-rucks
@@ -415,6 +458,15 @@ function generateAttributes(
     attrs.leadership = clamp(attrs.leadership + rng.nextInt(5, 15), 1, 100)
   } else if (age <= 21) {
     attrs.leadership = clamp(attrs.leadership - rng.nextInt(5, 15), 1, 100)
+  }
+
+  // Normalize final overall to keep generated distribution close to target.
+  const overallBefore = getOverall(attrs as PlayerAttributes)
+  const delta = targetOverall - overallBefore
+  if (Math.abs(delta) > 0.4) {
+    for (const key of ALL_ATTRIBUTE_KEYS) {
+      attrs[key] = clamp(Math.round(attrs[key] + delta), 1, 99)
+    }
   }
 
   return attrs as PlayerAttributes
@@ -458,26 +510,34 @@ function generatePersonality(rng: SeededRNG): PlayerPersonality {
 /**
  * Generate a contract appropriate for the player's age and likely ability.
  */
-function generateContract(rng: SeededRNG, age: number, isRookie: boolean): PlayerContract {
+function getBaseAavForOverall(overall: number, rng: SeededRNG): number {
+  if (overall >= 92) return rng.nextInt(900, 1_250) * 1000
+  if (overall >= 85) return rng.nextInt(650, 980) * 1000
+  if (overall >= 78) return rng.nextInt(450, 760) * 1000
+  if (overall >= 70) return rng.nextInt(290, 560) * 1000
+  if (overall >= 60) return rng.nextInt(180, 360) * 1000
+  if (overall >= 50) return rng.nextInt(120, 240) * 1000
+  if (overall >= 40) return rng.nextInt(95, 180) * 1000
+  return rng.nextInt(80, 140) * 1000
+}
+
+function generateContract(rng: SeededRNG, age: number, isRookie: boolean, overall: number): PlayerContract {
   let yearsRemaining: number
-  let aav: number
+  let aav = getBaseAavForOverall(overall, rng)
 
   if (isRookie) {
     yearsRemaining = rng.nextInt(2, 3)
     aav = rng.nextInt(110, 200) * 1000
   } else if (age <= 22) {
     yearsRemaining = rng.nextInt(2, 4)
-    aav = rng.nextInt(150, 400) * 1000
   } else if (age <= 28) {
     yearsRemaining = rng.nextInt(1, 5)
-    aav = rng.nextInt(300, 900) * 1000
   } else if (age <= 32) {
     yearsRemaining = rng.nextInt(1, 3)
-    aav = rng.nextInt(350, 1200) * 1000
   } else {
     yearsRemaining = rng.nextInt(1, 2)
-    aav = rng.nextInt(200, 600) * 1000
   }
+  aav = Math.max(MINIMUM_SALARY, aav)
 
   // Build year-by-year with slight escalation
   const yearByYear: number[] = []
@@ -502,6 +562,7 @@ function generateCareerStats(
   age: number,
   primary: PlayerPositionType,
   isRookie: boolean,
+  overall: number,
 ): PlayerCareerStats {
   if (isRookie || age <= 18) {
     return emptyStats()
@@ -512,6 +573,9 @@ function generateCareerStats(
   const avgGamesPerYear = rng.nextFloat(12, 20)
   const gamesPlayed = Math.round(yearsInAFL * avgGamesPerYear)
 
+  const quality = clamp((overall - 35) / 55, 0.25, 1.25)
+  const productionFactor = clamp(0.7 + quality * 0.55, 0.65, 1.4)
+
   // Goals depend on position
   let goalsPerGame: number
   if (primary === 'FF') goalsPerGame = rng.nextFloat(1.2, 2.5)
@@ -521,7 +585,7 @@ function generateCareerStats(
   else if (primary === 'W') goalsPerGame = rng.nextFloat(0.15, 0.45)
   else goalsPerGame = rng.nextFloat(0.05, 0.25) // defenders
 
-  const goals = Math.round(gamesPlayed * goalsPerGame)
+  const goals = Math.round(gamesPlayed * goalsPerGame * productionFactor)
   const behinds = Math.round(goals * rng.nextFloat(0.5, 0.9))
 
   // Disposals per game
@@ -534,23 +598,23 @@ function generateCareerStats(
   else if (primary === 'FB' || primary === 'BP') disposalsPerGame = rng.nextFloat(10, 16)
   else disposalsPerGame = rng.nextFloat(10, 18) // RK
 
-  const disposals = Math.round(gamesPlayed * disposalsPerGame)
+  const disposals = Math.round(gamesPlayed * disposalsPerGame * productionFactor)
   const kickRatio = rng.nextFloat(0.5, 0.65)
   const kicks = Math.round(disposals * kickRatio)
   const handballs = disposals - kicks
 
   const marksPerGame = rng.nextFloat(3, 7)
-  const marks = Math.round(gamesPlayed * marksPerGame)
+  const marks = Math.round(gamesPlayed * marksPerGame * productionFactor)
 
   const tacklesPerGame = rng.nextFloat(2, 6)
-  const tackles = Math.round(gamesPlayed * tacklesPerGame)
+  const tackles = Math.round(gamesPlayed * tacklesPerGame * productionFactor)
 
   const hitoutsTotal = primary === 'RK'
-    ? Math.round(gamesPlayed * rng.nextFloat(20, 35))
+    ? Math.round(gamesPlayed * rng.nextFloat(20, 35) * productionFactor)
     : Math.round(gamesPlayed * rng.nextFloat(0, 0.3))
 
   const contestedPerGame = rng.nextFloat(5, 12)
-  const contestedPossessions = Math.round(gamesPlayed * contestedPerGame)
+  const contestedPossessions = Math.round(gamesPlayed * contestedPerGame * productionFactor)
   const uncontestedPossessions = Math.max(0, disposals - contestedPossessions)
 
   const clearancesPerGame = primary === 'IM' || primary === 'OM'
@@ -558,32 +622,32 @@ function generateCareerStats(
     : primary === 'RK'
       ? rng.nextFloat(2, 5)
       : rng.nextFloat(0.5, 2)
-  const clearances = Math.round(gamesPlayed * clearancesPerGame)
+  const clearances = Math.round(gamesPlayed * clearancesPerGame * productionFactor)
 
   const insideFiftiesPerGame = rng.nextFloat(1, 5)
-  const insideFifties = Math.round(gamesPlayed * insideFiftiesPerGame)
+  const insideFifties = Math.round(gamesPlayed * insideFiftiesPerGame * productionFactor)
 
   const rebound50sPerGame = (primary === 'FB' || primary === 'HBF' || primary === 'BP' || primary === 'CHB')
     ? rng.nextFloat(2, 5)
     : rng.nextFloat(0.2, 1.5)
-  const rebound50s = Math.round(gamesPlayed * rebound50sPerGame)
-  const freesFor = Math.round(gamesPlayed * rng.nextFloat(0.8, 2.4))
+  const rebound50s = Math.round(gamesPlayed * rebound50sPerGame * productionFactor)
+  const freesFor = Math.round(gamesPlayed * rng.nextFloat(0.8, 2.4) * productionFactor)
   const freesAgainst = Math.round(gamesPlayed * rng.nextFloat(0.6, 2.1))
 
   // Extended stats (derived from base stats)
   const contestedMarks = Math.round(marks * rng.nextFloat(0.15, 0.35))
-  const scoreInvolvements = goals + Math.round(gamesPlayed * rng.nextFloat(1, 4))
-  const metresGained = Math.round(gamesPlayed * rng.nextFloat(200, 500))
+  const scoreInvolvements = goals + Math.round(gamesPlayed * rng.nextFloat(1, 4) * productionFactor)
+  const metresGained = Math.round(gamesPlayed * rng.nextFloat(200, 500) * productionFactor)
   const turnovers = Math.round(disposals * rng.nextFloat(0.1, 0.2))
   const intercepts = (primary === 'FB' || primary === 'HBF' || primary === 'BP' || primary === 'CHB')
-    ? Math.round(gamesPlayed * rng.nextFloat(3, 7))
+    ? Math.round(gamesPlayed * rng.nextFloat(3, 7) * productionFactor)
     : Math.round(gamesPlayed * rng.nextFloat(0.5, 2))
-  const onePercenters = Math.round(gamesPlayed * rng.nextFloat(1, 4))
+  const onePercenters = Math.round(gamesPlayed * rng.nextFloat(1, 4) * productionFactor)
   const bounces = (primary === 'IM' || primary === 'OM' || primary === 'W')
     ? Math.round(gamesPlayed * rng.nextFloat(0.5, 2))
     : Math.round(gamesPlayed * rng.nextFloat(0, 0.5))
   const clangers = Math.round(disposals * rng.nextFloat(0.05, 0.12))
-  const goalAssists = Math.round(gamesPlayed * rng.nextFloat(0.3, 1.5))
+  const goalAssists = Math.round(gamesPlayed * rng.nextFloat(0.3, 1.5) * productionFactor)
   const aflFantasyPoints = Math.round(
     kicks * 3 +
     handballs * 2 +
@@ -595,9 +659,7 @@ function generateCareerStats(
     freesFor -
     freesAgainst * 3,
   )
-  const superCoachPoints = Math.round(
-    gamesPlayed * rng.nextFloat(70, 102),
-  )
+  const superCoachPoints = Math.round(gamesPlayed * rng.nextFloat(70, 102) * productionFactor)
 
   return {
     gamesPlayed,
@@ -627,6 +689,46 @@ function generateCareerStats(
     bounces,
     clangers,
     goalAssists,
+  }
+}
+
+function normalizeContractsToCap(
+  players: Player[],
+  salaryCapAmount: number,
+): void {
+  if (players.length === 0) return
+  const capTarget = Math.max(1, Math.round(salaryCapAmount * 0.985))
+  const total = players.reduce((sum, p) => sum + (p.contract.yearByYear[0] ?? p.contract.aav), 0)
+  if (total <= capTarget) return
+
+  const scalable = players
+    .filter((p) => p.contract.yearByYear.length > 0)
+    .sort((a, b) => (b.contract.yearByYear[0] ?? 0) - (a.contract.yearByYear[0] ?? 0))
+
+  const reductionFactor = capTarget / Math.max(total, 1)
+  for (const player of scalable) {
+    const adjusted = player.contract.yearByYear.map((amount, idx) => {
+      const floor = idx === 0 ? MINIMUM_SALARY : Math.round(MINIMUM_SALARY * (1 + idx * 0.03))
+      return Math.max(floor, Math.round(amount * reductionFactor / 1000) * 1000)
+    })
+    player.contract.yearByYear = adjusted
+    player.contract.aav = Math.round(adjusted.reduce((s, v) => s + v, 0) / adjusted.length)
+  }
+
+  // Final pass: if still over (minimum floors can cause this), trim highest first-years.
+  let currentTotal = players.reduce((sum, p) => sum + (p.contract.yearByYear[0] ?? 0), 0)
+  if (currentTotal > capTarget) {
+    const bySalary = [...players].sort((a, b) => (b.contract.yearByYear[0] ?? 0) - (a.contract.yearByYear[0] ?? 0))
+    for (const player of bySalary) {
+      if (currentTotal <= capTarget) break
+      if (player.contract.yearByYear.length === 0) continue
+      const current = player.contract.yearByYear[0]
+      const cut = Math.min(current - MINIMUM_SALARY, currentTotal - capTarget)
+      if (cut <= 0) continue
+      player.contract.yearByYear[0] = Math.max(MINIMUM_SALARY, current - cut)
+      player.contract.aav = Math.round(player.contract.yearByYear.reduce((s, v) => s + v, 0) / player.contract.yearByYear.length)
+      currentTotal -= cut
+    }
   }
 }
 
@@ -704,13 +806,18 @@ function generateDOB(rng: SeededRNG, age: number): string {
  * @param seed   - Optional numeric seed for the RNG. Defaults to a hash of
  *                 the clubId so each club always gets a deterministic roster.
  */
-export function generatePlayers(clubId: string, seed?: number): Player[] {
+export function generatePlayers(
+  clubId: string,
+  seed?: number,
+  options?: GeneratePlayersOptions,
+): Player[] {
   // Derive a deterministic seed from the clubId if none provided.
   const derivedSeed = seed ?? hashString(clubId)
   const rng = new SeededRNG(derivedSeed)
 
   const templates = buildSquadTemplates()
   const players: Player[] = []
+  const competitionStrength = options?.competitionStrength ?? 'afl'
 
   // Shuffle names to avoid repeating patterns across clubs
   const firstNames = rng.shuffle([...FIRST_NAMES])
@@ -745,7 +852,8 @@ export function generatePlayers(clubId: string, seed?: number): Player[] {
     const position = generatePosition(rng, tmpl.primary, tmpl.secondary)
 
     // --- Attributes ---
-    const attributes = generateAttributes(rng, age, tmpl.biases, isRookie)
+    const attributes = generateAttributes(rng, age, tmpl.biases, isRookie, competitionStrength)
+    const overall = getOverall(attributes)
 
     // --- Hidden ---
     const hiddenAttributes = generateHiddenAttributes(rng, age)
@@ -759,7 +867,7 @@ export function generatePlayers(clubId: string, seed?: number): Player[] {
     const homeState = rng.chance(0.55) ? clubState : rng.pick(['VIC', 'SA', 'WA', 'NSW', 'QLD', 'TAS', 'NT'])
 
     // --- Contract ---
-    const contract = generateContract(rng, age, isRookie)
+    const contract = generateContract(rng, age, isRookie, overall)
 
     // --- Draft info ---
     const draftYear = 2026 - (age - 18) + rng.nextInt(0, 1)
@@ -772,7 +880,7 @@ export function generatePlayers(clubId: string, seed?: number): Player[] {
     const form = rng.nextInt(40, 70)
 
     // --- Stats ---
-    const careerStats = generateCareerStats(rng, age, tmpl.primary, isRookie)
+    const careerStats = generateCareerStats(rng, age, tmpl.primary, isRookie, overall)
     const seasonStats = emptyStats()
 
     const player: Player = {
@@ -809,9 +917,15 @@ export function generatePlayers(clubId: string, seed?: number): Player[] {
       careerStats,
       seasonStats,
       injuryHistory: [],
+      trainingFocus: null,
+      upskillPlans: [],
     }
 
     players.push(player)
+  }
+
+  if (options?.enforceCapCompliance !== false) {
+    normalizeContractsToCap(players, options?.salaryCapAmount ?? 15_500_000)
   }
 
   return players

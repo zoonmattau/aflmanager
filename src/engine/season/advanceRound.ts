@@ -1,5 +1,5 @@
 import { simulateMatch } from '@/engine/match/simulateMatch'
-import type { MatchRulesSettings } from '@/types/game'
+import type { MatchRulesSettings, RealismSettings, WeeklyMatchupTactics } from '@/types/game'
 import type { Match } from '@/types/match'
 import type { MatchPlayerStats } from '@/types/match'
 import type { Round } from '@/types/season'
@@ -15,9 +15,12 @@ interface SimRoundInput {
   players: Record<string, Player>
   clubs: Record<string, Club>
   gameplanOverrides?: Record<string, Club['gameplan']>
+  matchupTacticsByClub?: Record<string, WeeklyMatchupTactics | undefined>
   rngSeed: number
   playerClubId: string
   matchRules?: MatchRulesSettings
+  realism?: RealismSettings
+  injuryFrequency?: 'low' | 'medium' | 'high'
   venueState?: SeasonVenueState | null
 }
 
@@ -66,9 +69,12 @@ export function simulateRound(input: SimRoundInput): SimRoundResult {
       players,
       clubs,
       gameplanOverrides: input.gameplanOverrides,
+      matchupTacticsByClub: input.matchupTacticsByClub,
       seed: rngSeed + roundIndex * 100 + i,
       isFinal: round.isFinals,
       matchRules: input.matchRules,
+      realism: input.realism,
+      injuryFrequency: input.injuryFrequency,
       venueId: resolvedVenueId,
       matchDay: fixture.matchDay,
       venueHGA,

@@ -1,3 +1,14 @@
+export type GuernseyPattern =
+  | 'solid' | 'vertical-stripes' | 'horizontal-hoops'
+  | 'v-stripe' | 'chevron' | 'sash' | 'yoke' | 'halves'
+
+export interface GuernseyStyle {
+  homePattern: GuernseyPattern
+  awayPattern: GuernseyPattern
+  homeColors: [string, string]
+  awayColors: [string, string]
+}
+
 export interface ClubColors {
   primary: string    // hex
   secondary: string  // hex
@@ -85,12 +96,24 @@ export interface ClubGameplan {
   rotations: 'low' | 'medium' | 'high'
 }
 
+export interface ClubHallOfFameEntry {
+  playerId: string
+  playerName: string
+  inductedYear: number
+  retiredYear: number
+  ageAtRetirement: number
+  gamesPlayed: number
+  goals: number
+  primaryPosition: import('./player').PlayerPositionType
+}
+
 export interface Club {
   id: string
   name: string              // e.g. "Richmond"
   fullName: string          // e.g. "Richmond Tigers"
   abbreviation: string      // e.g. "RICH"
   mascot: string            // e.g. "Tigers"
+  logoUrl?: string
   homeGround: string        // e.g. "MCG"
   established: number       // founding year
   premierships: number      // VFL/AFL premiership count
@@ -106,6 +129,11 @@ export interface Club {
   identity?: ClubIdentity
   fanSatisfaction?: number
   lastSeasonLadderPosition?: number  // 1-18, undefined for first season
+  hallOfFame?: ClubHallOfFameEntry[]
+  notes?: string
+  secondaryHomeGrounds?: string[]
+  guernseyStyle?: GuernseyStyle
+  rivalryClubIds?: string[]
   /** AI personality for non-player clubs */
   aiPersonality: {
     competitiveWindow: 'win-now' | 'balanced' | 'rebuilding'

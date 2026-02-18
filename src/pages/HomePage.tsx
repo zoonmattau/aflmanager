@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { LoadGameDialog } from '@/components/home/LoadGameDialog'
-import { Play, Plus, FolderOpen, Settings, Trophy, Calendar } from 'lucide-react'
+import { Play, Plus, FolderOpen, Settings, Trophy, Calendar, Wrench } from 'lucide-react'
 
 const PHASE_LABELS: Record<string, string> = {
   'setup': 'Setup',
@@ -126,6 +126,15 @@ export function HomePage() {
           >
             <Trophy className="h-5 w-5" />
             League Setups
+          </Button>
+
+          <Button
+            variant="secondary"
+            className="h-12 w-full justify-start gap-3 text-base"
+            onClick={() => setScreen('custom-league-builder')}
+          >
+            <Wrench className="h-5 w-5" />
+            Custom League Builder
           </Button>
         </div>
 

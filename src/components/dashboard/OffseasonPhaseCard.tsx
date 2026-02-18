@@ -12,6 +12,9 @@ import {
 import type { OffseasonPhase } from '@/engine/season/offseasonFlow'
 import { PHASE_ICONS } from '@/components/offseason/PhaseTimeline'
 import { resolveListConstraints, validateClubList, mustDelist } from '@/engine/rules/listRules'
+import { calculatePlayerValue } from '@/engine/contracts/negotiation'
+import { getOverallRating } from '@/engine/player/playerRating'
+import type { Player } from '@/types/player'
 
 function getPhaseDescription(phase: OffseasonPhase): string {
   switch (phase) {
@@ -52,8 +55,11 @@ export function OffseasonPhaseCard() {
   const currentYear = useGameStore((s) => s.currentYear)
   const advancePhase = useGameStore((s) => s.advanceOffseasonPhase)
   const startNewSeasonAction = useGameStore((s) => s.startNewSeasonAction)
+  const signSupplementalPlayer = useGameStore((s) => s.signSupplementalPlayer)
+  const simulationActive = useGameStore((s) => s.simulation.active)
 
   const [advanceError, setAdvanceError] = useState<string | null>(null)
+  const [signMessage, setSignMessage] = useState<string | null>(null)
 
   const currentPhase = offseasonState?.currentPhase ?? 'season-end'
   const isReady = currentPhase === 'ready'
@@ -125,6 +131,13 @@ export function OffseasonPhaseCard() {
     }
   }, [currentPhase, offseasonState, players, playerClubId, settings])
 
+  const supplementalTargets = useMemo(() => {
+    if (currentPhase !== 'supplemental-signing') return []
+    return getUnsignedPool(players)
+      .sort((a, b) => getOverallRating(b) - getOverallRating(a))
+      .slice(0, 5)
+  }, [currentPhase, players])
+
   const handleAdvance = useCallback(() => {
     const result = advancePhase()
     if (!result.success) {
@@ -135,9 +148,27 @@ export function OffseasonPhaseCard() {
   }, [advancePhase])
 
   const handleStartSeason = useCallback(() => {
-    startNewSeasonAction()
+    const result = startNewSeasonAction()
+    if (!result.success) {
+      setAdvanceError(result.error ?? 'Unable to continue to the new season.')
+      return
+    }
+    setAdvanceError(null)
     navigate('/')
   }, [startNewSeasonAction, navigate])
+
+  const handleQuickSupplementalSign = useCallback((player: Player) => {
+    const value = calculatePlayerValue(player)
+    const years = player.age <= 24 ? 3 : player.age <= 28 ? 2 : 1
+    const result = signSupplementalPlayer(player.id, years, value)
+    if (result.success) {
+      setSignMessage(`Signed ${player.firstName} ${player.lastName}`)
+      setAdvanceError(null)
+      return
+    }
+    setAdvanceError(result.error ?? 'Failed to sign player')
+    setSignMessage(null)
+  }, [signSupplementalPlayer])
 
   if (!offseasonState) return null
 
@@ -198,6 +229,44 @@ export function OffseasonPhaseCard() {
             <p className="text-sm text-red-400">{advanceError}</p>
           </div>
         )}
+        {signMessage && (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2.5 mb-4 text-sm text-emerald-300">
+            {signMessage}
+          </div>
+        )}
+
+        {currentPhase === 'supplemental-signing' && (
+          <div className="mb-4 space-y-2">
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">Quick Supplemental Signings</div>
+            {supplementalTargets.length === 0 ? (
+              <div className="rounded border border-border/60 bg-muted/20 px-3 py-2 text-sm text-muted-foreground">
+                No unsigned players available.
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {supplementalTargets.map((p) => (
+                  <div key={p.id} className="flex items-center justify-between rounded border border-border/70 bg-muted/20 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium">
+                        {p.firstName} {p.lastName}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {p.position.primary} · Age {p.age} · OVR {getOverallRating(p)}
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleQuickSupplementalSign(p)}
+                    >
+                      Sign
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Actions */}
         <div className="flex items-center justify-between pt-2 border-t border-border/50">
@@ -211,12 +280,12 @@ export function OffseasonPhaseCard() {
           </Button>
 
           {isReady ? (
-            <Button size="lg" onClick={handleStartSeason} className="gap-2">
+            <Button size="lg" onClick={handleStartSeason} className="gap-2" disabled={simulationActive}>
               <Rocket className="h-4 w-4" />
               Start Season {currentYear + 1}
             </Button>
           ) : (
-            <Button onClick={handleAdvance} disabled={!canAdvance} className="gap-2">
+            <Button onClick={handleAdvance} disabled={!canAdvance || simulationActive} className="gap-2">
               Advance Phase
               <ChevronRight className="h-4 w-4" />
             </Button>

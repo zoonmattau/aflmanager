@@ -35,7 +35,8 @@ import type { Player } from '@/types/player'
 import type { NewsItem } from '@/types/game'
 import { buildOffseasonSummary } from '@/engine/history/summaryEngine'
 import type { TradeGradeLetter } from '@/engine/history/summaryEngine'
-import { resolveListConstraints, validateClubList, mustDelist } from '@/engine/rules/listRules'
+import { resolveListConstraints, mustDelist } from '@/engine/rules/listRules'
+import { validateOffseasonProgression } from '@/engine/offseason/offseasonCalendar'
 import { OffseasonStatusDashboard } from '@/components/offseason/OffseasonStatusDashboard'
 import { FreeAgencyMarketPanel } from '@/components/offseason/FreeAgencyMarketPanel'
 import { PhaseTimeline, PHASE_ICONS } from '@/components/offseason/PhaseTimeline'
@@ -253,9 +254,32 @@ function RetirementsPanel({
   players: Record<string, Player>
   clubs: Record<string, { abbreviation: string; colors: { primary: string } }>
 }) {
+  const history = useGameStore((s) => s.history)
+
   const retirees = useMemo(
     () => retiredPlayerIds.map((id) => players[id]).filter(Boolean),
     [retiredPlayerIds, players],
+  )
+  const legacyByPlayer = useMemo(() => {
+    const out = new Map<string, import('@/types/history').RetirementLegacyEntry>()
+    for (const entry of history.retirementLegacies ?? []) {
+      if (!retiredPlayerIds.includes(entry.playerId)) continue
+      out.set(entry.playerId, entry)
+    }
+    return out
+  }, [history.retirementLegacies, retiredPlayerIds])
+  const featuredLegacies = useMemo(
+    () =>
+      retirees
+        .map((p) => legacyByPlayer.get(p.id))
+        .filter((entry): entry is import('@/types/history').RetirementLegacyEntry => Boolean(entry))
+        .filter((entry) => entry.tier !== 'veteran')
+        .sort((a, b) => {
+          const scoreA = a.gamesPlayed + a.goals * 0.35 + a.overallAtRetirement * 1.2
+          const scoreB = b.gamesPlayed + b.goals * 0.35 + b.overallAtRetirement * 1.2
+          return scoreB - scoreA
+        }),
+    [retirees, legacyByPlayer],
   )
 
   if (retirees.length === 0) {
@@ -275,9 +299,32 @@ function RetirementsPanel({
       <p className="text-sm text-muted-foreground">
         {retirees.length} player{retirees.length !== 1 ? 's' : ''} announced retirement.
       </p>
+      {featuredLegacies.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Retirement Ceremony
+          </p>
+          {featuredLegacies.map((legacy) => (
+            <div key={legacy.playerId} className="rounded-lg border border-yellow-500/40 bg-yellow-500/10 p-3">
+              <p className="text-sm font-semibold text-yellow-700 dark:text-yellow-300">{legacy.ceremonyHeadline}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{legacy.ceremonySummary}</p>
+              <div className="mt-2 flex items-center gap-2 text-[11px]">
+                <Badge variant="outline">{legacy.tier === 'legend' ? 'Legend' : 'Club Great'}</Badge>
+                {legacy.hallOfFameEligible && (
+                  <Badge className="bg-green-600 text-white">Hall of Fame Eligible</Badge>
+                )}
+                {legacy.inductedClubHallOfFame && (
+                  <Badge className="bg-blue-600 text-white">Inducted</Badge>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="divide-y divide-border/50">
         {retirees.map((p) => {
-          const club = clubs[p.clubId]
+          const legacy = legacyByPlayer.get(p.id)
+          const club = legacy ? clubs[legacy.retiredFromClubId] : undefined
           return (
             <div
               key={p.id}
@@ -296,7 +343,7 @@ function RetirementsPanel({
                     </span>
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {club?.abbreviation ?? p.clubId} &middot; Age {p.age} &middot; {p.position.primary}
+                    {club?.abbreviation ?? legacy?.retiredFromClubName ?? p.clubId} &middot; Age {p.age} &middot; {p.position.primary}
                   </p>
                 </div>
               </div>
@@ -1032,11 +1079,30 @@ function SeasonReviewPanel({
   const tradeHistory = useGameStore((s) => s.tradeHistory)
   const players = useGameStore((s) => s.players)
   const clubs = useGameStore((s) => s.clubs)
+  const settings = useGameStore((s) => s.settings)
   const [expanded, setExpanded] = useState(true)
 
   const summary = useMemo(
-    () => buildOffseasonSummary(year, history, tradeHistory, players, clubs),
-    [year, history, tradeHistory, players, clubs],
+    () => buildOffseasonSummary(year, history, tradeHistory, players, clubs, settings),
+    [year, history, tradeHistory, players, clubs, settings],
+  )
+  const retirementLegacyByPlayer = useMemo(() => {
+    const out = new Map<string, import('@/types/history').RetirementLegacyEntry>()
+    for (const legacy of history.retirementLegacies ?? []) {
+      if (legacy.retiredYear === year) out.set(legacy.playerId, legacy)
+    }
+    return out
+  }, [history.retirementLegacies, year])
+  const retirementClass = useMemo(
+    () =>
+      (history.retirementLegacies ?? [])
+        .filter((legacy) => legacy.retiredYear === year)
+        .sort((a, b) => {
+          const scoreA = a.gamesPlayed + a.goals * 0.35 + a.overallAtRetirement * 1.2
+          const scoreB = b.gamesPlayed + b.goals * 0.35 + b.overallAtRetirement * 1.2
+          return scoreB - scoreA
+        }),
+    [history.retirementLegacies, year],
   )
 
   if (!summary.premierClubId && summary.draftPicks.length === 0) return null
@@ -1083,7 +1149,12 @@ function SeasonReviewPanel({
               <div className="space-y-1">
                 {summary.retirements.slice(0, 5).map((r) => (
                   <div key={r.playerId} className="flex justify-between text-sm">
-                    <span>{r.playerName}</span>
+                    <div className="flex items-center gap-2">
+                      <span>{r.playerName}</span>
+                      {retirementLegacyByPlayer.get(r.playerId)?.hallOfFameEligible && (
+                        <Badge className="bg-green-600 text-white">HOF Eligible</Badge>
+                      )}
+                    </div>
                     <span className="text-muted-foreground font-mono">
                       {r.careerGames} gms, {r.careerGoals} gls
                     </span>
@@ -1094,6 +1165,134 @@ function SeasonReviewPanel({
                     +{summary.retirements.length - 5} more
                   </p>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* List Audit Report */}
+          {summary.listAudit.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                List Audit Report
+              </p>
+              <div className="space-y-2">
+                {summary.listAudit.slice(0, 8).map((audit) => (
+                  <div key={audit.clubId} className="rounded border p-2 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">{clubs[audit.clubId]?.abbreviation ?? audit.clubName}</span>
+                      <Badge className={gradeColor(audit.grade)}>{audit.grade}</Badge>
+                    </div>
+                    <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+                      <span>List: {audit.total}/{audit.maxTotal} (S {audit.senior}/{audit.maxSenior}, R {audit.rookie}/{audit.maxRookie})</span>
+                      <span>Cap: ${Math.round(audit.capSpend / 1000)}k / ${Math.round(audit.capLimit / 1000)}k</span>
+                      <span>Errors: {audit.listErrors} • Warnings: {audit.listWarnings}</span>
+                      <span>{audit.mustDelistCount > 0 ? `Must delist ${audit.mustDelistCount}` : 'List compliant'}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {retirementClass.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                Retirement Legacy & Hall Of Fame
+              </p>
+              <div className="space-y-2">
+                {retirementClass.slice(0, 6).map((legacy) => (
+                  <div key={legacy.playerId} className="rounded border border-border/60 bg-muted/20 p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium">{legacy.playerName}</p>
+                      <div className="flex items-center gap-1">
+                        <Badge variant="outline">{legacy.tier === 'legend' ? 'Legend' : legacy.tier === 'club-great' ? 'Club Great' : 'Veteran'}</Badge>
+                        {legacy.hallOfFameEligible && (
+                          <Badge className="bg-green-600 text-white">HOF Eligible</Badge>
+                        )}
+                        {legacy.inductedClubHallOfFame && (
+                          <Badge className="bg-blue-600 text-white">Inducted</Badge>
+                        )}
+                      </div>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {legacy.gamesPlayed} games, {legacy.goals} goals, overall {legacy.overallAtRetirement}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Trade Period Review Report */}
+          {summary.tradeReview.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                Trade Period Review Report
+              </p>
+              <div className="space-y-1">
+                {summary.tradeReview.slice(0, 10).map((entry) => (
+                  <div key={entry.clubId} className="flex items-center justify-between rounded border p-2 text-sm">
+                    <div>
+                      <span className="font-medium">{clubs[entry.clubId]?.abbreviation ?? entry.clubName}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {entry.tradeCount} trade{entry.tradeCount === 1 ? '' : 's'} • net {entry.netValueDiff > 0 ? '+' : ''}{entry.netValueDiff.toFixed(1)}
+                      </span>
+                    </div>
+                    <Badge className={gradeColor(entry.grade)}>{entry.grade}</Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Draft Review Report */}
+          {summary.draftReview.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                Draft Review Report
+              </p>
+              <div className="space-y-1 mb-3">
+                {summary.draftReview.slice(0, 10).map((entry) => (
+                  <div key={entry.clubId} className="flex items-center justify-between rounded border p-2 text-sm">
+                    <div>
+                      <span className="font-medium">{clubs[entry.clubId]?.abbreviation ?? entry.clubName}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {entry.pickCount} pick{entry.pickCount === 1 ? '' : 's'} • avg value {entry.avgValueDiff > 0 ? '+' : ''}{entry.avgValueDiff.toFixed(1)}
+                      </span>
+                    </div>
+                    <Badge className={gradeColor(entry.grade)}>{entry.grade}</Badge>
+                  </div>
+                ))}
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Steals</p>
+                  <div className="space-y-1">
+                    {summary.draftSteals.slice(0, 5).map((steal) => (
+                      <div key={steal.playerId} className="flex justify-between text-xs">
+                        <span>{steal.playerName} (#{steal.pickNumber})</span>
+                        <span className="text-green-500">+{steal.stealScore.toFixed(1)}</span>
+                      </div>
+                    ))}
+                    {summary.draftSteals.length === 0 && (
+                      <p className="text-xs text-muted-foreground">No clear steals yet.</p>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Reaches</p>
+                  <div className="space-y-1">
+                    {summary.draftReaches.slice(0, 5).map((reach) => (
+                      <div key={reach.playerId} className="flex justify-between text-xs">
+                        <span>{reach.playerName} (#{reach.pickNumber})</span>
+                        <span className="text-red-500">{reach.stealScore.toFixed(1)}</span>
+                      </div>
+                    ))}
+                    {summary.draftReaches.length === 0 && (
+                      <p className="text-xs text-muted-foreground">No obvious reaches.</p>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -1149,22 +1348,6 @@ function SeasonReviewPanel({
             </div>
           )}
 
-          {/* Draft Steals */}
-          {summary.draftSteals.length > 0 && (
-            <div>
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                Draft Steals
-              </p>
-              <div className="space-y-1">
-                {summary.draftSteals.slice(0, 5).map((steal) => (
-                  <div key={steal.playerId} className="flex justify-between text-sm">
-                    <span>{steal.playerName} (Pick #{steal.pickNumber})</span>
-                    <span className="font-mono text-green-500">OVR {steal.currentOverall}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </CardContent>
       )}
     </Card>
@@ -1239,6 +1422,7 @@ function CurrentPhasePanel({
 }) {
   const { currentPhase } = offseasonState
   const isReady = currentPhase === 'ready'
+  const simulationActive = useGameStore((s) => s.simulation.active)
 
   return (
     <Card className="flex-1">
@@ -1319,12 +1503,12 @@ function CurrentPhasePanel({
         {/* Advance / Start Season button */}
         <div className="flex items-center justify-end pt-2 border-t border-border/50">
           {isReady ? (
-            <Button size="lg" onClick={onStartSeason} className="gap-2">
+            <Button size="lg" onClick={onStartSeason} className="gap-2" disabled={simulationActive}>
               <Rocket className="h-4 w-4" />
               Start Season {year + 1}
             </Button>
           ) : (
-            <Button onClick={onAdvance} disabled={!canAdvance} className="gap-2">
+            <Button onClick={onAdvance} disabled={!canAdvance || simulationActive} className="gap-2">
               Advance Phase
               <ChevronRight className="h-4 w-4" />
             </Button>
@@ -1352,35 +1536,43 @@ export function OffseasonPage() {
   const settings = useGameStore((s) => s.settings)
   const history = useGameStore((s) => s.history)
   const offseasonState = useGameStore((s) => s.offseasonState)
+  const draft = useGameStore((s) => s.draft)
+  const negotiations = useGameStore((s) => s.negotiations)
+  const tradeInbox = useGameStore((s) => s.tradeInbox)
   const advancePhase = useGameStore((s) => s.advanceOffseasonPhase)
   const delistPlayer = useGameStore((s) => s.delistPlayerOffseason)
   const signUnsignedPlayer = useGameStore((s) => s.signUnsignedPlayer)
   const signSupplementalPlayer = useGameStore((s) => s.signSupplementalPlayer)
   const startNewSeasonAction = useGameStore((s) => s.startNewSeasonAction)
+  const simulationActive = useGameStore((s) => s.simulation.active)
 
   // Validation error state
   const [advanceError, setAdvanceError] = useState<string | null>(null)
 
-  // Compute canAdvance for delistings phase
+  // Compute global offseason progression validity
   const canAdvance = useMemo(() => {
     if (!offseasonState) return false
-    if (offseasonState.currentPhase === 'delistings') {
-      const constraints = resolveListConstraints(settings)
-      const validation = validateClubList(players, playerClubId, constraints)
-      return validation.valid
-    }
-    return true
-  }, [offseasonState, players, playerClubId, settings])
+    return validateOffseasonProgression({
+      players,
+      playerClubId,
+      offseasonState,
+      negotiations,
+      settings,
+      draft,
+      tradeInbox,
+    }).allowed
+  }, [offseasonState, players, playerClubId, negotiations, settings, draft, tradeInbox])
 
   // Handlers
   const handleAdvancePhase = useCallback(() => {
+    if (simulationActive) return
     const result = advancePhase()
     if (!result.success) {
       setAdvanceError(result.error)
     } else {
       setAdvanceError(null)
     }
-  }, [advancePhase])
+  }, [advancePhase, simulationActive])
 
   const handleDelist = useCallback((playerId: string) => {
     delistPlayer(playerId)
@@ -1395,9 +1587,15 @@ export function OffseasonPage() {
   }, [signUnsignedPlayer, signSupplementalPlayer, offseasonState?.currentPhase])
 
   const handleStartSeason = useCallback(() => {
-    startNewSeasonAction()
+    if (simulationActive) return
+    const result = startNewSeasonAction()
+    if (!result.success) {
+      setAdvanceError(result.error ?? 'Unable to continue to the new season.')
+      return
+    }
+    setAdvanceError(null)
     navigate('/')
-  }, [startNewSeasonAction, navigate])
+  }, [startNewSeasonAction, navigate, simulationActive])
 
   // Club info for header
   const club = clubs[playerClubId]

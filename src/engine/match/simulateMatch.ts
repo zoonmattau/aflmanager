@@ -5,11 +5,11 @@ import type { Match, MatchResult, MatchPlayerStats, QuarterScore, MatchKeyEvent 
 import type { Player } from '@/types/player'
 import type { Club, ClubGameplan } from '@/types/club'
 import type { MatchDay } from '@/types/season'
-import type { MatchRulesSettings } from '@/types/game'
+import type { MatchRulesSettings, RealismSettings, WeeklyMatchupTactics } from '@/types/game'
 import { getRoleSimulationMultiplier } from '@/engine/player/roles'
 import { isPlayerSuspended } from '@/engine/players/availability'
 import { getMoraleModifier } from '@/engine/players/morale'
-import { getClutchModifier, getTeamLeadershipRating } from '@/engine/leadership/leadershipEngine'
+import { getClutchModifier } from '@/engine/leadership/leadershipEngine'
 import { CLUB_DEFAULT_VENUES, VENUES, VENUE_NAME_TO_ID } from '@/data/venues'
 import { getClubState } from '@/engine/venues/venueEngine'
 import { getCultureMatchModifier } from '@/engine/culture/cultureEngine'
@@ -26,10 +26,13 @@ interface SimulateMatchInput {
   players: Record<string, Player>
   clubs: Record<string, Club>
   gameplanOverrides?: Record<string, ClubGameplan>
+  matchupTacticsByClub?: Record<string, WeeklyMatchupTactics | undefined>
   seed: number
   isFinal?: boolean
   finalType?: 'QF' | 'EF' | 'PF' | 'SF' | 'GF'
   matchRules?: MatchRulesSettings
+  realism?: RealismSettings
+  injuryFrequency?: 'low' | 'medium' | 'high'
   venueHGA?: number
   travelFatigue?: { home: number; away: number }
 }
@@ -61,6 +64,85 @@ interface MatchupModifiers {
   awayTackleMult: number
   homeTurnoverMult: number
   awayTurnoverMult: number
+}
+
+interface TacticalTargetFocus {
+  tagPressure: number
+  roughPressure: number
+  extraFreeRisk: number
+}
+
+interface TacticalRuntime {
+  focusByTarget: Map<string, TacticalTargetFocus>
+  fatigueLoadByPlayer: Map<string, number>
+  interceptBoostByPlayer: Map<string, number>
+}
+
+function intensityToWeight(intensity: 'light' | 'standard' | 'hard'): number {
+  if (intensity === 'hard') return 1.3
+  if (intensity === 'light') return 0.75
+  return 1
+}
+
+function buildTacticalRuntime(
+  tactics: WeeklyMatchupTactics | undefined,
+  ownPlayers: Player[],
+  oppPlayers: Player[],
+): TacticalRuntime {
+  const ownIds = new Set(ownPlayers.map((p) => p.id))
+  const oppIds = new Set(oppPlayers.map((p) => p.id))
+  const focusByTarget = new Map<string, TacticalTargetFocus>()
+  const fatigueLoadByPlayer = new Map<string, number>()
+  const interceptBoostByPlayer = new Map<string, number>()
+
+  const addFocus = (
+    targetId: string,
+    update: Partial<TacticalTargetFocus>,
+  ) => {
+    const current = focusByTarget.get(targetId) ?? { tagPressure: 0, roughPressure: 0, extraFreeRisk: 0 }
+    focusByTarget.set(targetId, {
+      tagPressure: current.tagPressure + (update.tagPressure ?? 0),
+      roughPressure: current.roughPressure + (update.roughPressure ?? 0),
+      extraFreeRisk: current.extraFreeRisk + (update.extraFreeRisk ?? 0),
+    })
+  }
+
+  const addFatigue = (playerId: string, load: number) => {
+    fatigueLoadByPlayer.set(playerId, (fatigueLoadByPlayer.get(playerId) ?? 0) + load)
+  }
+
+  for (const tag of tactics?.hardTags ?? []) {
+    if (!ownIds.has(tag.taggerPlayerId) || !oppIds.has(tag.targetPlayerId)) continue
+    const w = intensityToWeight(tag.intensity)
+    addFocus(tag.targetPlayerId, { tagPressure: 0.15 * w, extraFreeRisk: 0.03 * w })
+    addFatigue(tag.taggerPlayerId, 0.8 * w)
+  }
+
+  for (const rough of tactics?.physicalAttention ?? []) {
+    if (!ownIds.has(rough.enforcerPlayerId) || !oppIds.has(rough.targetPlayerId)) continue
+    const w = intensityToWeight(rough.intensity)
+    addFocus(rough.targetPlayerId, { roughPressure: 0.16 * w, extraFreeRisk: 0.12 * w })
+    addFatigue(rough.enforcerPlayerId, 0.7 * w)
+  }
+
+  for (const role of tactics?.roleAssignments ?? []) {
+    if (!ownIds.has(role.playerId)) continue
+    const w = intensityToWeight(role.intensity)
+    if (role.assignment === 'loose-interceptor') {
+      interceptBoostByPlayer.set(role.playerId, 0.12 * w)
+      continue
+    }
+    if (!role.targetPlayerId || !oppIds.has(role.targetPlayerId)) continue
+    if (role.assignment === 'run-with') {
+      addFocus(role.targetPlayerId, { tagPressure: 0.1 * w, extraFreeRisk: 0.02 * w })
+      addFatigue(role.playerId, 0.55 * w)
+    } else if (role.assignment === 'defensive-forward') {
+      addFocus(role.targetPlayerId, { roughPressure: 0.08 * w, extraFreeRisk: 0.04 * w })
+      addFatigue(role.playerId, 0.5 * w)
+    }
+  }
+
+  return { focusByTarget, fatigueLoadByPlayer, interceptBoostByPlayer }
 }
 
 function getClubPlayers(players: Record<string, Player>, clubId: string): Player[] {
@@ -621,6 +703,9 @@ export function simulateMatch(input: SimulateMatchInput): Match {
   const matchup = computeMatchupModifiers(homePlayers, awayPlayers, resolvedHomeGameplan, resolvedAwayGameplan)
   const homeTeamFreeRisk = getGameplanFreeRiskModifier(resolvedHomeGameplan, weather)
   const awayTeamFreeRisk = getGameplanFreeRiskModifier(resolvedAwayGameplan, weather)
+  const homeTactical = buildTacticalRuntime(input.matchupTacticsByClub?.[homeClubId], homePlayers, awayPlayers)
+  const awayTactical = buildTacticalRuntime(input.matchupTacticsByClub?.[awayClubId], awayPlayers, homePlayers)
+  const suspensionStrictness = input.realism?.tacticalSuspensionConsequences ? 1 : 0.55
   const homeVenueFamiliarity = computeVenueFamiliarityBonus(homeClubId, venueId)
   const awayVenueFamiliarity = computeVenueFamiliarityBonus(awayClubId, venueId)
 
@@ -690,6 +775,7 @@ export function simulateMatch(input: SimulateMatchInput): Match {
       const matchupTackleMult = homeWins ? matchup.awayTackleMult : matchup.homeTackleMult
       const defendingTeamFreeRisk = homeWins ? awayTeamFreeRisk : homeTeamFreeRisk
       const attackingTeamFreeRisk = homeWins ? homeTeamFreeRisk : awayTeamFreeRisk
+      const defendingTactical = homeWins ? awayTactical : homeTactical
       const surfaceContext = {
         contestedBoost: weather.contestedPlayerBoost,
         kickingPenalty: Math.max(0, 1 - weather.kickingEfficiencyMult),
@@ -717,6 +803,10 @@ export function simulateMatch(input: SimulateMatchInput): Match {
       const primaryPlayer = pickWeightedPlayer(rng, attackingPlayers, surfaceContext, attClutchCtx)
       const primaryStatIndex = attackingStats.findIndex((s) => s.playerId === primaryPlayer.id)
       const primaryRatings = getGranularRatings(primaryPlayer)
+      const tacticalFocus = defendingTactical.focusByTarget.get(primaryPlayer.id)
+      const tagPenalty = tacticalFocus?.tagPressure ?? 0
+      const roughPenalty = tacticalFocus?.roughPressure ?? 0
+      const pressurePenalty = tagPenalty + roughPenalty * 0.6
 
       // Generate disposal
       const isKick = rng.chance(0.55)
@@ -728,7 +818,7 @@ export function simulateMatch(input: SimulateMatchInput): Match {
       attackingStats[primaryStatIndex].disposals++
       if (isKick) {
         const kickExecution = clampChance(
-          weather.kickingEfficiencyMult * (0.62 + primaryRatings.kicking / 260),
+          weather.kickingEfficiencyMult * (0.62 + primaryRatings.kicking / 260) * (1 - pressurePenalty * 0.34),
         )
         if (!rng.chance(kickExecution)) {
           attackingStats[primaryStatIndex].turnovers++
@@ -741,7 +831,8 @@ export function simulateMatch(input: SimulateMatchInput): Match {
       const contestedChance = clampChance(
         (0.22 + primaryRatings.strength * 0.0012 + primaryRatings.tackling * 0.0012)
         * attMods.contestedMult
-        * weather.contestedMult,
+        * weather.contestedMult
+        * (1 + tagPenalty * 0.1),
       )
       if (rng.chance(contestedChance)) {
         attackingStats[primaryStatIndex].contestedPossessions++
@@ -761,7 +852,7 @@ export function simulateMatch(input: SimulateMatchInput): Match {
         }
       } else {
         const uncontestedRoll = 0.65 + (primaryRatings.decisionMaking + primaryRatings.agility) / 220
-        const uncontestedChance = clampChance(uncontestedRoll * attMods.uncontestedMult)
+        const uncontestedChance = clampChance(uncontestedRoll * attMods.uncontestedMult * (1 - pressurePenalty * 0.22))
         if (rng.chance(uncontestedChance)) {
           attackingStats[primaryStatIndex].uncontestedPossessions++
           attackingStats[primaryStatIndex].uncountestedPossessions = attackingStats[primaryStatIndex].uncontestedPossessions
@@ -794,7 +885,8 @@ export function simulateMatch(input: SimulateMatchInput): Match {
       const tackleBaseChance = clampChance(
         (0.07 + ((100 - primaryRatings.agility) * 0.001) + ((100 - primaryRatings.discipline) * 0.0008))
         * defMods.tackleMult
-        * matchupTackleMult,
+        * matchupTackleMult
+        * (1 + roughPenalty * 0.35),
       )
       if (rng.chance(tackleBaseChance)) {
         const tackler = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx)
@@ -812,7 +904,14 @@ export function simulateMatch(input: SimulateMatchInput): Match {
 
         // Discipline: high-risk tacklers and aggressive systems concede more frees.
         const tacklerFreeRisk = getPlayerFreeRiskMultiplier(tackler, weather)
-        const highContactChance = clampChance(0.0075 * defendingTeamFreeRisk * tacklerFreeRisk * matchupTackleMult)
+        const highContactChance = clampChance(
+          0.0075 *
+          defendingTeamFreeRisk *
+          tacklerFreeRisk *
+          matchupTackleMult *
+          (1 + (tacticalFocus?.extraFreeRisk ?? 0) * 2.8) *
+          suspensionStrictness,
+        )
         if (rng.chance(highContactChance)) {
           defStats[tacklerIdx].freesAgainst++
           attackingStats[primaryStatIndex].freesFor++
@@ -836,7 +935,8 @@ export function simulateMatch(input: SimulateMatchInput): Match {
       const inside50Chance = clampChance(
         (0.14 + primaryRatings.kicking * 0.0014 + primaryRatings.speed * 0.0008 + primaryRatings.decisionMaking * 0.0012)
         * attMods.inside50Mult
-        * matchupInside50Mult,
+        * matchupInside50Mult
+        * (1 - pressurePenalty * 0.18),
       )
       if (rng.chance(inside50Chance)) {
         const i50Player = pickWeightedPlayer(rng, attackingPlayers, surfaceContext, attClutchCtx)
@@ -910,7 +1010,7 @@ export function simulateMatch(input: SimulateMatchInput): Match {
           - primaryRatings.decisionMaking * 0.0012
           - primaryRatings.kicking * 0.0008
           + (100 - primaryRatings.discipline) * 0.0006
-        ) * matchupTurnoverMult * weather.turnoverMult,
+        ) * matchupTurnoverMult * weather.turnoverMult * (1 + pressurePenalty * 0.28),
       )
       if (rng.chance(turnoverChance)) {
         attackingStats[primaryStatIndex].turnovers++
@@ -926,11 +1026,13 @@ export function simulateMatch(input: SimulateMatchInput): Match {
         const defStats = homeWins ? awayStats : homeStats
         const intIdx = defStats.findIndex((s) => s.playerId === interceptor.id)
         const interceptorRatings = getGranularRatings(interceptor)
+        const interceptBoost = (homeWins ? awayTactical : homeTactical).interceptBoostByPlayer.get(interceptor.id) ?? 0
         const interceptGain = rng.chance(
           clampChance(
             getRoleSimulationMultiplier(interceptor.preferredRole, 'defense') - 0.92 +
             interceptorRatings.intercepting * 0.002 +
-            interceptorRatings.spoiling * 0.0012,
+            interceptorRatings.spoiling * 0.0012 +
+            interceptBoost,
           ),
         ) ? 2 : 1
         defStats[intIdx].intercepts += interceptGain
@@ -981,7 +1083,10 @@ export function simulateMatch(input: SimulateMatchInput): Match {
         stat.freesFor += rng.nextInt(0, 2)
       }
 
-      stat.minutesPlayed = estimateMinutesPlayed(stat)
+      const extraLoad =
+        (homeTactical.fatigueLoadByPlayer.get(stat.playerId) ?? 0) +
+        (awayTactical.fatigueLoadByPlayer.get(stat.playerId) ?? 0)
+      stat.minutesPlayed = Math.min(120, estimateMinutesPlayed(stat) + Math.round(extraLoad * rng.nextInt(3, 6)))
     }
   }
 

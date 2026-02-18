@@ -11,16 +11,12 @@ import { hasBlockingErrors } from './bracketValidation'
 interface BracketToolbarProps {
   onInitFromPreset: (format: FinalsFormat) => void
   onAddWeek: () => void
-  qualifyingTeams: number
-  onSetQualifyingTeams: (count: number) => void
   validationErrors: ValidationError[]
 }
 
 export function BracketToolbar({
   onInitFromPreset,
   onAddWeek,
-  qualifyingTeams,
-  onSetQualifyingTeams,
   validationErrors,
 }: BracketToolbarProps) {
   const hasErrors = hasBlockingErrors(validationErrors)
@@ -59,24 +55,6 @@ export function BracketToolbar({
         <Plus className="h-3 w-3" />
         Add Week
       </button>
-
-      {/* Qualifying teams */}
-      <div className="flex items-center gap-1.5">
-        <span className="text-[10px] text-zinc-500">Teams:</span>
-        <input
-          type="number"
-          className="h-6 w-10 rounded border border-zinc-700 bg-zinc-800 px-1 text-center text-[10px] text-zinc-300 outline-none"
-          value={qualifyingTeams}
-          min={2}
-          max={18}
-          onChange={(e) => {
-            const val = parseInt(e.target.value, 10)
-            if (!isNaN(val) && val >= 2 && val <= 18) {
-              onSetQualifyingTeams(val)
-            }
-          }}
-        />
-      </div>
 
       {/* Spacer */}
       <div className="flex-1" />

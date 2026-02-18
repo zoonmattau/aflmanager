@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useGameStore } from '@/stores/gameStore'
+import { useNavigate } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -117,6 +118,7 @@ function NewsRow({
 // ---------------------------------------------------------------------------
 
 export function InboxPage() {
+  const navigate = useNavigate()
   const newsLog = useGameStore((s) => s.newsLog)
   const markAllNewsRead = useGameStore((s) => s.markAllNewsRead)
   const tradeInbox = useGameStore((s) => s.tradeInbox)
@@ -168,8 +170,8 @@ export function InboxPage() {
     else setTradeError(null)
   }
 
-  const handleTribunalDecision = (caseId: string, decision: 'accept' | 'challenge') => {
-    const result = respondToTribunalCase(caseId, decision)
+  const handleTribunalQuickAccept = (caseId: string) => {
+    const result = respondToTribunalCase(caseId, 'accept')
     if (!result.success) setTribunalError(result.error ?? 'Unable to process tribunal case')
     else {
       setTribunalError(null)
@@ -179,6 +181,21 @@ export function InboxPage() {
 
   return (
     <div className="space-y-6 p-6">
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="sm" className="h-8 px-3" onClick={() => navigate('/')}>
+          Dashboard
+        </Button>
+        <Button size="sm" className="h-8 gap-1.5 px-3">
+          <MailOpen className="h-3.5 w-3.5" />
+          Inbox
+          {totalUnread > 0 && (
+            <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-semibold text-white">
+              {totalUnread}
+            </span>
+          )}
+        </Button>
+      </div>
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -298,11 +315,12 @@ export function InboxPage() {
                       Decision deadline: before your next simulated match.
                     </p>
                     <div className="flex justify-end gap-2">
-                      <Button size="sm" variant="outline" onClick={() => handleTribunalDecision(caseItem.id, 'accept')}>
-                        Accept
+                      <Button size="sm" variant="outline" onClick={() => handleTribunalQuickAccept(caseItem.id)}>
+                        Quick Accept
                       </Button>
-                      <Button size="sm" onClick={() => handleTribunalDecision(caseItem.id, 'challenge')}>
-                        Challenge
+                      <Button size="sm" onClick={() => navigate(`/tribunal/${caseItem.id}`)}>
+                        <Scale className="mr-1.5 h-3.5 w-3.5" />
+                        Attend Hearing
                       </Button>
                     </div>
                   </div>

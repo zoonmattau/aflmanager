@@ -1,6 +1,6 @@
 import type { Club } from './club'
 import type { Player } from './player'
-import type { Season, LadderEntry, MatchDay } from './season'
+import type { Season, LadderEntry, MatchDay, PowerRankingSnapshot } from './season'
 import type { Match } from './match'
 import type { StaffMember } from './staff'
 import type { DraftState, Scout } from './draft'
@@ -17,6 +17,9 @@ import type { NegotiationTracker } from './contract'
 import type { TradeBlockState, TradeInboxItem, TradePlayerMove } from './trade'
 import type { TribunalCase } from './discipline'
 import type { ClubGameplan } from './club'
+import type { LadderPrimarySort, LadderTieBreaker } from './customLeague'
+import type { MultiTierState } from '@/engine/league/multiTierEngine'
+import type { SpecialEventsSettings, SpecialEventsState } from './specialEvents'
 
 export type GamePhase =
   | 'setup'           // Choosing club
@@ -147,12 +150,28 @@ export interface RealismSettings {
   boardPressure: boolean          // Board expectations affect job security
   boardPolitics: boolean          // Boardroom factions can amplify or soften pressure
   aflHouseInterference: boolean   // AFL mandates priority picks & scheduling for struggling clubs
+  aflHouseExpansionEvolution: boolean // AFL House may introduce expansion clubs over time
+  aflHouseCompetitionEvolution: boolean // AFL House may switch competition model (single table/conferences/divisions)
+  aflHouseFinalsEvolution: boolean // AFL House may change finals system
+  aflHouseListRulesEvolution: boolean // AFL House may adjust list-size rules
+  aflHouseSalaryCapEvolution: boolean // AFL House may adjust salary cap policy/amount
+  aflHouseFixtureEvolution: boolean // AFL House may alter fixture/season-structure policy
   listSizeEnforcement: boolean    // Enforce senior (38) and rookie (6) list limits
   mediaLeaks: boolean              // Player managers leak negotiations to media
   negotiationDelays: boolean       // Multi-round delays (false = instant resolution)
+  tacticalInjuryConsequences: boolean // Matchup rough-up orders add extra injury risk
+  tacticalSuspensionConsequences: boolean // Matchup rough-up orders increase suspension exposure
 
   // Awards
   brownlowNight: boolean          // Votes hidden until Brownlow Night ceremony (Monday before GF)
+
+  // Special Events
+  specialEventPlayerImpact: boolean // Exhibition matches affect fatigue/injury/form
+
+  // Tribunal
+  tribunalEarlyPleaDiscount: boolean  // Allow early guilty plea discount (default true)
+  tribunalLegalRepresentation: boolean // Allow hiring lawyers (default true)
+  tribunalPriorRecord: boolean        // Prior offences increase penalties (default true)
 }
 
 export interface ManagerCareer {
@@ -230,8 +249,30 @@ export interface GameSettings {
   finals: FinalsSettings
   fixtureSchedule: FixtureScheduleSettings
   blockbusters: BlockbusterMatch[]
+  ladderSorting?: {
+    primary: LadderPrimarySort
+    tieBreakers: LadderTieBreaker[]
+  }
+  fixturePolicy?: {
+    homeAwayBalance: boolean
+    travelWeighting: number // 0-100
+    venueSharingRules: boolean
+  }
+  customRivalryPairs?: Array<[string, string]>
+  specialEvents: SpecialEventsSettings
   seasonStartDate: string        // ISO date, default '2026-03-20'
   gameStartDate: string          // ISO date, day after previous GF, default computed from startingYear
+}
+
+export interface SimulationStatus {
+  active: boolean
+  title: string
+  detail: string
+  progress: number | null        // 0-100
+  currentStep: number | null
+  totalSteps: number | null
+  logs: string[]
+  startedAt: string | null
 }
 
 export interface NewsItem {
@@ -262,6 +303,7 @@ export interface GameState {
   // Season data
   season: Season
   ladder: LadderEntry[]
+  powerRankings: PowerRankingSnapshot[]
   matchResults: Match[]
 
   // News & history
@@ -307,6 +349,9 @@ export interface GameState {
   // Venue scheduling
   venueState: SeasonVenueState | null
 
+  // Special events (exhibition matches)
+  specialEvents: SpecialEventsState | null
+
   // Negotiation tracker
   negotiations: NegotiationTracker | null
 
@@ -326,13 +371,52 @@ export interface GameState {
 
   // Reserves / VFL tracking
   reserves: ReservesSystemState
+
+  // Multi-tier custom league tracking
+  multiTierState: MultiTierState | null
+
+  // Global blocking simulation/loading UX
+  simulation: SimulationStatus
 }
 
 export interface WeeklyGameplan {
   round: number
   opponentClubId: string
   overrides: Partial<ClubGameplan>
+  matchupTactics?: WeeklyMatchupTactics
   source: 'user' | 'ai-auto'
+}
+
+export type MatchupInstructionIntensity = 'light' | 'standard' | 'hard'
+
+export interface HardTagInstruction {
+  id: string
+  taggerPlayerId: string
+  targetPlayerId: string
+  intensity: MatchupInstructionIntensity
+}
+
+export interface PhysicalAttentionInstruction {
+  id: string
+  enforcerPlayerId: string
+  targetPlayerId: string
+  intensity: MatchupInstructionIntensity
+}
+
+export type MatchupRoleAssignmentType = 'run-with' | 'loose-interceptor' | 'defensive-forward'
+
+export interface RoleAssignmentInstruction {
+  id: string
+  playerId: string
+  assignment: MatchupRoleAssignmentType
+  targetPlayerId?: string
+  intensity: MatchupInstructionIntensity
+}
+
+export interface WeeklyMatchupTactics {
+  hardTags: HardTagInstruction[]
+  physicalAttention: PhysicalAttentionInstruction[]
+  roleAssignments: RoleAssignmentInstruction[]
 }
 
 export interface CompletedTrade {

@@ -3,6 +3,7 @@ import type { SaveIndex } from '@/types/save'
 import type { GlobalSettings } from '@/types/globalSettings'
 import type { LeaguePreset } from '@/types/leaguePreset'
 import type { GameState } from '@/types/game'
+import type { CustomLeagueTemplate } from '@/types/customLeague'
 import { DEFAULT_GLOBAL_SETTINGS } from '@/types/globalSettings'
 import {
   getSaveIndex,
@@ -14,16 +15,20 @@ import {
   getLeaguePresets,
   saveLeaguePreset as saveLeaguePresetDB,
   deleteLeaguePreset as deleteLeaguePresetDB,
+  getCustomLeagueTemplates,
+  saveCustomLeagueTemplate as saveCustomLeagueTemplateDB,
+  deleteCustomLeagueTemplate as deleteCustomLeagueTemplateDB,
   migrateLegacySave,
 } from '@/lib/saveManager'
 
-export type AppScreen = 'home' | 'game' | 'new-game' | 'settings' | 'league-presets'
+export type AppScreen = 'home' | 'game' | 'new-game' | 'settings' | 'league-presets' | 'custom-league-builder'
 
 interface AppState {
   currentScreen: AppScreen
   saveIndex: SaveIndex | null
   globalSettings: GlobalSettings
   leaguePresets: LeaguePreset[]
+  customLeagueTemplates: CustomLeagueTemplate[]
   initialized: boolean
 }
 
@@ -37,6 +42,8 @@ interface AppActions {
   refreshSaveIndex: () => Promise<void>
   createLeaguePreset: (preset: LeaguePreset) => Promise<void>
   deleteLeaguePreset: (presetId: string) => Promise<void>
+  createOrUpdateCustomLeagueTemplate: (template: CustomLeagueTemplate) => Promise<void>
+  deleteCustomLeagueTemplate: (templateId: string) => Promise<void>
 }
 
 export type AppStore = AppState & AppActions
@@ -46,6 +53,7 @@ export const useAppStore = create<AppStore>()((set, get) => ({
   saveIndex: null,
   globalSettings: { ...DEFAULT_GLOBAL_SETTINGS },
   leaguePresets: [],
+  customLeagueTemplates: [],
   initialized: false,
 
   initialize: async () => {
@@ -65,11 +73,13 @@ export const useAppStore = create<AppStore>()((set, get) => ({
 
     // Load league presets
     const leaguePresets = await getLeaguePresets()
+    const customLeagueTemplates = await getCustomLeagueTemplates()
 
     set({
       saveIndex,
       globalSettings,
       leaguePresets,
+      customLeagueTemplates,
       initialized: true,
     })
   },
@@ -123,5 +133,17 @@ export const useAppStore = create<AppStore>()((set, get) => ({
     await deleteLeaguePresetDB(presetId)
     const leaguePresets = await getLeaguePresets()
     set({ leaguePresets })
+  },
+
+  createOrUpdateCustomLeagueTemplate: async (template) => {
+    await saveCustomLeagueTemplateDB(template)
+    const customLeagueTemplates = await getCustomLeagueTemplates()
+    set({ customLeagueTemplates })
+  },
+
+  deleteCustomLeagueTemplate: async (templateId) => {
+    await deleteCustomLeagueTemplateDB(templateId)
+    const customLeagueTemplates = await getCustomLeagueTemplates()
+    set({ customLeagueTemplates })
   },
 }))

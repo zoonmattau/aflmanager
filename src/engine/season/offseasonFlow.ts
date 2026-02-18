@@ -10,6 +10,7 @@ import type {
   PlayerDevelopmentReport,
   PlayerDevelopmentDelta,
   ClubDevelopmentSummary,
+  RetirementLegacyEntry,
 } from '@/types/history'
 import type { OffseasonCalendarState } from '@/engine/offseason/offseasonCalendar'
 import type { FreeAgencyMarketState } from '@/engine/contracts/freeAgencyMarket'
@@ -230,6 +231,52 @@ function round1(value: number): number {
   return Math.round(value * 10) / 10
 }
 
+export function qualifiesForHallOfFame(player: Player): boolean {
+  const games = player.careerStats.gamesPlayed
+  const goals = player.careerStats.goals
+  const overall = getOverall(player)
+  if (games >= 250) return true
+  if (goals >= 500) return true
+  if (games >= 180 && goals >= 250) return true
+  if (games >= 150 && overall >= 78) return true
+  return false
+}
+
+function getRetirementLegacyTier(player: Player): RetirementLegacyEntry['tier'] {
+  const games = player.careerStats.gamesPlayed
+  const goals = player.careerStats.goals
+  const overall = getOverall(player)
+  if (games >= 300 || goals >= 700 || (games >= 220 && overall >= 82)) return 'legend'
+  if (games >= 180 || goals >= 350 || overall >= 76) return 'club-great'
+  return 'veteran'
+}
+
+function perGame(value: number, games: number): string {
+  if (games <= 0) return '0.0'
+  return (value / games).toFixed(1)
+}
+
+function buildRetirementCareerSummary(
+  player: Player,
+  retiredClubName: string,
+  tier: RetirementLegacyEntry['tier'],
+  hallEligible: boolean,
+): string {
+  const games = player.careerStats.gamesPlayed
+  const goals = player.careerStats.goals
+  const disposals = player.careerStats.disposals
+  const marks = player.careerStats.marks
+  const tackles = player.careerStats.tackles
+  const tierLabel = tier === 'legend' ? 'game legend' : tier === 'club-great' ? 'club great' : 'respected veteran'
+  const intro = `${player.firstName} ${player.lastName} retires at age ${player.age} as a ${tierLabel} of ${retiredClubName}.`
+  const totals = `Career totals: ${games} games, ${goals} goals, ${disposals} disposals, ${marks} marks, ${tackles} tackles.`
+  const rates = `Per game: ${perGame(goals, games)} goals, ${perGame(disposals, games)} disposals, ${perGame(tackles, games)} tackles.`
+  const hallNote = hallEligible
+    ? 'Eligible for immediate club Hall of Fame consideration.'
+    : 'Not yet at Hall of Fame eligibility thresholds.'
+  return `${intro} ${totals} ${rates} ${hallNote}`
+}
+
 function buildDevelopmentReport(
   year: number,
   dateStr: string,
@@ -448,10 +495,12 @@ export function processSeasonEnd(
   retiredIds: string[]
   news: NewsItem[]
   developmentReport: PlayerDevelopmentReport
+  retirementLegacies: RetirementLegacyEntry[]
 } {
   const updatedPlayers: Record<string, Player> = {}
   const retiredIds: string[] = []
   const news: NewsItem[] = []
+  const retirementLegacies: RetirementLegacyEntry[] = []
   const dateStr = offseasonDate(currentYear, 10, 1)
   const developmentSnapshots: Array<{
     playerId: string
@@ -540,6 +589,7 @@ export function processSeasonEnd(
       facilitiesModifier: clubContext?.facilitiesModifier ?? 1,
       cultureModifier: clubContext?.cultureModifier ?? 1,
       trainingFocus: clubContext?.trainingFocus ?? 'game-sense',
+      playerTrainingFocus: player.trainingFocus ?? null,
       randomness: rng.nextFloat(0.88, 1.12),
     })
     const overallAfter = getOverall(player)
@@ -569,14 +619,29 @@ export function processSeasonEnd(
       const fullName = `${player.firstName} ${player.lastName}`
       const gamesPlayed = player.careerStats.gamesPlayed
       const goals = player.careerStats.goals
+      const eligibleForHall = qualifiesForHallOfFame(player)
+      const tier = getRetirementLegacyTier(player)
+      const retiredClubId = player.clubId
+      const retiredClubName = clubs[retiredClubId]?.name ?? retiredClubId
+      const overallAtRetirement = Math.round(getOverall(player))
+
+      const ceremonyHeadline =
+        tier === 'legend'
+          ? `Retirement Ceremony: ${fullName} honoured as a game legend`
+          : tier === 'club-great'
+            ? `Retirement Ceremony: ${fullName} farewelled as a club great`
+            : `${fullName} retires from AFL football`
+
+      const majorRetirement = tier !== 'veteran'
+      const careerSummary = buildRetirementCareerSummary(player, retiredClubName, tier, eligibleForHall)
+      const ceremonySummary = majorRetirement
+        ? `${retiredClubName} staged a formal retirement ceremony. ${careerSummary}`
+        : careerSummary
 
       news.push(
         createNews(
-          `${fullName} announces retirement`,
-          `${fullName} has announced his retirement from AFL football after a career ` +
-            `spanning ${gamesPlayed} games and ${goals} goals. The ${player.age}-year-old ` +
-            `${player.position.primary} departs the game having made a significant ` +
-            `contribution to the sport.`,
+          ceremonyHeadline,
+          ceremonySummary,
           'general',
           [player.clubId],
           [player.id],
@@ -584,6 +649,24 @@ export function processSeasonEnd(
           rng,
         ),
       )
+
+      retirementLegacies.push({
+        playerId: player.id,
+        playerName: fullName,
+        retiredYear: currentYear,
+        retiredFromClubId: retiredClubId,
+        retiredFromClubName: retiredClubName,
+        ageAtRetirement: player.age,
+        primaryPosition: player.position.primary,
+        gamesPlayed,
+        goals,
+        overallAtRetirement,
+        tier,
+        hallOfFameEligible: eligibleForHall,
+        inductedClubHallOfFame: false,
+        ceremonyHeadline,
+        ceremonySummary,
+      })
     }
 
     updatedPlayers[id] = player
@@ -594,7 +677,7 @@ export function processSeasonEnd(
     dateStr,
     developmentSnapshots,
   )
-  return { updatedPlayers, retiredIds, news, developmentReport }
+  return { updatedPlayers, retiredIds, news, developmentReport, retirementLegacies }
 }
 
 // ---------------------------------------------------------------------------
@@ -608,12 +691,48 @@ export function processSeasonEnd(
 export function processRetirements(
   players: Record<string, Player>,
   retiredIds: string[],
-): Record<string, Player> {
+  clubs: Record<string, Club>,
+  currentYear: number,
+): {
+  updatedPlayers: Record<string, Player>
+  updatedClubs: Record<string, Club>
+  inductedHallOfFameIds: string[]
+} {
   const retiredSet = new Set(retiredIds)
   const updatedPlayers: Record<string, Player> = {}
+  const updatedClubs: Record<string, Club> = { ...clubs }
+
+  const inductedHallOfFameIds: string[] = []
 
   for (const [id, player] of Object.entries(players)) {
     if (retiredSet.has(id)) {
+      if (player.clubId && player.clubId !== 'retired' && qualifiesForHallOfFame(player)) {
+        const club = updatedClubs[player.clubId]
+        if (club) {
+          const existing = club.hallOfFame ?? []
+          const alreadyInducted = existing.some((entry) => entry.playerId === player.id)
+          if (!alreadyInducted) {
+            updatedClubs[player.clubId] = {
+              ...club,
+              hallOfFame: [
+                ...existing,
+                {
+                  playerId: player.id,
+                  playerName: `${player.firstName} ${player.lastName}`,
+                  inductedYear: currentYear,
+                  retiredYear: currentYear,
+                  ageAtRetirement: player.age,
+                  gamesPlayed: player.careerStats.gamesPlayed,
+                  goals: player.careerStats.goals,
+                  primaryPosition: player.position.primary,
+                },
+              ],
+            }
+            inductedHallOfFameIds.push(player.id)
+          }
+        }
+      }
+
       updatedPlayers[id] = {
         ...player,
         clubId: 'retired',
@@ -629,7 +748,7 @@ export function processRetirements(
     }
   }
 
-  return updatedPlayers
+  return { updatedPlayers, updatedClubs, inductedHallOfFameIds }
 }
 
 // ---------------------------------------------------------------------------
@@ -1144,7 +1263,14 @@ export function processAIDraft(
 
   const draftedPlayerIds: string[] = []
   const newsItems: NewsItem[] = []
-  let currentHistory: GameHistory = history ?? { seasons: [], draftHistory: [], developmentReports: [] }
+  let currentHistory: GameHistory = history ?? {
+    seasons: [],
+    draftHistory: [],
+    developmentReports: [],
+    awards: [],
+    milestones: [],
+    retirementLegacies: [],
+  }
 
   // Track which prospects have been drafted
   const draftedProspectIds = new Set<string>()

@@ -1,6 +1,5 @@
 import type { OffseasonMilestone } from '@/engine/offseason/offseasonCalendar'
 import type { OffseasonPhase } from '@/engine/season/offseasonFlow'
-import { getOffseasonPhaseLabel } from '@/engine/season/offseasonFlow'
 
 interface OffseasonCalendarOverlayProps {
   date: string
@@ -35,12 +34,6 @@ export function OffseasonCalendarOverlay({
     )
   }
 
-  // No milestone — show subtle current phase label
-  return (
-    <div className="flex items-center justify-center h-full">
-      <span className="text-[9px] text-muted-foreground/40">
-        {getOffseasonPhaseLabel(currentPhase)}
-      </span>
-    </div>
-  )
+  // No milestone on this day — leave empty
+  return null
 }

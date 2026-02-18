@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent } from '@/components/ui/card'
@@ -27,9 +27,11 @@ import {
   getNextMilestone,
   getCountdown,
   detectActionItems,
+  buildOffseasonChecklist,
 } from '@/engine/offseason/offseasonCalendar'
-import type { ActionItem } from '@/engine/offseason/offseasonCalendar'
+import type { ActionItem, OffseasonChecklistTask } from '@/engine/offseason/offseasonCalendar'
 import { diffDays } from '@/engine/calendar/calendarEngine'
+import { cn } from '@/lib/utils'
 
 const SEVERITY_ICON: Record<ActionItem['severity'], typeof AlertTriangle> = {
   critical: AlertTriangle,
@@ -45,12 +47,15 @@ const SEVERITY_COLOR: Record<ActionItem['severity'], string> = {
 
 export function OffseasonStatusDashboard() {
   const navigate = useNavigate()
+  const [simError, setSimError] = useState<string | null>(null)
 
   const offseasonState = useGameStore((s) => s.offseasonState)
   const players = useGameStore((s) => s.players)
   const playerClubId = useGameStore((s) => s.playerClubId)
   const negotiations = useGameStore((s) => s.negotiations)
   const settings = useGameStore((s) => s.settings)
+  const draft = useGameStore((s) => s.draft)
+  const tradeInbox = useGameStore((s) => s.tradeInbox)
   const simHalfDay = useGameStore((s) => s.simOffseasonHalfDay)
   const simFullDay = useGameStore((s) => s.simOffseasonFullDay)
   const simToMilestone = useGameStore((s) => s.simOffseasonToMilestone)
@@ -59,8 +64,21 @@ export function OffseasonStatusDashboard() {
 
   const actionItems = useMemo(() => {
     if (!offseasonState) return []
-    return detectActionItems(players, playerClubId, offseasonState, negotiations, settings)
-  }, [players, playerClubId, offseasonState, negotiations, settings])
+    return detectActionItems(players, playerClubId, offseasonState, negotiations, settings, draft, tradeInbox)
+  }, [players, playerClubId, offseasonState, negotiations, settings, draft, tradeInbox])
+
+  const checklist = useMemo(() => {
+    if (!offseasonState) return []
+    return buildOffseasonChecklist({
+      players,
+      playerClubId,
+      offseasonState,
+      negotiations,
+      settings,
+      draft,
+      tradeInbox,
+    })
+  }, [players, playerClubId, offseasonState, negotiations, settings, draft, tradeInbox])
 
   const nextMilestone = useMemo(
     () => (calendarState ? getNextMilestone(calendarState) : null),
@@ -81,6 +99,51 @@ export function OffseasonStatusDashboard() {
     const elapsed = diffDays(first.date, calendarState.currentDate)
     return Math.min(100, Math.max(0, (elapsed / totalSpan) * 100))
   }, [calendarState])
+
+  const requiredTasks = useMemo(() => checklist.filter((task) => task.required), [checklist])
+  const optionalTasks = useMemo(() => checklist.filter((task) => !task.required), [checklist])
+
+  const runSimAction = (action: () => { success: boolean; error?: string }) => {
+    const result = action()
+    if (!result.success) {
+      setSimError(result.error ?? 'Simulation blocked.')
+      return
+    }
+    setSimError(null)
+  }
+
+  const ChecklistGroup = ({
+    title,
+    tasks,
+  }: {
+    title: string
+    tasks: OffseasonChecklistTask[]
+  }) => (
+    <div className="space-y-1.5">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
+      {tasks.map((task) => (
+        <button
+          key={task.id}
+          onClick={() => navigate(task.linkTo)}
+          className={cn(
+            'w-full rounded-md border px-2.5 py-2 text-left transition-colors hover:bg-muted/60',
+            task.completed ? 'border-green-500/30 bg-green-500/5' : task.required ? 'border-red-500/30 bg-red-500/5' : 'border-border/60 bg-muted/30',
+          )}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-medium">{task.title}</p>
+            <Badge variant="outline" className={cn('text-[10px]', task.completed ? 'text-green-500 border-green-500/40' : task.required ? 'text-red-500 border-red-500/40' : 'text-yellow-600 border-yellow-500/40')}>
+              {task.completed ? 'Complete' : 'Pending'}
+            </Badge>
+          </div>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">{task.description}</p>
+          {!task.completed && task.impact && (
+            <p className="mt-1 text-[10px] text-red-500/90">{task.impact}</p>
+          )}
+        </button>
+      ))}
+    </div>
+  )
 
   if (!offseasonState || !calendarState) return null
 
@@ -155,7 +218,7 @@ export function OffseasonStatusDashboard() {
               <TooltipProvider delayDuration={300}>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button size="sm" variant="outline" onClick={simHalfDay}>
+                    <Button size="sm" variant="outline" onClick={() => runSimAction(simHalfDay)}>
                       <Play className="h-3.5 w-3.5" />
                     </Button>
                   </TooltipTrigger>
@@ -163,7 +226,7 @@ export function OffseasonStatusDashboard() {
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button size="sm" variant="outline" onClick={simFullDay}>
+                    <Button size="sm" variant="outline" onClick={() => runSimAction(simFullDay)}>
                       <FastForward className="h-3.5 w-3.5" />
                     </Button>
                   </TooltipTrigger>
@@ -171,7 +234,7 @@ export function OffseasonStatusDashboard() {
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button size="sm" variant="outline" onClick={simToMilestone}>
+                    <Button size="sm" variant="outline" onClick={() => runSimAction(simToMilestone)}>
                       <SkipForward className="h-3.5 w-3.5" />
                     </Button>
                   </TooltipTrigger>
@@ -179,6 +242,21 @@ export function OffseasonStatusDashboard() {
                 </Tooltip>
               </TooltipProvider>
             </div>
+          </div>
+        </div>
+        <div className="mt-4 border-t pt-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold">Offseason Checklist</p>
+            <p className="text-[11px] text-muted-foreground">{formatOffseasonDateTime(calendarState)}</p>
+          </div>
+          {simError && (
+            <div className="rounded-md border border-red-500/30 bg-red-500/10 px-2.5 py-2 text-xs text-red-500">
+              {simError}
+            </div>
+          )}
+          <div className="grid gap-3 lg:grid-cols-2">
+            <ChecklistGroup title="Required Tasks" tasks={requiredTasks} />
+            <ChecklistGroup title="Optional Tasks" tasks={optionalTasks} />
           </div>
         </div>
       </CardContent>

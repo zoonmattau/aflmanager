@@ -4,6 +4,7 @@ import type { GameSettings, MatchTimeSlot, BlockbusterMatch } from '@/types/game
 import { SeededRNG } from '@/engine/core/rng'
 import { REGULAR_SEASON_ROUNDS } from '@/engine/core/constants'
 import { BLOCKBUSTER_AUTO_ROUNDS, DEFAULT_RIVALRY_PAIRS } from '@/engine/core/defaultSettings'
+import { getClubState } from '@/engine/venues/venueEngine'
 import { validateFixture } from './fixtureValidator'
 
 // ---------------------------------------------------------------------------
@@ -145,8 +146,7 @@ function generateFixtureWithRetry(options: FixtureGeneratorOptions, attempt: num
 
   // ---- Phase 3: Generate balanced repeat rounds ----
   if (fullRounds.length < fullRoundCount) {
-    const useRivalries = settings?.leagueMode === 'real'
-      && settings.realism?.fixtureRivalryScheduling !== false
+    const useRivalries = settings?.realism?.fixtureRivalryScheduling !== false
 
     const repeatRounds = generateBalancedRepeatRounds(
       clubIds,
@@ -154,7 +154,11 @@ function generateFixtureWithRetry(options: FixtureGeneratorOptions, attempt: num
       fullRoundCount,
       clubs,
       rng,
-      useRivalries ? DEFAULT_RIVALRY_PAIRS : undefined,
+      useRivalries
+        ? (settings?.customRivalryPairs && settings.customRivalryPairs.length > 0
+          ? settings.customRivalryPairs
+          : DEFAULT_RIVALRY_PAIRS)
+        : undefined,
     )
     fullRounds.push(...repeatRounds)
   }
@@ -211,6 +215,8 @@ function generateFixtureWithRetry(options: FixtureGeneratorOptions, attempt: num
         pClubId,
         rng,
         enabledSlots,
+        settings?.fixturePolicy?.travelWeighting ?? 40,
+        settings?.fixturePolicy?.venueSharingRules ?? true,
       )
     }
   }
@@ -218,6 +224,26 @@ function generateFixtureWithRetry(options: FixtureGeneratorOptions, attempt: num
   // ---- Phase 6: Apply blockbusters ----
   if (settings && settings.leagueMode === 'real' && settings.realism?.fixtureBlockbusterBias !== false) {
     applyBlockbusters(allRounds, settings.blockbusters, clubs, rng, enabledSlots, pClubId)
+  }
+
+  // ---- Phase 6.5: Repair round integrity and re-schedule around fixed slots ----
+  for (const round of allRounds) {
+    normalizeRoundFixtures(round, clubIds, clubs, rng)
+    if (pClubId) {
+      round.fixtures = scheduleRoundDays(
+        round.fixtures,
+        pClubId,
+        rng,
+        enabledSlots,
+        settings?.fixturePolicy?.travelWeighting ?? 40,
+        settings?.fixturePolicy?.venueSharingRules ?? true,
+      )
+    }
+  }
+
+  // ---- Phase 6.75: Rebalance home/away allocation across the full season ----
+  if (settings?.fixturePolicy?.homeAwayBalance ?? true) {
+    rebalanceHomeAwayAssignments(allRounds, clubIds, clubs, rng)
   }
 
   // ---- Phase 7: Apply AFL House interference ----
@@ -784,15 +810,403 @@ function applyBlockbusters(
 /** Default match slots (used when no settings provided) */
 const MATCH_SLOTS: { day: MatchDay; time: string }[] = [
   { day: 'Thursday', time: '7:20pm' },
-  { day: 'Friday', time: '7:50pm' },
-  { day: 'Saturday-Early', time: '1:45pm' },
-  { day: 'Saturday-Twilight', time: '4:35pm' },
-  { day: 'Saturday-Night', time: '7:25pm' },
+  { day: 'Friday', time: '7:10pm' },
+  { day: 'Friday', time: '8:10pm' },
+  { day: 'Saturday-Early', time: '12:35pm' },
+  { day: 'Saturday-Early', time: '1:10pm' },
+  { day: 'Saturday-Early', time: '1:20pm' },
+  { day: 'Saturday-Twilight', time: '3:20pm' },
+  { day: 'Saturday-Twilight', time: '4:15pm' },
+  { day: 'Saturday-Twilight', time: '4:40pm' },
+  { day: 'Saturday-Night', time: '7:10pm' },
+  { day: 'Saturday-Night', time: '7:35pm' },
+  { day: 'Saturday-Night', time: '7:40pm' },
+  { day: 'Saturday-Night', time: '7:50pm' },
+  { day: 'Saturday-Night', time: '8:10pm' },
+  { day: 'Sunday-Early', time: '12:10pm' },
   { day: 'Sunday-Early', time: '1:10pm' },
   { day: 'Sunday-Twilight', time: '3:20pm' },
-  { day: 'Sunday-Twilight', time: '4:40pm' },
+  { day: 'Sunday-Twilight', time: '6:20pm' },
   { day: 'Monday', time: '3:20pm' },
 ]
+
+const DAY_ORDER: Record<MatchDay, number> = {
+  Thursday: 0,
+  Friday: 1,
+  'Saturday-Early': 2,
+  'Saturday-Twilight': 3,
+  'Saturday-Night': 4,
+  'Sunday-Early': 5,
+  'Sunday-Twilight': 6,
+  Monday: 7,
+}
+
+function normalizeRoundFixtures(
+  round: Round,
+  clubIds: string[],
+  clubs: Record<string, Club>,
+  rng: SeededRNG,
+): void {
+  if (round.isFinals) return
+  const byeSet = new Set(round.byeClubIds ?? [])
+  const participants = clubIds.filter((id) => !byeSet.has(id))
+  const expectedMatches = Math.floor(participants.length / 2)
+
+  const blockbusters: Fixture[] = []
+  const candidates: Fixture[] = []
+  const used = new Set<string>()
+
+  for (const fixture of round.fixtures) {
+    const home = fixture.homeClubId
+    const away = fixture.awayClubId
+    if (home === away) continue
+    if (!participants.includes(home) || !participants.includes(away)) continue
+
+    if (fixture.isBlockbuster) {
+      if (used.has(home) || used.has(away)) continue
+      blockbusters.push(fixture)
+      used.add(home)
+      used.add(away)
+      continue
+    }
+    candidates.push(fixture)
+  }
+
+  const rebuilt: Fixture[] = [...blockbusters]
+  const shuffledCandidates = rng.shuffle(candidates)
+  for (const fixture of shuffledCandidates) {
+    if (rebuilt.length >= expectedMatches) break
+    const home = fixture.homeClubId
+    const away = fixture.awayClubId
+    if (used.has(home) || used.has(away)) continue
+    rebuilt.push(fixture)
+    used.add(home)
+    used.add(away)
+  }
+
+  const remaining = rng.shuffle(participants.filter((id) => !used.has(id)))
+  while (rebuilt.length < expectedMatches && remaining.length >= 2) {
+    const a = remaining.pop()!
+    const b = remaining.pop()!
+    const aHome = rng.chance(0.5)
+    const home = aHome ? a : b
+    const away = aHome ? b : a
+    rebuilt.push({
+      homeClubId: home,
+      awayClubId: away,
+      venue: clubs[home]?.homeGround ?? clubs[away]?.homeGround ?? 'Marvel Stadium',
+    })
+  }
+
+  round.fixtures = rebuilt
+}
+
+function rebalanceHomeAwayAssignments(
+  rounds: Round[],
+  clubIds: string[],
+  clubs: Record<string, Club>,
+  rng: SeededRNG,
+): void {
+  const homeCounts = new Map<string, number>()
+  const totalMatches = new Map<string, number>()
+  for (const clubId of clubIds) {
+    homeCounts.set(clubId, 0)
+    totalMatches.set(clubId, 0)
+  }
+
+  const mutableFixtures: Fixture[] = []
+  let totalFixtureCount = 0
+
+  for (const round of rounds) {
+    if (round.isFinals) continue
+    for (const fixture of round.fixtures) {
+      totalFixtureCount += 1
+      homeCounts.set(fixture.homeClubId, (homeCounts.get(fixture.homeClubId) ?? 0) + 1)
+      totalMatches.set(fixture.homeClubId, (totalMatches.get(fixture.homeClubId) ?? 0) + 1)
+      totalMatches.set(fixture.awayClubId, (totalMatches.get(fixture.awayClubId) ?? 0) + 1)
+      if (!fixture.isBlockbuster) {
+        mutableFixtures.push(fixture)
+      }
+    }
+  }
+
+  const targetHomes = new Map<string, number>()
+  let baseHomeTotal = 0
+  for (const clubId of clubIds) {
+    const matches = totalMatches.get(clubId) ?? 0
+    const base = Math.floor(matches / 2)
+    targetHomes.set(clubId, base)
+    baseHomeTotal += base
+  }
+
+  let remainderHomes = Math.max(0, totalFixtureCount - baseHomeTotal)
+  const oddClubs = rng.shuffle(clubIds.filter((id) => ((totalMatches.get(id) ?? 0) % 2) === 1))
+  for (const clubId of oddClubs) {
+    if (remainderHomes <= 0) break
+    targetHomes.set(clubId, (targetHomes.get(clubId) ?? 0) + 1)
+    remainderHomes--
+  }
+  if (remainderHomes > 0) {
+    const evenClubs = rng.shuffle(clubIds.filter((id) => ((totalMatches.get(id) ?? 0) % 2) === 0))
+    for (const clubId of evenClubs) {
+      if (remainderHomes <= 0) break
+      targetHomes.set(clubId, (targetHomes.get(clubId) ?? 0) + 1)
+      remainderHomes--
+    }
+  }
+
+  const flipFixture = (fixture: Fixture): void => {
+    const oldHome = fixture.homeClubId
+    const oldAway = fixture.awayClubId
+    fixture.homeClubId = oldAway
+    fixture.awayClubId = oldHome
+    fixture.venue = clubs[oldAway]?.homeGround ?? fixture.venue
+    homeCounts.set(oldHome, (homeCounts.get(oldHome) ?? 0) - 1)
+    homeCounts.set(oldAway, (homeCounts.get(oldAway) ?? 0) + 1)
+  }
+
+  const deltas = () => {
+    const out = new Map<string, number>()
+    for (const clubId of clubIds) {
+      out.set(clubId, (homeCounts.get(clubId) ?? 0) - (targetHomes.get(clubId) ?? 0))
+    }
+    return out
+  }
+
+  for (let pass = 0; pass < 12; pass++) {
+    let improved = false
+    for (const fixture of rng.shuffle([...mutableFixtures])) {
+      const home = fixture.homeClubId
+      const away = fixture.awayClubId
+      const before =
+        Math.abs((homeCounts.get(home) ?? 0) - (targetHomes.get(home) ?? 0)) +
+        Math.abs((homeCounts.get(away) ?? 0) - (targetHomes.get(away) ?? 0))
+      const after =
+        Math.abs((homeCounts.get(home) ?? 0) - 1 - (targetHomes.get(home) ?? 0)) +
+        Math.abs((homeCounts.get(away) ?? 0) + 1 - (targetHomes.get(away) ?? 0))
+      if (after < before) {
+        flipFixture(fixture)
+        improved = true
+      }
+    }
+    if (!improved) break
+  }
+
+  // Directed pass to close any remaining surplus/deficit pairs.
+  for (let pass = 0; pass < 12; pass++) {
+    let changed = false
+    const delta = deltas()
+    for (const fixture of rng.shuffle([...mutableFixtures])) {
+      const home = fixture.homeClubId
+      const away = fixture.awayClubId
+      if ((delta.get(home) ?? 0) > 0 && (delta.get(away) ?? 0) < 0) {
+        flipFixture(fixture)
+        delta.set(home, (delta.get(home) ?? 0) - 1)
+        delta.set(away, (delta.get(away) ?? 0) + 1)
+        changed = true
+      }
+    }
+    if (!changed) break
+  }
+}
+
+const CLUB_WA_SA = new Set(['westcoast', 'fremantle', 'adelaide', 'portadelaide'])
+const CLUB_QLD_NSW = new Set(['brisbane', 'goldcoast', 'sydney', 'gws'])
+const CLUB_VIC = new Set([
+  'richmond',
+  'collingwood',
+  'melbourne',
+  'hawthorn',
+  'carlton',
+  'essendon',
+  'northmelbourne',
+  'stkilda',
+  'westernbulldogs',
+  'geelong',
+])
+const BIG_CLUB_IDS = new Set([
+  'collingwood',
+  'carlton',
+  'essendon',
+  'richmond',
+  'westcoast',
+  'adelaide',
+  'hawthorn',
+  'geelong',
+])
+
+const FULL_ROUND_DAY_TEMPLATES: MatchDay[][] = [
+  ['Thursday', 'Friday', 'Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Twilight', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight'],
+  ['Thursday', 'Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Twilight', 'Saturday-Night', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight'],
+  ['Thursday', 'Friday', 'Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Night', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight'],
+  ['Thursday', 'Friday', 'Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight', 'Sunday-Twilight'],
+]
+
+const REDUCED_ROUND_DAY_TEMPLATES: Record<number, MatchDay[]> = {
+  1: ['Saturday-Night'],
+  2: ['Friday', 'Saturday-Night'],
+  3: ['Friday', 'Saturday-Twilight', 'Sunday-Twilight'],
+  4: ['Friday', 'Saturday-Early', 'Saturday-Night', 'Sunday-Twilight'],
+  5: ['Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Night', 'Sunday-Twilight'],
+  6: ['Thursday', 'Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Night', 'Sunday-Twilight'],
+  7: ['Thursday', 'Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight'],
+  8: ['Thursday', 'Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Twilight', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight'],
+}
+
+function parseTimeToMinutes(time: string): number {
+  const match = time.trim().toLowerCase().match(/^(\d{1,2}):(\d{2})(am|pm)$/)
+  if (!match) return 0
+  let hour = Number(match[1]) % 12
+  const minute = Number(match[2])
+  const meridiem = match[3]
+  if (meridiem === 'pm') hour += 12
+  return hour * 60 + minute
+}
+
+function getTimeBucket(time: string): 'early' | 'twilight' | 'night' {
+  const mins = parseTimeToMinutes(time)
+  if (mins < 15 * 60) return 'early'
+  if (mins < 18 * 60) return 'twilight'
+  return 'night'
+}
+
+function getFixtureSlotScore(
+  fixture: Fixture,
+  slot: { day: MatchDay; time: string },
+  travelWeighting: number,
+): number {
+  const homeId = fixture.homeClubId
+  const awayId = fixture.awayClubId
+  const bucket = getTimeBucket(slot.time)
+  const isPrime = slot.day === 'Friday' || slot.day === 'Saturday-Night'
+  let score = 0
+
+  if (CLUB_WA_SA.has(homeId)) {
+    if (bucket === 'night') score += 8
+    else if (bucket === 'twilight') score += 3
+    else score -= 4
+    if (slot.day === 'Thursday') score += 2
+    if (slot.day === 'Sunday-Early') score -= 2
+  } else if (CLUB_QLD_NSW.has(homeId)) {
+    if (bucket === 'night') score += 4
+    else if (bucket === 'twilight') score += 6
+    else score -= 2
+    if (slot.day === 'Sunday-Twilight') score += 2
+  } else if (CLUB_VIC.has(homeId)) {
+    if (bucket === 'night') score += 4
+    else if (bucket === 'twilight') score += 4
+    else score += 1
+    if (slot.day === 'Saturday-Twilight') score += 2
+  } else {
+    if (bucket === 'twilight') score += 3
+    if (bucket === 'night') score += 2
+  }
+
+  const normalizedTravelWeight = Math.max(0, Math.min(100, travelWeighting)) / 100
+  const homeState = getClubState(homeId)
+  const awayState = getClubState(awayId)
+  const interstate = homeState !== awayState
+  if (interstate) {
+    const interstateBoost = normalizedTravelWeight * 4
+    if (bucket === 'night') score += interstateBoost
+    if (bucket === 'early') score -= interstateBoost
+  }
+
+  if (BIG_CLUB_IDS.has(homeId) && isPrime) score += 2
+  return score
+}
+
+function buildDayTemplate(matchCount: number, rng: SeededRNG): MatchDay[] {
+  if (matchCount <= 0) return []
+  if (matchCount <= 8) {
+    return [...(REDUCED_ROUND_DAY_TEMPLATES[matchCount] ?? REDUCED_ROUND_DAY_TEMPLATES[8])]
+  }
+
+  const template = [...FULL_ROUND_DAY_TEMPLATES[rng.nextInt(0, FULL_ROUND_DAY_TEMPLATES.length - 1)]]
+  const overflowCycle: MatchDay[] = ['Saturday-Night', 'Sunday-Twilight', 'Friday', 'Saturday-Twilight']
+  while (template.length < matchCount) {
+    template.push(overflowCycle[(template.length - 9) % overflowCycle.length])
+  }
+  return template.slice(0, matchCount)
+}
+
+function pickRoundSlots(
+  slots: { day: MatchDay; time: string }[],
+  matchCount: number,
+  rng: SeededRNG,
+  fixedDayUsage?: Partial<Record<MatchDay, number>>,
+  totalRoundMatches?: number,
+): { day: MatchDay; time: string }[] {
+  const baseCount = totalRoundMatches ?? matchCount
+  const dayTemplate = buildDayTemplate(baseCount, rng)
+  if (slots.length === 0) return []
+
+  const usage: Record<MatchDay, number> = {
+    Thursday: fixedDayUsage?.Thursday ?? 0,
+    Friday: fixedDayUsage?.Friday ?? 0,
+    'Saturday-Early': fixedDayUsage?.['Saturday-Early'] ?? 0,
+    'Saturday-Twilight': fixedDayUsage?.['Saturday-Twilight'] ?? 0,
+    'Saturday-Night': fixedDayUsage?.['Saturday-Night'] ?? 0,
+    'Sunday-Early': fixedDayUsage?.['Sunday-Early'] ?? 0,
+    'Sunday-Twilight': fixedDayUsage?.['Sunday-Twilight'] ?? 0,
+    Monday: fixedDayUsage?.Monday ?? 0,
+  }
+
+  const filteredTemplate: MatchDay[] = []
+  for (const day of dayTemplate) {
+    if (usage[day] > 0) {
+      usage[day] -= 1
+      continue
+    }
+    filteredTemplate.push(day)
+  }
+  const safeOverflowCycle: MatchDay[] = ['Friday', 'Saturday-Twilight', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight']
+  while (filteredTemplate.length < matchCount) {
+    filteredTemplate.push(safeOverflowCycle[filteredTemplate.length % safeOverflowCycle.length])
+  }
+  const plannedDays = filteredTemplate.slice(0, matchCount)
+
+  const byDay: Record<MatchDay, { day: MatchDay; time: string }[]> = {
+    Thursday: [],
+    Friday: [],
+    'Saturday-Early': [],
+    'Saturday-Twilight': [],
+    'Saturday-Night': [],
+    'Sunday-Early': [],
+    'Sunday-Twilight': [],
+    Monday: [],
+  }
+  for (const slot of slots) byDay[slot.day].push(slot)
+  for (const day of Object.keys(byDay) as MatchDay[]) {
+    byDay[day].sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time))
+  }
+
+  const dayOffsets: Record<MatchDay, number> = {
+    Thursday: byDay.Thursday.length > 0 ? rng.nextInt(0, byDay.Thursday.length - 1) : 0,
+    Friday: byDay.Friday.length > 0 ? rng.nextInt(0, byDay.Friday.length - 1) : 0,
+    'Saturday-Early': byDay['Saturday-Early'].length > 0 ? rng.nextInt(0, byDay['Saturday-Early'].length - 1) : 0,
+    'Saturday-Twilight': byDay['Saturday-Twilight'].length > 0 ? rng.nextInt(0, byDay['Saturday-Twilight'].length - 1) : 0,
+    'Saturday-Night': byDay['Saturday-Night'].length > 0 ? rng.nextInt(0, byDay['Saturday-Night'].length - 1) : 0,
+    'Sunday-Early': byDay['Sunday-Early'].length > 0 ? rng.nextInt(0, byDay['Sunday-Early'].length - 1) : 0,
+    'Sunday-Twilight': byDay['Sunday-Twilight'].length > 0 ? rng.nextInt(0, byDay['Sunday-Twilight'].length - 1) : 0,
+    Monday: byDay.Monday.length > 0 ? rng.nextInt(0, byDay.Monday.length - 1) : 0,
+  }
+  let fallbackCursor = rng.nextInt(0, slots.length - 1)
+
+  const planned: { day: MatchDay; time: string }[] = []
+  for (const day of plannedDays) {
+    const candidates = byDay[day]
+    if (candidates.length > 0) {
+      const idx = dayOffsets[day] % candidates.length
+      planned.push(candidates[idx])
+      dayOffsets[day]++
+    } else {
+      planned.push(slots[fallbackCursor % slots.length])
+      fallbackCursor++
+    }
+  }
+  return planned
+}
 
 /**
  * Distribute fixtures across a weekend schedule (Thurs-Mon).
@@ -805,6 +1219,8 @@ export function scheduleRoundDays(
   playerClubId: string,
   rng: SeededRNG,
   enabledSlots?: MatchTimeSlot[] | null,
+  travelWeighting = 40,
+  venueSharingRules = true,
 ): Fixture[] {
   if (fixtures.length === 0) return fixtures
 
@@ -834,60 +1250,78 @@ export function scheduleRoundDays(
     (f) => f.homeClubId === playerClubId || f.awayClubId === playerClubId,
   )
 
-  const count = regulars.length
-
-  // For small rounds (bye weeks), use a subset of slots
-  let activeSlots: { day: MatchDay; time: string }[]
-  if (count <= 4 && slots.length > 4) {
-    activeSlots = [
-      slots.find((s) => s.day === 'Friday') ?? slots[0],
-      slots.find((s) => s.day === 'Saturday-Twilight') ?? slots[1],
-      slots.find((s) => s.day === 'Saturday-Night') ?? slots[2],
-      slots.find((s) => s.day === 'Sunday-Early') ?? slots[3],
-    ]
-  } else {
-    activeSlots = slots
+  const fixedDayUsage: Partial<Record<MatchDay, number>> = {}
+  for (const fixture of blockbusters) {
+    if (!fixture.matchDay) continue
+    fixedDayUsage[fixture.matchDay] = (fixedDayUsage[fixture.matchDay] ?? 0) + 1
   }
-
-  // User's preferred slot: Saturday Twilight
-  let preferredIdx = activeSlots.findIndex((s) => s.day === 'Saturday-Twilight')
-  if (preferredIdx === -1) preferredIdx = Math.min(3, activeSlots.length - 1)
-
-  // Shuffle slot assignment for non-user fixtures
-  const slotOrder = rng.shuffle([...Array(Math.min(count, activeSlots.length)).keys()])
+  const roundSlots = pickRoundSlots(
+    slots,
+    regulars.length,
+    rng,
+    fixedDayUsage,
+    fixtures.length,
+  )
 
   const scheduled = [...regulars]
-  for (let i = 0; i < scheduled.length; i++) {
-    const slotIdx =
-      i === userIdx
-        ? preferredIdx
-        : slotOrder[i] < activeSlots.length
-          ? slotOrder[i]
-          : i % activeSlots.length
-    const slot = activeSlots[slotIdx] ?? activeSlots[i % activeSlots.length]
-    scheduled[i] = {
-      ...scheduled[i],
-      matchDay: slot.day,
-      scheduledTime: slot.time,
+  const pendingFixtureIndices = [...Array(scheduled.length).keys()]
+  const availableSlotIndices = [...Array(roundSlots.length).keys()]
+  const usedVenueSlots = new Set<string>()
+
+  const assignFixtureToBestSlot = (fixtureIdx: number, userFixture: boolean): void => {
+    if (availableSlotIndices.length === 0) return
+    const fixture = scheduled[fixtureIdx]
+
+    let bestSlotListIdx = 0
+    let bestScore = Number.NEGATIVE_INFINITY
+    for (let si = 0; si < availableSlotIndices.length; si++) {
+      const slotIdx = availableSlotIndices[si]
+      const slot = roundSlots[slotIdx]
+      let score = getFixtureSlotScore(fixture, slot, travelWeighting)
+      if (userFixture && slot.day === 'Saturday-Twilight') score += 1.5
+      if (venueSharingRules) {
+        const key = `${fixture.venue}|${slot.day}|${slot.time}`
+        if (usedVenueSlots.has(key)) score -= 100
+      }
+      score += rng.nextFloat(0, 0.35)
+      if (score > bestScore) {
+        bestScore = score
+        bestSlotListIdx = si
+      }
+    }
+
+    const [chosenSlotIdx] = availableSlotIndices.splice(bestSlotListIdx, 1)
+    const chosenSlot = roundSlots[chosenSlotIdx]
+    scheduled[fixtureIdx] = {
+      ...fixture,
+      matchDay: chosenSlot.day,
+      scheduledTime: chosenSlot.time,
+    }
+    if (venueSharingRules) {
+      usedVenueSlots.add(`${fixture.venue}|${chosenSlot.day}|${chosenSlot.time}`)
     }
   }
 
-  // Combine all fixtures and sort by match day order
-  const DAY_ORDER: Record<string, number> = {
-    Thursday: 0,
-    Friday: 1,
-    'Saturday-Early': 2,
-    'Saturday-Twilight': 3,
-    'Saturday-Night': 4,
-    'Sunday-Early': 5,
-    'Sunday-Twilight': 6,
-    Monday: 7,
+  if (userIdx >= 0) {
+    assignFixtureToBestSlot(userIdx, true)
+    const idxInPending = pendingFixtureIndices.indexOf(userIdx)
+    if (idxInPending !== -1) pendingFixtureIndices.splice(idxInPending, 1)
   }
+
+  for (const fixtureIdx of rng.shuffle(pendingFixtureIndices)) {
+    assignFixtureToBestSlot(fixtureIdx, false)
+  }
+
+  // Combine all fixtures and sort by match day/time
   const combined = [...scheduled, ...blockbusters]
   combined.sort((a, b) => {
-    const aOrder = a.matchDay ? (DAY_ORDER[a.matchDay] ?? 99) : 99
-    const bOrder = b.matchDay ? (DAY_ORDER[b.matchDay] ?? 99) : 99
-    return aOrder - bOrder
+    const aOrder = a.matchDay ? DAY_ORDER[a.matchDay] : 99
+    const bOrder = b.matchDay ? DAY_ORDER[b.matchDay] : 99
+    if (aOrder !== bOrder) return aOrder - bOrder
+
+    const aTime = a.scheduledTime ? parseTimeToMinutes(a.scheduledTime) : 0
+    const bTime = b.scheduledTime ? parseTimeToMinutes(b.scheduledTime) : 0
+    return aTime - bTime
   })
   return combined
 }

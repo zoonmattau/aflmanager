@@ -1,16 +1,6 @@
-import { useState } from 'react'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { Label } from '@/components/ui/label'
-import { Building2, CalendarPlus, CheckCircle2, Clock } from 'lucide-react'
+import { Building2, CheckCircle2, Clock } from 'lucide-react'
 import expansionClubsData from '@/data/expansionClubs.json'
 import type { ExpansionClubData } from '@/types/expansion'
 
@@ -48,7 +38,7 @@ export function ExpansionPage() {
         <div>
           <h1 className="text-2xl font-bold">Expansion</h1>
           <p className="text-sm text-muted-foreground">
-            Manage league expansion and new team entry
+            AFL House controls league expansion timing and entry decisions
           </p>
         </div>
       </div>
@@ -183,13 +173,6 @@ function ExpansionCandidateCard({
   club: ExpansionClubData
   currentYear: number
 }) {
-  const [entryYear, setEntryYear] = useState(
-    String(Math.max(club.suggestedEntryYear, currentYear + 2))
-  )
-
-  // Build year options: current + 2 to current + 10
-  const yearOptions = Array.from({ length: 9 }, (_, i) => String(currentYear + 2 + i))
-
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -220,25 +203,11 @@ function ExpansionCandidateCard({
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-xs">AFL Entry Year</Label>
-            <Select value={entryYear} onValueChange={setEntryYear}>
-              <SelectTrigger className="h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {yearOptions.map((y) => (
-                  <SelectItem key={y} value={y}>
-                    {y}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <p className="text-xs text-muted-foreground">
+              AFL House may approve this club in future years. Suggested window:{' '}
+              {Math.max(club.suggestedEntryYear, currentYear + 1)}+
+            </p>
           </div>
-
-          <Button size="sm" className="w-full" variant="outline">
-            <CalendarPlus className="mr-1.5 h-3.5 w-3.5" />
-            Schedule Expansion
-          </Button>
         </div>
       </CardContent>
     </Card>

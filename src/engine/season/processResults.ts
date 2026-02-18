@@ -1,5 +1,6 @@
 import type { Match } from '@/types/match'
 import type { GameState, LadderPointsSettings } from '@/types/game'
+import { sortLadderEntries } from './ladderSorting'
 
 type GetState = () => GameState
 type SetState = (fn: (state: GameState) => void) => void
@@ -14,7 +15,8 @@ export function processMatchResults(
   const ptsDraw = ladderPoints?.pointsForDraw ?? 2
   // pointsForLoss is available but typically 0
   const state = getState()
-  const ladder = [...state.ladder]
+  // Clone entries, not just the array, so we never mutate frozen store objects.
+  const ladder = state.ladder.map((entry) => ({ ...entry }))
 
   for (const match of matches) {
     if (!match.result) continue
@@ -56,14 +58,11 @@ export function processMatchResults(
       : 0
   }
 
-  // Sort ladder: points desc, then percentage desc
-  ladder.sort((a, b) => {
-    if (b.points !== a.points) return b.points - a.points
-    return b.percentage - a.percentage
-  })
+  // Sort ladder: points, percentage, then W-D-L tie-breakers.
+  const sortedLadder = sortLadderEntries(ladder, state.settings.ladderSorting)
 
   setState((state) => {
-    state.ladder = ladder
+    state.ladder = sortedLadder
   })
 
   // Update player season stats

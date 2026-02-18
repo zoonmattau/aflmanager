@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
-import type { ClubFacilities } from '@/types/club'
+import type { ClubFacilities, ClubHallOfFameEntry } from '@/types/club'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -138,6 +138,10 @@ function jobSecurityTextColor(value: number): string {
   if (value >= 70) return 'text-green-600 dark:text-green-400'
   if (value >= 40) return 'text-yellow-600 dark:text-yellow-400'
   return 'text-red-600 dark:text-red-400'
+}
+
+function hallOfFameScore(entry: ClubHallOfFameEntry): number {
+  return entry.gamesPlayed + entry.goals * 0.4
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +387,15 @@ export function ClubPage() {
   }, [club, isOwnClub, ladderPosition, manager.employmentStatus])
 
   const identityInfo = useMemo(() => getClubIdentity(club, 2026), [club])
+  const hallOfFameEntries = useMemo(
+    () =>
+      [...(club?.hallOfFame ?? [])].sort((a, b) => {
+        const byScore = hallOfFameScore(b) - hallOfFameScore(a)
+        if (byScore !== 0) return byScore
+        return b.retiredYear - a.retiredYear
+      }),
+    [club?.hallOfFame],
+  )
 
   // -------------------------------------------------------------------------
   // Handlers
@@ -811,6 +824,48 @@ export function ClubPage() {
         {/* History Tab                                                     */}
         {/* ============================================================== */}
         <TabsContent value="history" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Trophy className="h-4 w-4 text-yellow-500" />
+                Club Hall of Fame
+              </CardTitle>
+              <CardDescription>
+                Retired club greats inducted for exceptional careers.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              {hallOfFameEntries.length === 0 ? (
+                <div className="px-6 py-8 text-sm text-muted-foreground">
+                  No Hall of Fame inductees yet.
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Player</TableHead>
+                      <TableHead>Pos</TableHead>
+                      <TableHead className="text-right">Games</TableHead>
+                      <TableHead className="text-right">Goals</TableHead>
+                      <TableHead className="text-right">Retired</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {hallOfFameEntries.map((entry) => (
+                      <TableRow key={entry.playerId}>
+                        <TableCell className="font-medium">{entry.playerName}</TableCell>
+                        <TableCell>{entry.primaryPosition}</TableCell>
+                        <TableCell className="text-right font-mono">{entry.gamesPlayed}</TableCell>
+                        <TableCell className="text-right font-mono">{entry.goals}</TableCell>
+                        <TableCell className="text-right font-mono">{entry.retiredYear}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+
           {history.seasons.length === 0 ? (
             <Card>
               <CardContent className="py-12 text-center">

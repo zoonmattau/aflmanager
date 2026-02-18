@@ -3,7 +3,7 @@
  */
 
 import { useState, useCallback } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { GripVertical, Pencil, Plus, Trash2 } from 'lucide-react'
 import type { DraftWeek, Connection, DraftMatchNode } from './bracketUtils'
 import { MatchNodeEditor } from './MatchNodeEditor'
 import type { PortPosition } from './useBracketLayout'
@@ -71,32 +71,46 @@ export function WeekColumnEditor({
     <div className="flex min-w-[180px] flex-col gap-2">
       {/* Week header */}
       <div className="flex items-center justify-between gap-1">
-        {editingLabel ? (
-          <input
-            className="flex-1 rounded border border-zinc-600 bg-zinc-800 px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wider text-zinc-300 outline-none focus:border-zinc-400"
-            value={labelValue}
-            onChange={(e) => setLabelValue(e.target.value)}
-            onBlur={handleLabelBlur}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleLabelBlur()
-              if (e.key === 'Escape') {
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <GripVertical className="h-3 w-3 text-zinc-600" />
+          {editingLabel ? (
+            <input
+              className="flex-1 rounded border border-zinc-600 bg-zinc-800 px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wider text-zinc-300 outline-none focus:border-zinc-400"
+              value={labelValue}
+              onChange={(e) => setLabelValue(e.target.value)}
+              onBlur={handleLabelBlur}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleLabelBlur()
+                if (e.key === 'Escape') {
+                  setLabelValue(week.label)
+                  setEditingLabel(false)
+                }
+              }}
+              autoFocus
+            />
+          ) : (
+            <p
+              className="flex-1 cursor-pointer text-center text-[10px] font-semibold uppercase tracking-wider text-zinc-400 hover:text-zinc-200"
+              onClick={() => {
                 setLabelValue(week.label)
-                setEditingLabel(false)
-              }
-            }}
-            autoFocus
-          />
-        ) : (
-          <p
-            className="flex-1 cursor-pointer text-center text-[10px] font-semibold uppercase tracking-wider text-zinc-400 hover:text-zinc-200"
-            onClick={() => {
-              setLabelValue(week.label)
-              setEditingLabel(true)
-            }}
-          >
-            {week.label}
-          </p>
-        )}
+                setEditingLabel(true)
+              }}
+              title="Click to rename"
+            >
+              {week.label}
+            </p>
+          )}
+        </div>
+        <button
+          className="rounded p-0.5 text-zinc-600 hover:bg-zinc-700 hover:text-zinc-200"
+          onClick={() => {
+            setLabelValue(week.label)
+            setEditingLabel(true)
+          }}
+          title="Rename week"
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
         {totalWeeks > 1 && (
           <button
             className="rounded p-0.5 text-zinc-600 hover:bg-zinc-700 hover:text-red-400"

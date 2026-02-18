@@ -1,7 +1,9 @@
-import type { Match, MatchPlayerStats } from '@/types/match'
+import type { MatchPlayerStats } from '@/types/match'
 import type { Player } from '@/types/player'
 import type { LadderEntry } from '@/types/season'
 import type { BrownlowRound, SeasonAwards } from '@/types/awards'
+import type { Club } from '@/types/club'
+import type { MilestoneRecord, MilestoneType, SeasonAwardRecord } from '@/types/history'
 
 /**
  * Award Brownlow votes (3-2-1) for a single match.
@@ -184,10 +186,10 @@ export function selectAllAustralian(
 
   // Map primary positions to categories
   function getCategory(pos: string): string {
-    if (['FB', 'CHB', 'BP'].includes(pos)) return 'DEF'
-    if (['C', 'W', 'HFF', 'R'].includes(pos)) return 'MID'
-    if (pos === 'RUC' || pos === 'R') return 'RUC'
-    if (['CHF', 'FF', 'FP'].includes(pos)) return 'FWD'
+    if (['FB', 'CHB', 'BP', 'HBF'].includes(pos)) return 'DEF'
+    if (['IM', 'OM', 'W'].includes(pos)) return 'MID'
+    if (pos === 'RK') return 'RUC'
+    if (['CHF', 'FF', 'FP', 'HFF'].includes(pos)) return 'FWD'
     return 'MID' // default
   }
 
@@ -269,4 +271,89 @@ export function computeSeasonAwards(
     allAustralian: selectAllAustralian(players, ladder),
     clubBestAndFairest: calculateClubBestAndFairest(players, clubIds),
   }
+}
+
+export function buildSeasonAwardRecord(
+  seasonAwards: SeasonAwards,
+  players: Record<string, Player>,
+  clubs: Record<string, Club>,
+): SeasonAwardRecord {
+  const mapPlayer = (playerId: string) => {
+    const p = players[playerId]
+    const resolvedClubId = p?.clubId ?? ''
+    return {
+      playerId,
+      playerName: p ? `${p.firstName} ${p.lastName}` : playerId,
+      clubId: clubs[resolvedClubId] ? resolvedClubId : '',
+    }
+  }
+
+  const clubBestAndFairest: Record<string, { playerId: string; playerName: string }> = {}
+  for (const [clubId, playerId] of Object.entries(seasonAwards.clubBestAndFairest)) {
+    const p = players[playerId]
+    clubBestAndFairest[clubId] = {
+      playerId,
+      playerName: p ? `${p.firstName} ${p.lastName}` : playerId,
+    }
+  }
+
+  return {
+    year: seasonAwards.year,
+    brownlowMedal: seasonAwards.brownlowMedal
+      ? { ...mapPlayer(seasonAwards.brownlowMedal.playerId), votes: seasonAwards.brownlowMedal.votes }
+      : null,
+    colemanMedal: seasonAwards.colemanMedal
+      ? { ...mapPlayer(seasonAwards.colemanMedal.playerId), goals: seasonAwards.colemanMedal.goals }
+      : null,
+    risingStar: seasonAwards.risingStar
+      ? mapPlayer(seasonAwards.risingStar.playerId)
+      : null,
+    allAustralian: seasonAwards.allAustralian.map((id) => mapPlayer(id)),
+    clubBestAndFairest,
+  }
+}
+
+const MILESTONE_THRESHOLDS: Array<{ type: MilestoneType; stat: keyof Player['careerStats']; thresholds: number[] }> = [
+  { type: 'games-played', stat: 'gamesPlayed', thresholds: [50, 100, 150, 200, 250, 300, 350] },
+  { type: 'career-goals', stat: 'goals', thresholds: [50, 100, 200, 300, 400, 500, 700, 900, 1000] },
+  { type: 'career-disposals', stat: 'disposals', thresholds: [500, 1000, 2000, 3000, 4000, 5000, 7000] },
+  { type: 'career-marks', stat: 'marks', thresholds: [200, 500, 1000, 1500, 2000] },
+  { type: 'career-tackles', stat: 'tackles', thresholds: [100, 250, 500, 750, 1000] },
+]
+
+export function detectCareerMilestones(
+  beforeStats: Record<string, Pick<Player['careerStats'], 'gamesPlayed' | 'goals' | 'disposals' | 'marks' | 'tackles'>>,
+  players: Record<string, Player>,
+  year: number,
+  round: number,
+  date: string,
+): MilestoneRecord[] {
+  const milestones: MilestoneRecord[] = []
+
+  for (const player of Object.values(players)) {
+    const prior = beforeStats[player.id]
+    if (!prior) continue
+    for (const definition of MILESTONE_THRESHOLDS) {
+      const previous = prior[definition.stat]
+      const current = player.careerStats[definition.stat]
+      for (const threshold of definition.thresholds) {
+        if (previous < threshold && current >= threshold) {
+          milestones.push({
+            id: `milestone-${player.id}-${definition.type}-${threshold}-${year}-${round}`,
+            year,
+            round,
+            date,
+            playerId: player.id,
+            playerName: `${player.firstName} ${player.lastName}`,
+            clubId: player.clubId,
+            type: definition.type,
+            threshold,
+            value: current,
+          })
+        }
+      }
+    }
+  }
+
+  return milestones
 }

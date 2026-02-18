@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+ï»¿import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   useReactTable,
@@ -22,7 +22,6 @@ import {
 import {
   getPlayerEligiblePositionTypes,
   isPlayerEligibleForPositionLine,
-  type PositionLine,
 } from '@/engine/player/positionEligibility'
 import {
   Table,
@@ -49,19 +48,13 @@ import { PlayerStarRating } from '@/components/player/PlayerStarRating'
 const columnHelper = createColumnHelper<Player>()
 
 type SquadView = 'ratings' | 'stats' | 'contracts' | 'development'
-type QuickFilter = 'all' | 'stars' | 'worst' | 'expiring' | 'injured' | 'must-re-sign'
-type PositionFilterValue = '_all' | PositionLine
+type QuickFilter = 'all' | 'def' | 'mid' | 'fwd' | 'rk' | 'expiring' | 'injured'
 
 type SquadPreset = {
   name: string
   view: SquadView
   quickFilter: QuickFilter
-  posFilter: PositionFilterValue
   search: string
-  minAge: number
-  maxAge: number
-  minOvr: number
-  maxOvr: number
   sorting: SortingState
 }
 
@@ -73,15 +66,14 @@ const VIEW_OPTIONS: { key: SquadView; label: string }[] = [
 ]
 
 const QUICK_FILTERS: { key: QuickFilter; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'stars', label: 'Stars' },
-  { key: 'worst', label: 'Worst' },
-  { key: 'expiring', label: 'Expiring' },
-  { key: 'injured', label: 'Injured' },
-  { key: 'must-re-sign', label: 'Must Re-Sign' },
+  { key: 'all', label: 'All Players' },
+  { key: 'def', label: 'DEF' },
+  { key: 'mid', label: 'MID' },
+  { key: 'fwd', label: 'FWD' },
+  { key: 'rk', label: 'RK' },
+  { key: 'expiring', label: 'Expiring (1y)' },
+  { key: 'injured', label: 'Injured Only' },
 ]
-
-const POSITION_OPTIONS = ['_all', 'DEF', 'MID', 'FWD', 'RK'] as const
 
 function attrColor(val: number): string {
   if (val >= 80) return 'text-green-500'
@@ -413,11 +405,6 @@ export function SquadPage() {
   const [sorting, setSorting] = useState<SortingState>([])
   const [search, setSearch] = useState('')
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('all')
-  const [posFilter, setPosFilter] = useState<PositionFilterValue>('_all')
-  const [minAge, setMinAge] = useState(16)
-  const [maxAge, setMaxAge] = useState(40)
-  const [minOvr, setMinOvr] = useState(0)
-  const [maxOvr, setMaxOvr] = useState(100)
   const [presetName, setPresetName] = useState('')
   const [presets, setPresets] = useState<SquadPreset[]>([])
 
@@ -441,20 +428,17 @@ export function SquadPage() {
   const filteredPlayers = useMemo(() => {
     const q = search.trim().toLowerCase()
     return clubPlayers.filter((p) => {
-      const ovr = getOverallRating(p)
-      if (p.age < minAge || p.age > maxAge) return false
-      if (ovr < minOvr || ovr > maxOvr) return false
-      if (posFilter !== '_all' && !isPlayerEligibleForPositionLine(p, posFilter)) return false
       if (q && !`${p.firstName} ${p.lastName}`.toLowerCase().includes(q)) return false
 
-      if (quickFilter === 'stars' && getPlayerStarRating(p, ovr) < 4) return false
-      if (quickFilter === 'worst' && ovr >= 50) return false
+      if (quickFilter === 'def' && !isPlayerEligibleForPositionLine(p, 'DEF')) return false
+      if (quickFilter === 'mid' && !isPlayerEligibleForPositionLine(p, 'MID')) return false
+      if (quickFilter === 'fwd' && !isPlayerEligibleForPositionLine(p, 'FWD')) return false
+      if (quickFilter === 'rk' && !isPlayerEligibleForPositionLine(p, 'RK')) return false
       if (quickFilter === 'expiring' && p.contract.yearsRemaining !== 1) return false
       if (quickFilter === 'injured' && p.injury === null) return false
-      if (quickFilter === 'must-re-sign' && !(p.contract.yearsRemaining === 1 && ovr >= 65)) return false
       return true
     })
-  }, [clubPlayers, search, minAge, maxAge, minOvr, maxOvr, posFilter, quickFilter])
+  }, [clubPlayers, search, quickFilter])
 
   const table = useReactTable({
     data: filteredPlayers,
@@ -471,19 +455,14 @@ export function SquadPage() {
     if (!p) return
     setView(p.view)
     setQuickFilter(p.quickFilter)
-    setPosFilter(p.posFilter)
     setSearch(p.search)
-    setMinAge(p.minAge)
-    setMaxAge(p.maxAge)
-    setMinOvr(p.minOvr)
-    setMaxOvr(p.maxOvr)
     setSorting(p.sorting)
   }
 
   const handleSavePreset = () => {
     const name = presetName.trim()
     if (!name) return
-    const nextPreset: SquadPreset = { name, view, quickFilter, posFilter, search, minAge, maxAge, minOvr, maxOvr, sorting }
+    const nextPreset: SquadPreset = { name, view, quickFilter, search, sorting }
     const next = [...presets.filter((p) => p.name !== name), nextPreset].sort((a, b) => a.name.localeCompare(b.name))
     savePresets(next)
     setPresetName('')
@@ -511,87 +490,81 @@ export function SquadPage() {
         </div>
       </div>
 
-      {leadershipCardData && (
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardContent className="p-4">
             <div className="mb-3 flex items-center gap-2">
               <Shield className="h-4 w-4 text-amber-500" />
               <h3 className="text-sm font-semibold">Leadership Group</h3>
-              <Badge variant="outline" className="ml-auto text-xs">Team Rating: {leadershipCardData.teamRating}</Badge>
+              {leadershipCardData && (
+                <Badge variant="outline" className="ml-auto text-xs">Team Rating: {leadershipCardData.teamRating}</Badge>
+              )}
             </div>
-            <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
-              {leadershipCardData.captain && (
-                <div className="flex flex-col">
-                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Captain</span>
-                  <span className="font-medium">{leadershipCardData.captain.firstName} {leadershipCardData.captain.lastName}</span>
-                  <span className="text-xs text-muted-foreground">{leadershipCardData.captain.position.primary} · Age {leadershipCardData.captain.age} · LS {getLeadershipScore(leadershipCardData.captain)}</span>
-                </div>
-              )}
-              {leadershipCardData.vc && (
-                <div className="flex flex-col">
-                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Vice-Captain</span>
-                  <span className="font-medium">{leadershipCardData.vc.firstName} {leadershipCardData.vc.lastName}</span>
-                  <span className="text-xs text-muted-foreground">{leadershipCardData.vc.position.primary} · Age {leadershipCardData.vc.age} · LS {getLeadershipScore(leadershipCardData.vc)}</span>
-                </div>
-              )}
-              {leadershipCardData.group.length > 0 && (
-                <div className="col-span-2 flex flex-col">
-                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Leadership Group</span>
-                  <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                    {leadershipCardData.group.map((p) => (
-                      <span key={p.id} className="text-xs">{p.firstName} {p.lastName}<span className="text-muted-foreground"> ({p.position.primary}, LS {getLeadershipScore(p)})</span></span>
-                    ))}
+            {leadershipCardData ? (
+              <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+                {leadershipCardData.captain && (
+                  <div className="flex flex-col">
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Captain</span>
+                    <span className="font-medium">{leadershipCardData.captain.firstName} {leadershipCardData.captain.lastName}</span>
+                    <span className="text-xs text-muted-foreground">{leadershipCardData.captain.position.primary} Â· Age {leadershipCardData.captain.age} Â· LS {getLeadershipScore(leadershipCardData.captain)}</span>
                   </div>
-                </div>
-              )}
+                )}
+                {leadershipCardData.vc && (
+                  <div className="flex flex-col">
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Vice-Captain</span>
+                    <span className="font-medium">{leadershipCardData.vc.firstName} {leadershipCardData.vc.lastName}</span>
+                    <span className="text-xs text-muted-foreground">{leadershipCardData.vc.position.primary} Â· Age {leadershipCardData.vc.age} Â· LS {getLeadershipScore(leadershipCardData.vc)}</span>
+                  </div>
+                )}
+                {leadershipCardData.group.length > 0 && (
+                  <div className="col-span-2 flex flex-col">
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Leadership Group</span>
+                    <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                      {leadershipCardData.group.map((p) => (
+                        <span key={p.id} className="text-xs">{p.firstName} {p.lastName}<span className="text-muted-foreground"> ({p.position.primary}, LS {getLeadershipScore(p)})</span></span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-sm text-muted-foreground">No leadership group assigned.</div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm">Filters, Sorting, Presets</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              {QUICK_FILTERS.map((f) => (
+                <Button key={f.key} variant={quickFilter === f.key ? 'default' : 'outline'} size="sm" onClick={() => setQuickFilter(f.key)}>
+                  {f.label}
+                </Button>
+              ))}
+            </div>
+            <Input className="h-8 text-xs" placeholder="Search player..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            <div className="flex flex-wrap items-center gap-2">
+              <Input className="h-8 w-44 text-xs" placeholder="Preset name..." value={presetName} onChange={(e) => setPresetName(e.target.value)} />
+              <Button size="sm" onClick={handleSavePreset}>Save Preset</Button>
+              <Select onValueChange={applyPreset}>
+                <SelectTrigger className="h-8 w-52 text-xs"><SelectValue placeholder="Load preset..." /></SelectTrigger>
+                <SelectContent>
+                  {presets.map((p) => <SelectItem key={p.name} value={p.name}>{p.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select onValueChange={handleDeletePreset}>
+                <SelectTrigger className="h-8 w-52 text-xs"><SelectValue placeholder="Delete preset..." /></SelectTrigger>
+                <SelectContent>
+                  {presets.map((p) => <SelectItem key={`del-${p.name}`} value={p.name}>{p.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
           </CardContent>
         </Card>
-      )}
-
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm">Filters, Sorting, Presets</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            {QUICK_FILTERS.map((f) => (
-              <Button key={f.key} variant={quickFilter === f.key ? 'default' : 'outline'} size="sm" onClick={() => setQuickFilter(f.key)}>
-                {f.label}
-              </Button>
-            ))}
-          </div>
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-6">
-            <Select value={posFilter} onValueChange={(value) => setPosFilter(value as PositionFilterValue)}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Position" /></SelectTrigger>
-              <SelectContent>
-                {POSITION_OPTIONS.map((pos) => <SelectItem key={pos} value={pos}>{pos === '_all' ? 'All Positions' : pos}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Input className="h-8 text-xs" placeholder="Search player..." value={search} onChange={(e) => setSearch(e.target.value)} />
-            <Input className="h-8 text-xs" type="number" min={16} max={50} placeholder="Min age" value={minAge} onChange={(e) => setMinAge(Number(e.target.value || 16))} />
-            <Input className="h-8 text-xs" type="number" min={16} max={50} placeholder="Max age" value={maxAge} onChange={(e) => setMaxAge(Number(e.target.value || 50))} />
-            <Input className="h-8 text-xs" type="number" min={0} max={100} placeholder="Min OVR" value={minOvr} onChange={(e) => setMinOvr(Number(e.target.value || 0))} />
-            <Input className="h-8 text-xs" type="number" min={0} max={100} placeholder="Max OVR" value={maxOvr} onChange={(e) => setMaxOvr(Number(e.target.value || 100))} />
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input className="h-8 w-44 text-xs" placeholder="Preset name..." value={presetName} onChange={(e) => setPresetName(e.target.value)} />
-            <Button size="sm" onClick={handleSavePreset}>Save Preset</Button>
-            <Select onValueChange={applyPreset}>
-              <SelectTrigger className="h-8 w-52 text-xs"><SelectValue placeholder="Load preset..." /></SelectTrigger>
-              <SelectContent>
-                {presets.map((p) => <SelectItem key={p.name} value={p.name}>{p.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select onValueChange={handleDeletePreset}>
-              <SelectTrigger className="h-8 w-52 text-xs"><SelectValue placeholder="Delete preset..." /></SelectTrigger>
-              <SelectContent>
-                {presets.map((p) => <SelectItem key={`del-${p.name}`} value={p.name}>{p.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-        </CardContent>
-      </Card>
+      </div>
 
       <Card>
         <CardContent className="p-0">
@@ -641,6 +614,7 @@ export function SquadPage() {
     </div>
   )
 }
+
 
 
 

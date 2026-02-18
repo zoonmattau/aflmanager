@@ -28,6 +28,7 @@ type BracketAction =
   | { type: 'INIT_FROM_DRAFT'; draft: BracketDraftState }
   | { type: 'SET_QUALIFYING_TEAMS'; count: number }
   | { type: 'ADD_WEEK' }
+  | { type: 'MOVE_WEEK'; fromIndex: number; toIndex: number }
   | { type: 'REMOVE_WEEK'; weekIndex: number }
   | { type: 'UPDATE_WEEK_LABEL'; weekIndex: number; label: string }
   | { type: 'ADD_MATCH'; weekIndex: number }
@@ -111,6 +112,24 @@ function bracketReducer(
       return { ...state, weeks: [...state.weeks, newWeek] }
     }
 
+    case 'MOVE_WEEK': {
+      const { fromIndex, toIndex } = action
+      if (
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= state.weeks.length ||
+        toIndex >= state.weeks.length ||
+        fromIndex === toIndex
+      ) {
+        return state
+      }
+
+      const weeks = [...state.weeks]
+      const [moved] = weeks.splice(fromIndex, 1)
+      weeks.splice(toIndex, 0, moved)
+      return reindexWeeks({ ...state, weeks })
+    }
+
     case 'REMOVE_WEEK': {
       const removedMatches = state.weeks[action.weekIndex]?.matches ?? []
       const removedIds = new Set(removedMatches.map((m) => m.id))
@@ -174,11 +193,46 @@ function bracketReducer(
     }
 
     case 'UPDATE_MATCH': {
-      const weeks = state.weeks.map((w) => ({
+      const targetNode = state.weeks.flatMap((w) => w.matches).find((m) => m.id === action.nodeId)
+      if (!targetNode) return state
+
+      const requestedFinalType = action.updates.finalType
+
+      const weeks = state.weeks.map((w, wi) => ({
         ...w,
-        matches: w.matches.map((m) =>
-          m.id === action.nodeId ? { ...m, ...action.updates } : m,
-        ),
+        label:
+          requestedFinalType === 'GF' && wi === targetNode.weekIndex
+            ? 'Grand Final'
+            : w.label === 'Grand Final' && wi !== targetNode.weekIndex
+              ? `Finals Week ${wi + 1}`
+              : w.label,
+        matches: w.matches.map((m) => {
+          // Demote any previously selected GF elsewhere.
+          if (requestedFinalType === 'GF' && m.id !== action.nodeId && m.finalType === 'GF') {
+            return {
+              ...m,
+              finalType: 'PF' as DraftMatchNode['finalType'],
+              label: m.label === 'GF' ? autoLabel('PF', m.matchIndex) : m.label,
+            }
+          }
+
+          if (m.id !== action.nodeId) return m
+
+          const next: DraftMatchNode = { ...m, ...action.updates }
+
+          if (requestedFinalType === 'GF') {
+            next.label = 'GF'
+            next.isElimination = true
+            return next
+          }
+
+          // If this match was formerly GF and user changed it away, avoid stale GF label.
+          if (m.finalType === 'GF' && requestedFinalType && m.label === 'GF') {
+            next.label = autoLabel(requestedFinalType, m.matchIndex)
+          }
+
+          return next
+        }),
       }))
       return { ...state, weeks }
     }
@@ -205,7 +259,10 @@ function bracketReducer(
         )
       }
 
-      return { ...state, weeks, connections }
+      const qualifyingTeams =
+        action.rank !== null ? Math.max(state.qualifyingTeams, action.rank) : state.qualifyingTeams
+
+      return { ...state, weeks, connections, qualifyingTeams }
     }
 
     case 'ADD_CONNECTION': {
@@ -275,6 +332,12 @@ export function useBracketDraft(initial?: BracketDraftState) {
     [],
   )
 
+  const moveWeek = useCallback(
+    (fromIndex: number, toIndex: number) =>
+      dispatch({ type: 'MOVE_WEEK', fromIndex, toIndex }),
+    [],
+  )
+
   const updateWeekLabel = useCallback(
     (weekIndex: number, label: string) =>
       dispatch({ type: 'UPDATE_WEEK_LABEL', weekIndex, label }),
@@ -326,6 +389,7 @@ export function useBracketDraft(initial?: BracketDraftState) {
     initFromDraft,
     setQualifyingTeams,
     addWeek,
+    moveWeek,
     removeWeek,
     updateWeekLabel,
     addMatch,

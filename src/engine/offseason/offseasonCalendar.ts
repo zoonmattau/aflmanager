@@ -2,6 +2,8 @@ import type { Player } from '@/types/player'
 import type { GameSettings } from '@/types/game'
 import type { OffseasonPhase, OffseasonState } from '@/engine/season/offseasonFlow'
 import type { NegotiationTracker } from '@/types/contract'
+import type { DraftState } from '@/types/draft'
+import type { TradeInboxItem } from '@/types/trade'
 import { addDays, diffDays, formatDateLong } from '@/engine/calendar/calendarEngine'
 import { resolveListConstraints, validateClubList, mustDelist } from '@/engine/rules/listRules'
 import { calculateClubSalaryTotal } from '@/engine/contracts/negotiation'
@@ -32,6 +34,9 @@ export type ActionItemType =
   | 'mandatory-delist'
   | 'draft-pick-required'
   | 'cap-violation'
+  | 'contract-response-required'
+  | 'venue-decision-required'
+  | 'trade-offer-response'
 
 export interface ActionItem {
   type: ActionItemType
@@ -40,6 +45,32 @@ export interface ActionItem {
   severity: 'critical' | 'warning' | 'info'
   linkTo: string
   playerId?: string
+}
+
+export interface OffseasonChecklistTask {
+  id: string
+  title: string
+  description: string
+  required: boolean
+  completed: boolean
+  linkTo: string
+  impact?: string
+}
+
+export interface OffseasonChecklistContext {
+  players: Record<string, Player>
+  playerClubId: string
+  offseasonState: OffseasonState
+  negotiations: NegotiationTracker | null
+  settings: GameSettings
+  draft: DraftState | null
+  tradeInbox: TradeInboxItem[]
+}
+
+export interface OffseasonProgressionValidation {
+  allowed: boolean
+  error: string | null
+  blockingTasks: OffseasonChecklistTask[]
 }
 
 // ---------------------------------------------------------------------------
@@ -163,27 +194,42 @@ export function detectActionItems(
   offseasonState: OffseasonState,
   negotiations: NegotiationTracker | null,
   settings: GameSettings,
+  draft?: DraftState | null,
+  tradeInbox?: TradeInboxItem[],
 ): ActionItem[] {
+  const tasks = buildOffseasonChecklist({
+    players,
+    playerClubId,
+    offseasonState,
+    negotiations,
+    settings,
+    draft: draft ?? null,
+    tradeInbox: tradeInbox ?? [],
+  })
   const items: ActionItem[] = []
 
-  // Pending negotiations: active with cooldownRemaining === 0
+  for (const task of tasks) {
+    if (task.completed) continue
+    items.push({
+      type:
+        task.id === 'contract-response' ? 'contract-response-required'
+        : task.id === 'venue-decisions' ? 'venue-decision-required'
+        : task.id === 'trade-offers' ? 'trade-offer-response'
+        : task.id === 'draft-picks' ? 'draft-pick-required'
+        : task.id === 'list-compliance' ? 'mandatory-delist'
+        : task.id === 'salary-cap' ? 'cap-violation'
+        : 'pending-negotiation',
+      title: task.title,
+      description: task.description,
+      severity: task.required ? 'critical' : 'warning',
+      linkTo: task.linkTo,
+    })
+  }
+
+  // Keep additional contextual negotiation warnings as optional insights.
   if (negotiations) {
     for (const neg of Object.values(negotiations.active)) {
       if (neg.clubId !== playerClubId) continue
-      if (neg.cooldownRemaining === 0) {
-        const player = players[neg.playerId]
-        const name = player ? `${player.firstName} ${player.lastName}` : 'Unknown'
-        items.push({
-          type: 'pending-negotiation',
-          title: `Respond to ${name}`,
-          description: 'Negotiation ready for your next offer',
-          severity: 'warning',
-          linkTo: '/contracts',
-          playerId: neg.playerId,
-        })
-      }
-
-      // Expiring offers: in round 3+
       if (neg.rounds.length >= 3) {
         const player = players[neg.playerId]
         const name = player ? `${player.firstName} ${player.lastName}` : 'Unknown'
@@ -199,64 +245,171 @@ export function detectActionItems(
     }
   }
 
-  // List violations
+  return items
+}
+
+function getOutstandingUserDraftPicks(draft: DraftState | null, playerClubId: string, phase: OffseasonPhase): number {
+  if (!draft) return 1
+  if (phase === 'national-draft') {
+    return draft.nationalDraftPicks.filter(
+      (pick) => pick.clubId === playerClubId && !pick.selectedProspectId,
+    ).length
+  }
+  if (phase === 'rookie-draft') {
+    return draft.rookieDraftPicks.filter(
+      (pick) => pick.clubId === playerClubId && !pick.selectedProspectId,
+    ).length
+  }
+  return 0
+}
+
+export function buildOffseasonChecklist(ctx: OffseasonChecklistContext): OffseasonChecklistTask[] {
+  const {
+    players,
+    playerClubId,
+    offseasonState,
+    negotiations,
+    settings,
+    draft,
+    tradeInbox,
+  } = ctx
+
+  const tasks: OffseasonChecklistTask[] = []
   const constraints = resolveListConstraints(settings)
   const validation = validateClubList(players, playerClubId, constraints)
-  if (!validation.valid) {
-    for (const err of validation.errors) {
-      items.push({
-        type: 'list-violation',
-        title: 'List Violation',
-        description: err.message,
-        severity: 'critical',
-        linkTo: '/offseason',
-      })
-    }
-  }
-
-  // Mandatory delistings
   const excess = mustDelist(players, playerClubId, constraints)
-  if (excess > 0) {
-    items.push({
-      type: 'mandatory-delist',
-      title: `Must delist ${excess} player${excess === 1 ? '' : 's'}`,
-      description: `Roster exceeds ${constraints.maxTotal}-player limit`,
-      severity: 'critical',
-      linkTo: '/offseason',
+
+  tasks.push({
+    id: 'list-compliance',
+    title: 'List compliance and delistings',
+    description:
+      excess > 0
+        ? `Delist ${excess} player${excess === 1 ? '' : 's'} to reach the ${constraints.maxTotal}-player limit.`
+        : 'Your list is compliant with senior and rookie limits.',
+    required: true,
+    completed: validation.valid && excess <= 0,
+    linkTo: '/offseason',
+    impact: 'List violations can invalidate roster processing and block offseason progression.',
+  })
+
+  const contractResponses = negotiations
+    ? Object.values(negotiations.active).filter(
+      (neg) => neg.clubId === playerClubId && neg.status === 'counter-offered',
+    ).length
+    : 0
+  tasks.push({
+    id: 'contract-response',
+    title: 'Contract counter-offer responses',
+    description:
+      contractResponses > 0
+        ? `${contractResponses} contract counter-offer${contractResponses === 1 ? '' : 's'} waiting for response.`
+        : 'No contract counter-offers awaiting your response.',
+    required: true,
+    completed: contractResponses === 0,
+    linkTo: '/contracts',
+    impact: 'Unresolved contract responses can stall retention and free-agency flows.',
+  })
+
+  if (offseasonState.currentPhase === 'national-draft') {
+    const outstandingPicks = getOutstandingUserDraftPicks(draft, playerClubId, offseasonState.currentPhase)
+    tasks.push({
+      id: 'draft-picks',
+      title: 'Draft selections',
+      description:
+        outstandingPicks > 0
+          ? `${outstandingPicks} draft pick${outstandingPicks === 1 ? '' : 's'} still need selections.`
+          : 'All user-owned picks for this draft phase are completed.',
+      required: true,
+      completed: outstandingPicks === 0,
+      linkTo: '/draft',
+      impact: 'Skipping draft picks can break list balancing and downstream offseason systems.',
     })
   }
 
-  // Draft picks required
-  if (
-    offseasonState.currentPhase === 'national-draft' ||
-    offseasonState.currentPhase === 'rookie-draft'
-  ) {
-    items.push({
-      type: 'draft-pick-required',
-      title: 'Draft picks available',
-      description: 'Use your draft picks to add to your list',
-      severity: 'info',
+  if (offseasonState.currentPhase === 'venue-allocation') {
+    const pendingOffers = offseasonState.venueOffers?.length ?? 0
+    tasks.push({
+      id: 'venue-decisions',
+      title: 'Venue allocation decisions',
+      description:
+        pendingOffers > 0
+          ? `${pendingOffers} venue offer${pendingOffers === 1 ? '' : 's'} require accept/reject decisions.`
+          : 'All venue allocation offers have been resolved.',
+      required: true,
+      completed: pendingOffers === 0,
       linkTo: '/offseason',
+      impact: 'Unresolved venue allocations can desync fixture venue assignment.',
     })
   }
 
-  // Cap violations
   if (settings.salaryCap) {
-    const allPlayers = Object.values(players)
-    const totalSpend = calculateClubSalaryTotal(allPlayers, playerClubId)
-    if (totalSpend > settings.salaryCapAmount) {
-      const overage = totalSpend - settings.salaryCapAmount
-      items.push({
-        type: 'cap-violation',
-        title: 'Over salary cap',
-        description: `$${overage.toLocaleString()} over the $${settings.salaryCapAmount.toLocaleString()} cap`,
-        severity: 'critical',
-        linkTo: '/salary-cap',
-      })
-    }
+    const totalSpend = calculateClubSalaryTotal(Object.values(players), playerClubId)
+    const overage = totalSpend - settings.salaryCapAmount
+    tasks.push({
+      id: 'salary-cap',
+      title: 'Salary cap compliance',
+      description:
+        overage > 0
+          ? `Reduce spend by $${overage.toLocaleString()} to get under the $${settings.salaryCapAmount.toLocaleString()} cap.`
+          : `Cap compliant at $${totalSpend.toLocaleString()} of $${settings.salaryCapAmount.toLocaleString()}.`,
+      required: true,
+      completed: overage <= 0,
+      linkTo: '/salary-cap',
+      impact: 'Cap breaches can invalidate signing and list workflows.',
+    })
   }
 
-  return items
+  const pendingTradeOffers = tradeInbox.filter((item) => item.offer.status === 'pending-user').length
+  tasks.push({
+    id: 'trade-offers',
+    title: 'Trade inbox responses',
+    description:
+      pendingTradeOffers > 0
+        ? `${pendingTradeOffers} trade offer${pendingTradeOffers === 1 ? '' : 's'} are pending your decision.`
+        : 'No trade offers pending.',
+    required: false,
+    completed: pendingTradeOffers === 0,
+    linkTo: '/trade',
+  })
+
+  const pendingNegotiationSteps = negotiations
+    ? Object.values(negotiations.active).filter(
+      (neg) => neg.clubId === playerClubId && neg.cooldownRemaining === 0 && neg.status === 'pending',
+    ).length
+    : 0
+  tasks.push({
+    id: 'negotiation-follow-up',
+    title: 'Negotiation follow-up offers',
+    description:
+      pendingNegotiationSteps > 0
+        ? `${pendingNegotiationSteps} negotiation${pendingNegotiationSteps === 1 ? '' : 's'} ready for your next offer.`
+        : 'No immediate follow-up offers required.',
+    required: false,
+    completed: pendingNegotiationSteps === 0,
+    linkTo: '/contracts',
+  })
+
+  return tasks
+}
+
+export function validateOffseasonProgression(ctx: OffseasonChecklistContext): OffseasonProgressionValidation {
+  const checklist = buildOffseasonChecklist(ctx)
+  const blockingTasks = checklist.filter((task) => task.required && !task.completed)
+  if (blockingTasks.length === 0) {
+    return { allowed: true, error: null, blockingTasks: [] }
+  }
+
+  const primary = blockingTasks[0]
+  const error =
+    `Offseason progression blocked: ${primary.title}. ` +
+    `${primary.description} ` +
+    `${primary.impact ?? 'Complete all required offseason tasks before simulating or advancing.'}`
+
+  return {
+    allowed: false,
+    error,
+    blockingTasks,
+  }
 }
 
 export function advanceHalfDay(state: OffseasonCalendarState): OffseasonCalendarState {

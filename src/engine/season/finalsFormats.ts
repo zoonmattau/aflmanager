@@ -410,3 +410,270 @@ export function getFinalsFormatById(id: string, customFormat?: FinalsFormat): Fi
   if (id === 'custom' && customFormat) return customFormat
   return FINALS_FORMATS.find((f) => f.id === id) ?? aflTop8
 }
+
+/**
+ * Returns true when the finals structure gives top-4 clubs a week-1
+ * non-elimination path while clubs ranked 5-8 are in week-1 elimination games.
+ */
+export function hasTopFourDoubleChanceAdvantage(format: FinalsFormat): boolean {
+  if (format.qualifyingTeams < 8) return false
+
+  const firstWeek = [...format.weeks].sort((a, b) => a.weekNumber - b.weekNumber)[0]
+  if (!firstWeek) return false
+
+  const weekOneEliminationByRank = new Map<number, boolean[]>()
+  for (const matchup of firstWeek.matchups) {
+    for (const source of [matchup.home, matchup.away]) {
+      if (source.type !== 'ladder' || source.rank == null) continue
+      const rank = source.rank
+      if (rank < 1 || rank > format.qualifyingTeams) continue
+      const list = weekOneEliminationByRank.get(rank) ?? []
+      list.push(matchup.isElimination)
+      weekOneEliminationByRank.set(rank, list)
+    }
+  }
+
+  for (let rank = 1; rank <= 4; rank++) {
+    const rows = weekOneEliminationByRank.get(rank)
+    if (!rows || rows.length === 0) return false
+    if (rows.some((isElim) => isElim)) return false
+  }
+
+  for (let rank = 5; rank <= 8; rank++) {
+    const rows = weekOneEliminationByRank.get(rank)
+    if (!rows || rows.length === 0) return false
+    if (rows.some((isElim) => !isElim)) return false
+  }
+
+  return true
+}
+
+// ── Dynamic knockout bracket generator ────────────────────────────────────
+
+function nextPowerOf2(n: number): number {
+  let v = 1
+  while (v < n) v *= 2
+  return v
+}
+
+/**
+ * Standard seeded bracket ordering.
+ * For an 8-team bracket: [[1,8],[4,5],[2,7],[3,6]]
+ * Ensures that if all higher seeds win, 1 meets 2 in the final.
+ */
+function seededBracketOrder(slots: number): Array<[number, number]> {
+  if (slots === 1) return []
+  if (slots === 2) return [[1, 2]]
+
+  const pairs: Array<[number, number]> = []
+  const recurse = (seeds: number[]): number[] => {
+    if (seeds.length <= 2) return seeds
+    const half = seeds.length / 2
+    const top: number[] = []
+    const bot: number[] = []
+    for (let i = 0; i < half; i++) {
+      top.push(seeds[i])
+      bot.push(seeds[seeds.length - 1 - i])
+    }
+    return [...recurse(top), ...recurse(bot)]
+  }
+  const ordered = recurse(Array.from({ length: slots }, (_, i) => i + 1))
+  for (let i = 0; i < ordered.length; i += 2) {
+    pairs.push([ordered[i], ordered[i + 1]])
+  }
+  return pairs
+}
+
+function getFinalType(roundsTotal: number, currentRound: number): FinalsMatchupRule['finalType'] {
+  if (currentRound === roundsTotal) return 'GF'
+  if (currentRound === roundsTotal - 1) return roundsTotal > 2 ? 'PF' : 'GF'
+  if (currentRound === roundsTotal - 2) return 'SF'
+  if (currentRound === 1) return 'QF'
+  return 'EF'
+}
+
+function getWeekLabel(roundsTotal: number, currentRound: number): string {
+  if (currentRound === roundsTotal) return 'Grand Final'
+  const type = getFinalType(roundsTotal, currentRound)
+  const labels: Record<string, string> = {
+    QF: 'Quarter Finals',
+    EF: 'Elimination Finals',
+    SF: 'Semi Finals',
+    PF: 'Preliminary Finals',
+    GF: 'Grand Final',
+  }
+  return labels[type] ?? `Finals Week ${currentRound}`
+}
+
+/**
+ * Generates a straight-knockout seeded bracket for N qualifying teams.
+ * Higher seeds get byes when N is not a power of 2.
+ */
+export function generateStandardKnockout(n: number): FinalsFormat {
+  const clamped = Math.max(2, Math.min(18, n))
+  const totalSlots = nextPowerOf2(clamped)
+  const byes = totalSlots - clamped
+  const totalRounds = Math.round(Math.log2(totalSlots))
+
+  const bracketPairs = seededBracketOrder(totalSlots)
+
+  // Track which seeds get byes: the top `byes` seeds
+  const byeSeeds = new Set<number>()
+  for (let i = 1; i <= byes; i++) byeSeeds.add(i)
+
+  const weeks: FinalsWeekDefinition[] = []
+  // Map: bracket slot index -> { weekNumber, matchIndex } for result references
+  type SlotRef = { weekNumber: number; matchIndex: number }
+  const slotToRef = new Map<number, SlotRef>()
+
+  // Round 1: play non-bye matchups, bye seeds advance directly
+  const round1Matchups: FinalsMatchupRule[] = []
+  const round1AdvancingByeSeeds: Array<{ seed: number; slotIndex: number }> = []
+
+  for (let i = 0; i < bracketPairs.length; i++) {
+    const [seedA, seedB] = bracketPairs[i]
+    const aIsBye = byeSeeds.has(seedA) || seedA > clamped
+    const bIsBye = byeSeeds.has(seedB) || seedB > clamped
+
+    if (aIsBye && bIsBye) {
+      // Both are byes - higher seed advances (shouldn't happen normally)
+      round1AdvancingByeSeeds.push({ seed: Math.min(seedA, seedB), slotIndex: i })
+    } else if (aIsBye || bIsBye) {
+      // One is a bye - the real seed advances directly
+      const realSeed = aIsBye ? seedB : seedA
+      if (realSeed <= clamped) {
+        round1AdvancingByeSeeds.push({ seed: realSeed, slotIndex: i })
+      }
+    } else {
+      // Both are real teams - they play
+      const matchIndex = round1Matchups.length
+      const ft = getFinalType(totalRounds, 1)
+      round1Matchups.push({
+        label: `${ft}${matchIndex + 1}`,
+        finalType: ft,
+        home: { type: 'ladder', rank: seedA },
+        away: { type: 'ladder', rank: seedB },
+        isElimination: true,
+      })
+      slotToRef.set(i, { weekNumber: 1, matchIndex })
+    }
+  }
+
+  if (round1Matchups.length > 0) {
+    weeks.push({
+      weekNumber: 1,
+      label: getWeekLabel(totalRounds, 1),
+      matchups: round1Matchups,
+    })
+  }
+
+  // Build subsequent rounds
+  for (let round = 2; round <= totalRounds; round++) {
+    const weekNumber = round1Matchups.length > 0 ? round : round - 1
+    const matchupsThisRound: FinalsMatchupRule[] = []
+    // Number of matchups halves each round
+    const prevPairCount = bracketPairs.length / Math.pow(2, round - 2)
+    const pairCount = prevPairCount / 2
+
+    for (let m = 0; m < pairCount; m++) {
+      const slotA = m * 2
+      const slotB = m * 2 + 1
+      // Map back to original bracket pair indices for this round
+      const origSlotA = m * 2 * Math.pow(2, round - 2)
+      const origSlotB = (m * 2 + 1) * Math.pow(2, round - 2)
+
+      function resolveAdvancer(origSlot: number, prevRound: number): TeamSource {
+        // Check if this slot was a bye in a previous round
+        const byeEntry = round1AdvancingByeSeeds.find((b) => {
+          // A bye seed at slotIndex maps to the same bracket position
+          const slotRange = Math.pow(2, prevRound - 1)
+          return b.slotIndex >= origSlot && b.slotIndex < origSlot + slotRange
+        })
+        if (byeEntry) return { type: 'ladder', rank: byeEntry.seed }
+
+        // Check if previous round produced a result at this slot
+        // Look for the slot reference from the previous round
+        for (let s = origSlot; s < origSlot + Math.pow(2, prevRound - 1); s++) {
+          const ref = slotToRef.get(s)
+          if (ref && ref.weekNumber === weekNumber - 1) {
+            return { type: 'result', weekRef: ref.weekNumber, matchRef: ref.matchIndex, outcome: 'winner' }
+          }
+        }
+        // Fall back: check any previous round
+        for (let s = origSlot; s < origSlot + Math.pow(2, prevRound - 1); s++) {
+          const ref = slotToRef.get(s)
+          if (ref) {
+            return { type: 'result', weekRef: ref.weekNumber, matchRef: ref.matchIndex, outcome: 'winner' }
+          }
+        }
+        return { type: 'ladder', rank: 1 } // fallback
+      }
+
+      const home = resolveAdvancer(origSlotA, round)
+      const away = resolveAdvancer(origSlotB, round)
+
+      const ft = getFinalType(totalRounds, round)
+      const matchIndex = matchupsThisRound.length
+      matchupsThisRound.push({
+        label: round === totalRounds && pairCount === 1 ? 'GF' : `${ft}${matchIndex + 1}`,
+        finalType: round === totalRounds && pairCount === 1 ? 'GF' : ft,
+        home,
+        away,
+        isElimination: true,
+      })
+      // Store for next round
+      slotToRef.set(origSlotA, { weekNumber, matchIndex })
+    }
+
+    weeks.push({
+      weekNumber,
+      label: getWeekLabel(totalRounds, round),
+      matchups: matchupsThisRound,
+    })
+  }
+
+  // Compact week numbers (remove gaps from bye rounds)
+  const finalWeeks = weeks.filter((w) => w.matchups.length > 0)
+  const weekRemap = new Map<number, number>()
+  finalWeeks.forEach((w, i) => {
+    weekRemap.set(w.weekNumber, i + 1)
+    w.weekNumber = i + 1
+  })
+  // Update result references
+  for (const week of finalWeeks) {
+    for (const matchup of week.matchups) {
+      for (const src of [matchup.home, matchup.away]) {
+        if (src.type === 'result' && src.weekRef != null) {
+          src.weekRef = weekRemap.get(src.weekRef) ?? src.weekRef
+        }
+      }
+    }
+  }
+
+  return {
+    id: `knockout-${clamped}`,
+    name: `${clamped}-Team Knockout`,
+    description: `Straight knockout for ${clamped} qualifying teams. Higher seeds receive byes where needed.`,
+    qualifyingTeams: clamped,
+    grandFinalVenue: 'MCG',
+    weeks: finalWeeks,
+  }
+}
+
+/**
+ * Returns the effective finals format reflecting the qualifying teams setting.
+ * For presets: if the slider matches the preset, use it; otherwise generate a knockout.
+ * For custom: use the custom format as-is.
+ */
+export function getEffectiveFinalsFormat(
+  finalsFormat: string,
+  finalsQualifyingTeams: number,
+  customFinalsFormat?: FinalsFormat,
+): FinalsFormat {
+  if (finalsFormat === 'custom' && customFinalsFormat) return customFinalsFormat
+  const preset = FINALS_FORMATS.find((f) => f.id === finalsFormat)
+  if (preset && preset.qualifyingTeams === finalsQualifyingTeams) return preset
+  // If qualifying teams differ from preset, generate a dynamic knockout
+  if (finalsQualifyingTeams >= 2) return generateStandardKnockout(finalsQualifyingTeams)
+  return preset ?? aflTop8
+}

@@ -7,6 +7,7 @@ import { HomePage } from '@/pages/HomePage'
 import { NewGamePage } from '@/pages/NewGamePage'
 import { GlobalSettingsPage } from '@/pages/GlobalSettingsPage'
 import { LeaguePresetsPage } from '@/pages/LeaguePresetsPage'
+import { CustomLeagueBuilderPage } from '@/pages/CustomLeagueBuilderPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { SquadPage } from '@/pages/SquadPage'
 import { MatchDayPage } from '@/pages/MatchDayPage'
@@ -34,6 +35,10 @@ import { BrownlowNightPage } from '@/pages/BrownlowNightPage'
 import { PlayerDevelopmentReportPage } from '@/pages/PlayerDevelopmentReportPage'
 import { InjuryReportPage } from '@/pages/InjuryReportPage'
 import { CoachingJobsPage } from '@/pages/CoachingJobsPage'
+import { MatchupPreviewPage } from '@/pages/MatchupPreviewPage'
+import { GameSettingsPage } from '@/pages/GameSettingsPage'
+import { TribunalPage } from '@/pages/TribunalPage'
+import { PreseasonPreviewPage } from '@/pages/PreseasonPreviewPage'
 import { useGameStore } from '@/stores/gameStore'
 import { useAppStore } from '@/stores/appStore'
 
@@ -59,6 +64,7 @@ function GameRoutes() {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/inbox" element={<InboxPage />} />
         <Route path="/squad" element={<SquadPage />} />
+        <Route path="/fixture" element={<MatchDayPage />} />
         <Route path="/match" element={<MatchDayPage />} />
         <Route path="/ladder" element={<LadderPage />} />
         <Route path="/lineup" element={<LineupPage />} />
@@ -84,6 +90,11 @@ function GameRoutes() {
         <Route path="/brownlow-night" element={<BrownlowNightPage />} />
         <Route path="/development-report" element={<PlayerDevelopmentReportPage />} />
         <Route path="/injury-report" element={<InjuryReportPage />} />
+        <Route path="/matchup-preview" element={<MatchupPreviewPage />} />
+        <Route path="/game-settings" element={<GameSettingsPage />} />
+        <Route path="/tribunal" element={<TribunalPage />} />
+        <Route path="/tribunal/:caseId" element={<TribunalPage />} />
+        <Route path="/preseason-preview" element={<PreseasonPreviewPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppLayout>
@@ -150,6 +161,7 @@ export default function App() {
           {currentScreen === 'new-game' && <NewGamePage />}
           {currentScreen === 'settings' && <GlobalSettingsPage />}
           {currentScreen === 'league-presets' && <LeaguePresetsPage />}
+          {currentScreen === 'custom-league-builder' && <CustomLeagueBuilderPage />}
           {currentScreen === 'game' && <GameRoutes />}
         </BrowserRouter>
       </TooltipProvider>

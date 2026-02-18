@@ -1,6 +1,7 @@
 import type { SeededRNG } from '@/engine/core/rng'
 import type { TrainingFocus } from '@/engine/training/trainingEngine'
-import type { Player, PlayerAttributes } from '@/types/player'
+import { getPlayerTrainingFocusAttributeMultiplier } from '@/engine/players/trainingFocus'
+import type { Player, PlayerAttributes, PlayerTrainingFocus } from '@/types/player'
 import { MIN_ATTRIBUTE, MAX_ATTRIBUTE } from '@/engine/core/constants'
 
 /**
@@ -74,6 +75,7 @@ export interface OffseasonDevelopmentContext {
   facilitiesModifier?: number
   cultureModifier?: number
   trainingFocus?: TrainingFocus | null
+  playerTrainingFocus?: PlayerTrainingFocus | null
   randomness?: number // 0.5-1.5 where 1 is baseline
 }
 
@@ -221,11 +223,13 @@ export function developPlayer(
       }
 
       const focusedMul = getFocusedAttributeMultiplier(key, context?.trainingFocus)
+      const playerFocusedMul = getPlayerTrainingFocusAttributeMultiplier(context?.playerTrainingFocus, key)
       const growth = rng.nextFloat(0.15, 1.7) *
         developmentRate *
         ageFactor *
         typeMultiplier *
         focusedMul *
+        playerFocusedMul *
         capPressureMul *
         globalDevMultiplier
 
@@ -240,7 +244,8 @@ export function developPlayer(
     const stability = clamp(1.15 - (Math.abs(globalDevMultiplier - 1) * 0.5), 0.75, 1.25)
     for (const key of ALL_ATTRIBUTE_KEYS) {
       const focusedMul = getFocusedAttributeMultiplier(key, context?.trainingFocus)
-      const drift = rng.nextFloat(-1.2, 1.2) * stability * focusedMul
+      const playerFocusedMul = getPlayerTrainingFocusAttributeMultiplier(context?.playerTrainingFocus, key)
+      const drift = rng.nextFloat(-1.2, 1.2) * stability * focusedMul * playerFocusedMul
       const next = clamp(player.attributes[key] + drift, MIN_ATTRIBUTE, MAX_ATTRIBUTE)
       player.attributes[key] = Math.round(next * 10) / 10
     }
@@ -256,7 +261,8 @@ export function developPlayer(
     const mentalProtection = isMental ? 0.4 : 1
     const physicalPenalty = isPhysical ? 1.15 : 1
     const focusedMul = getFocusedAttributeMultiplier(key, context?.trainingFocus)
-    const trainingProtection = focusedMul > 1 ? 0.92 : 1.03
+    const playerFocusedMul = getPlayerTrainingFocusAttributeMultiplier(context?.playerTrainingFocus, key)
+    const trainingProtection = focusedMul * playerFocusedMul > 1 ? 0.92 : 1.03
     const loss = rng.nextFloat(0.12, 1.65) *
       declineRate *
       ageFactor *

@@ -5,6 +5,7 @@ import type {
   StateLeagueMatchResult,
 } from '@/types/stateLeague'
 import type { LadderEntry } from '@/types/season'
+import { compareLadderEntries } from '@/engine/season/ladderSorting'
 import { SeededRNG } from '@/engine/core/rng'
 import sanflClubsJson from '@/data/sanflClubs.json'
 import waflClubsJson from '@/data/waflClubs.json'
@@ -70,11 +71,7 @@ function standaloneClubFromJson(json: StateClubJson): StateLeagueClub {
 }
 
 function sortLadder(ladder: LadderEntry[]): void {
-  ladder.sort((a, b) => {
-    if (b.points !== a.points) return b.points - a.points
-    if (b.percentage !== a.percentage) return b.percentage - a.percentage
-    return b.pointsFor - a.pointsFor
-  })
+  ladder.sort(compareLadderEntries)
 }
 
 // ─── Fixture Generation ─────────────────────────────────────────────────────
