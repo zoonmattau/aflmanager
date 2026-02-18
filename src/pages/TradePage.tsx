@@ -42,7 +42,9 @@ import {
   TrendingDown,
   Minus,
   Bell,
+  Clock,
 } from 'lucide-react'
+import { diffDays } from '@/engine/calendar/calendarEngine'
 import { gradeTradeRetrospective } from '@/engine/history/summaryEngine'
 import type { TradeGradeLetter } from '@/engine/history/summaryEngine'
 import { getPackageTradeValue } from '@/engine/trades/tradeValuation'
@@ -51,6 +53,8 @@ import { getDemandAdjustedValue } from '@/engine/trades/tradeNegotiationEngine'
 import { useTableViewManager, type TableViewColumnConfig } from '@/components/table-view/useTableViewManager'
 import { TableViewManagerControl } from '@/components/table-view/TableViewManagerControl'
 import { ShortlistAssignMenu, ShortlistManager } from '@/components/shortlists/ShortlistManager'
+import type { BoardApprovalResult } from '@/types/boardApproval'
+import { BoardApprovalPanel } from '@/components/board/BoardApprovalPanel'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -981,7 +985,9 @@ function TradeInboxTab() {
   const respondToTradeOffer = useGameStore((s) => s.respondToTradeOffer)
   const markTradeOfferRead = useGameStore((s) => s.markTradeOfferRead)
   const generateTradeInboxOffersAction = useGameStore((s) => s.generateTradeInboxOffersAction)
+  const previewBoardApproval = useGameStore((s) => s.previewBoardApproval)
   const [error, setError] = useState<string | null>(null)
+  const [tradeBoardPreview, setTradeBoardPreview] = useState<{ offerId: string; result: BoardApprovalResult } | null>(null)
 
   const sorted = useMemo(
     () => [...tradeInbox].sort((a, b) => b.offer.createdAt.localeCompare(a.offer.createdAt)),
@@ -991,11 +997,34 @@ function TradeInboxTab() {
   const pending = sorted.filter((item) => item.offer.status === 'pending-user')
 
   const handleRespond = (offerId: string, decision: 'accept' | 'reject' | 'counter') => {
+    setError(null)
+
+    // Board approval check for trade acceptance with salary retention
+    if (decision === 'accept') {
+      const offer = tradeInbox.find((i) => i.id === offerId)?.offer
+      if (offer) {
+        const userRetention = offer.salaryRetentions
+          .filter((r) => r.retainingClubId === playerClubId)
+          .reduce((sum, r) => sum + r.amount, 0)
+
+        if (userRetention > 0 && tradeBoardPreview?.offerId !== offerId) {
+          const preview = previewBoardApproval('trade', { userSalaryRetention: userRetention })
+          if (preview.requiresApproval) {
+            setTradeBoardPreview({ offerId, result: preview })
+            return
+          }
+        }
+      }
+      setTradeBoardPreview(null)
+    }
+
     const result = respondToTradeOffer(offerId, decision)
     if (!result.success) {
       setError(result.error ?? 'Unable to process response')
+      setTradeBoardPreview(null)
     } else {
       setError(null)
+      setTradeBoardPreview(null)
     }
   }
 
@@ -1089,22 +1118,32 @@ function TradeInboxTab() {
                   </div>
 
                   {isPending && (
-                    <div className="flex justify-end gap-2">
-                      <Button variant="outline" size="sm" onClick={() => handleRespond(item.id, 'reject')}>
-                        Reject
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleRespond(item.id, 'counter')}
-                        disabled={item.offer.clubsInvolved.length > 2}
-                      >
-                        Counter
-                      </Button>
-                      <Button size="sm" onClick={() => handleRespond(item.id, 'accept')}>
-                        Accept
-                      </Button>
-                    </div>
+                    <>
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" size="sm" onClick={() => handleRespond(item.id, 'reject')}>
+                          Reject
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRespond(item.id, 'counter')}
+                          disabled={item.offer.clubsInvolved.length > 2}
+                        >
+                          Counter
+                        </Button>
+                        <Button size="sm" onClick={() => handleRespond(item.id, 'accept')}>
+                          {tradeBoardPreview?.offerId === item.id ? 'Proceed to Board' : 'Accept'}
+                        </Button>
+                      </div>
+                      {tradeBoardPreview?.offerId === item.id && (
+                        <div className="mt-2 space-y-2">
+                          <BoardApprovalPanel result={tradeBoardPreview.result} compact />
+                          <Button size="sm" variant="ghost" onClick={() => setTradeBoardPreview(null)}>
+                            Cancel
+                          </Button>
+                        </div>
+                      )}
+                    </>
                   )}
                 </CardContent>
               </Card>
@@ -1669,11 +1708,23 @@ export function TradePage() {
   const playerClubId = useGameStore((s) => s.playerClubId)
   const clubs = useGameStore((s) => s.clubs)
   const phase = useGameStore((s) => s.phase)
+  const offseasonState = useGameStore((s) => s.offseasonState)
 
   const club = clubs[playerClubId]
 
   const tradePeriodOpen =
     phase === 'post-season' || phase === 'offseason' || phase === 'preseason'
+
+  const tradeCloseCountdown = useMemo(() => {
+    if (!tradePeriodOpen || !offseasonState?.calendarState) return null
+    const closeMilestone = offseasonState.calendarState.milestones.find(
+      (m) => m.label === 'Trade Period Closes',
+    )
+    if (!closeMilestone) return null
+    const days = diffDays(offseasonState.calendarState.currentDate, closeMilestone.date)
+    if (days < 0) return null
+    return { days, urgency: days <= 2 ? 'urgent' : days <= 7 ? 'warning' : 'normal' as const }
+  }, [tradePeriodOpen, offseasonState])
 
   const phaseLabel = (() => {
     switch (phase) {
@@ -1704,16 +1755,37 @@ export function TradePage() {
             {club?.fullName} &middot; {phaseLabel}
           </p>
         </div>
-        <Badge
-          variant={tradePeriodOpen ? 'default' : 'secondary'}
-          className={
-            tradePeriodOpen
-              ? 'bg-green-600 hover:bg-green-600 text-white'
-              : ''
-          }
-        >
-          {tradePeriodOpen ? 'Trade Period Open' : 'Trade Period Closed'}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge
+            variant={tradePeriodOpen ? 'default' : 'secondary'}
+            className={
+              tradePeriodOpen
+                ? 'bg-green-600 hover:bg-green-600 text-white'
+                : ''
+            }
+          >
+            {tradePeriodOpen ? 'Trade Period Open' : 'Trade Period Closed'}
+          </Badge>
+          {tradeCloseCountdown && (
+            <Badge
+              variant="outline"
+              className={`flex items-center gap-1 ${
+                tradeCloseCountdown.urgency === 'urgent'
+                  ? 'border-red-500/50 text-red-500'
+                  : tradeCloseCountdown.urgency === 'warning'
+                  ? 'border-amber-500/50 text-amber-500'
+                  : 'text-muted-foreground'
+              }`}
+            >
+              <Clock className="h-3 w-3" />
+              {tradeCloseCountdown.days === 0
+                ? 'Closes today'
+                : tradeCloseCountdown.days === 1
+                ? 'Closes tomorrow'
+                : `Closes in ${tradeCloseCountdown.days}d`}
+            </Badge>
+          )}
+        </div>
       </div>
 
       {!tradePeriodOpen && (

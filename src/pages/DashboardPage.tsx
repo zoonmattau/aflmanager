@@ -16,7 +16,8 @@ import {
   Play, FastForward, SkipForward, ChevronLeft, ChevronRight, ArrowRight,
   Plus, Moon, X,
   Users, ClipboardList, Shield, BarChart3, Gamepad2,
-  AlertTriangle, GraduationCap, Scale, Mail, FileText, Cog,
+  AlertTriangle, GraduationCap, Scale, Mail, FileText, Cog, DollarSign,
+  Newspaper, TrendingUp, TrendingDown, Minus,
 } from 'lucide-react'
 import type { Match } from '@/types/match'
 import type { Player, PlayerPositionType } from '@/types/player'
@@ -34,12 +35,21 @@ import {
   advanceClubUpskilling,
 } from '@/engine/training/trainingEngine'
 import { SeededRNG } from '@/engine/core/rng'
+import { getClubBudgetAllocation, getBudgetMultiplier } from '@/engine/clubs/budgetEngine'
 import {
-
+  getMediaPressureLabel,
+  getPressureLabelColor,
+  getPressureBarColor,
+  getPressureTrend,
+  getMediaPressureMoraleEffect,
+} from '@/engine/media/pressureEngine'
+import {
   getNextEvent,
   addDays,
   formatDate,
+  getDeadlineCountdowns,
 } from '@/engine/calendar/calendarEngine'
+import { getFixtureDateIso } from '@/engine/season/fixtureDateUtils'
 import {
   getOffseasonPhaseLabel,
 } from '@/engine/season/offseasonFlow'
@@ -404,6 +414,7 @@ export function DashboardPage() {
   const newsLog = useGameStore((s) => s.newsLog)
   const emailLog = useGameStore((s) => s.emailLog)
   const manager = useGameStore((s) => s.manager)
+  const boardInstability = useGameStore((s) => s.boardInstability)
   const reserves = useGameStore((s) => s.reserves)
   const selectedLineup = useGameStore((s) => s.selectedLineup)
   const selectedSubstituteId = useGameStore((s) => s.selectedSubstituteId)
@@ -501,13 +512,12 @@ export function DashboardPage() {
     for (let idx = currentRound; idx < Math.min(season.rounds.length, currentRound + 5); idx++) {
       const round = season.rounds[idx]
       if (!round) continue
-      const roundDate = addDays(getWeekStart(effectiveDate), (idx - currentRound) * 7)
       if ((round.byeClubIds ?? []).includes(playerClubId)) {
         out.push({
           key: `bye-${idx}`,
           kind: 'bye',
           round: idx + 1,
-          roundDate,
+          roundDate: getFixtureDateIso(settings.seasonStartDate, idx),
         })
         continue
       }
@@ -518,14 +528,14 @@ export function DashboardPage() {
         key: `match-${idx}-${oppId}`,
         kind: 'match',
         round: idx + 1,
-        roundDate,
+        roundDate: getFixtureDateIso(settings.seasonStartDate, idx, fixture.matchDay),
         opponentId: oppId,
         homeAway: fixture.homeClubId === playerClubId ? 'home' : 'away',
         venue: fixture.venue,
       })
     }
     return out
-  }, [phase, currentRound, season.rounds, effectiveDate, playerClubId])
+  }, [phase, currentRound, season.rounds, settings.seasonStartDate, playerClubId])
 
   // Week days for the current view
   // During offseason, inject milestone events into the week — but skip milestones
@@ -662,7 +672,12 @@ export function DashboardPage() {
 
     // Apply user training (if any sessions scheduled)
     if (userSessions.length > 0 && userFacilities) {
-      const userResults = runTrainingSessions(userClubPlayers, userSessions, userClubStaff, userFacilities, trainingRng)
+      const userClub = state.clubs[state.playerClubId]
+      const userBudget = userClub ? getClubBudgetAllocation(userClub) : undefined
+      const userTrainingBudgetMul = userBudget
+        ? (getBudgetMultiplier(userBudget, 'facilities') + getBudgetMultiplier(userBudget, 'coaching')) / 2
+        : undefined
+      const userResults = runTrainingSessions(userClubPlayers, userSessions, userClubStaff, userFacilities, trainingRng, userTrainingBudgetMul)
       // Apply results to the store's players
       useGameStore.setState((s) => {
         applyTrainingResults(s.players, userResults)
@@ -730,7 +745,12 @@ export function DashboardPage() {
 
       const aiRng = new SeededRNG(state.rngSeed + state.currentRound * 5003 + hashCode(cid))
       const defaultWeek = getDefaultTrainingWeek()
-      const aiResults = runTrainingSessions(aiPlayers, defaultWeek.sessions, aiStaff, aiFacilities, aiRng)
+      const aiClubObj = state.clubs[cid]
+      const aiBudget = aiClubObj ? getClubBudgetAllocation(aiClubObj) : undefined
+      const aiTrainingBudgetMul = aiBudget
+        ? (getBudgetMultiplier(aiBudget, 'facilities') + getBudgetMultiplier(aiBudget, 'coaching')) / 2
+        : undefined
+      const aiResults = runTrainingSessions(aiPlayers, defaultWeek.sessions, aiStaff, aiFacilities, aiRng, aiTrainingBudgetMul)
       useGameStore.setState((s) => {
         applyTrainingResults(s.players, aiResults)
         const aiPlayersForUpskill: Record<string, Player> = {}
@@ -811,23 +831,12 @@ export function DashboardPage() {
   // Next event context for the subtitle
   const nextEvent = useMemo(() => getNextEvent(calendar), [calendar])
 
-  // Next match date aligned to the current week and fixture match day
+  // Next match date derived from the season start and round schedule
   const nextMatchDate = useMemo(() => {
     if (phase === 'finals' || phase === 'post-season') return null
     if (!nextFixture) return null
-    const weekStart = getWeekStart(effectiveDate)
-    const matchDayToOffset: Record<string, number> = {
-      monday: 0,
-      tuesday: 1,
-      wednesday: 2,
-      thursday: 3,
-      friday: 4,
-      saturday: 5,
-      sunday: 6,
-    }
-    const offset = matchDayToOffset[nextFixture.matchDay ?? ''] ?? 5
-    return addDays(weekStart, offset)
-  }, [effectiveDate, phase, nextFixture])
+    return getFixtureDateIso(settings.seasonStartDate, currentRound, nextFixture.matchDay)
+  }, [settings.seasonStartDate, currentRound, phase, nextFixture])
 
   const daysToNextMatch = useMemo(() => {
     if (!nextMatchDate) return null
@@ -995,6 +1004,12 @@ export function DashboardPage() {
     const weekEnd = addDays(effectiveDate, 6)
     return effectiveEvents.filter((e) => e.date >= effectiveDate && e.date <= weekEnd)
   }, [effectiveEvents, effectiveDate])
+
+  const deadlineCountdowns = useMemo(
+    () => getDeadlineCountdowns(effectiveEvents, effectiveDate, 5),
+    [effectiveEvents, effectiveDate],
+  )
+  const urgentDeadlineCount = deadlineCountdowns.filter((d) => d.urgency === 'urgent').length
 
   const scheduledSlotCount = useMemo(() => {
     let count = 0
@@ -1459,6 +1474,103 @@ export function DashboardPage() {
             </Card>
           )}
           <RecommendedActions />
+          {/* Club Finances Card */}
+          {club && (
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Club Finances</CardTitle>
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Balance</span>
+                    <span className={`font-semibold ${club.finances.balance < 0 ? 'text-red-500' : ''}`}>
+                      {formatMoneyShort(club.finances.balance)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Season P&L</span>
+                    <span className={`font-semibold ${
+                      club.finances.seasonPnL != null
+                        ? club.finances.seasonPnL >= 0
+                          ? 'text-green-500'
+                          : 'text-red-500'
+                        : ''
+                    }`}>
+                      {club.finances.seasonPnL != null
+                        ? `${club.finances.seasonPnL >= 0 ? '+' : ''}${formatMoneyShort(club.finances.seasonPnL)}`
+                        : 'In progress'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Revenue Trend</span>
+                    <span className="font-semibold">
+                      {(() => {
+                        const m = club.finances.momentumModifier ?? 0
+                        if (m > 0.05) return 'Rising'
+                        if (m < -0.03) return 'Declining'
+                        return 'Stable'
+                      })()}
+                    </span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          {/* Media Pressure Card */}
+          {club && (() => {
+            const pressure = club.mediaPressure
+            const score = pressure?.score ?? 0
+            const label = getMediaPressureLabel(score)
+            const barColor = getPressureBarColor(label)
+            const textColor = getPressureLabelColor(label)
+            const trend = pressure ? getPressureTrend(pressure) : 'stable'
+            const moraleEffect = getMediaPressureMoraleEffect(score)
+            const TrendIcon = trend === 'rising' ? TrendingUp : trend === 'falling' ? TrendingDown : Minus
+            const stories = pressure?.activeStories ?? []
+            const recentStories = [...stories].reverse().slice(0, 3)
+
+            return (
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Media Pressure</CardTitle>
+                  <Newspaper className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className={`text-sm font-bold ${textColor}`}>{label}</span>
+                    <div className="flex items-center gap-1">
+                      <TrendIcon className={`h-3.5 w-3.5 ${trend === 'rising' ? 'text-red-500' : trend === 'falling' ? 'text-green-500' : 'text-muted-foreground'}`} />
+                      <span className="text-xs font-mono text-muted-foreground">{score}/100</span>
+                    </div>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                    <div
+                      className={`h-full rounded-full transition-all ${barColor}`}
+                      style={{ width: `${score}%` }}
+                    />
+                  </div>
+                  {moraleEffect !== 0 && (
+                    <p className="text-[11px] text-red-500">
+                      Squad morale: {moraleEffect}/round
+                    </p>
+                  )}
+                  {recentStories.length > 0 ? (
+                    <div className="space-y-1 pt-1">
+                      {recentStories.map((s) => (
+                        <p key={s.id} className="text-[10px] text-muted-foreground leading-snug truncate">
+                          · {s.headline}
+                        </p>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground">No active stories</p>
+                  )}
+                </CardContent>
+              </Card>
+            )
+          })()}
           <ClubListNeedsCard />
         </div>
       </div>
@@ -1646,7 +1758,30 @@ export function DashboardPage() {
             </div>
             <p className={`text-sm font-semibold ${boardStatusClass}`}>{boardStatus} ({jobSecurity}%)</p>
             <p className="text-xs text-muted-foreground line-clamp-2">{manager.seasonExpectation}</p>
-            <p className="text-xs text-muted-foreground">Reputation {Math.round(manager.reputation)}/100</p>
+            {settings.realism.boardPolitics && boardInstability && (
+              <div className="flex items-center gap-2 pt-0.5">
+                <div
+                  className={`h-1.5 rounded-full flex-1 ${
+                    boardInstability.score >= 70 ? 'bg-red-500'
+                    : boardInstability.score >= 50 ? 'bg-amber-500'
+                    : boardInstability.score >= 30 ? 'bg-yellow-500'
+                    : 'bg-green-500/70'
+                  }`}
+                  style={{ width: `${boardInstability.score}%`, maxWidth: '100%' }}
+                />
+                <span className={`text-[10px] font-medium ${
+                  boardInstability.score >= 70 ? 'text-red-400'
+                  : boardInstability.score >= 50 ? 'text-amber-400'
+                  : boardInstability.score >= 30 ? 'text-yellow-400'
+                  : 'text-green-400'
+                }`}>
+                  {boardInstability.score >= 70 ? 'High pressure'
+                  : boardInstability.score >= 50 ? 'Elevated'
+                  : boardInstability.score >= 30 ? 'Moderate'
+                  : 'Stable'}
+                </span>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -1730,6 +1865,45 @@ export function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+      {/* Upcoming Deadlines */}
+      {deadlineCountdowns.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-sm">Upcoming Deadlines</CardTitle>
+              {urgentDeadlineCount > 0 && (
+                <Badge variant="destructive" className="text-[10px] h-4 px-1.5">
+                  {urgentDeadlineCount} urgent
+                </Badge>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="space-y-0.5">
+              {deadlineCountdowns.map((dl) => (
+                <button
+                  key={dl.eventId}
+                  onClick={() => navigate(dl.linkTo)}
+                  className="w-full flex items-center justify-between rounded px-2 py-1.5 hover:bg-accent/40 transition-colors text-left"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className={`h-2 w-2 rounded-full flex-shrink-0 ${EVENT_COLORS[dl.type]}`} />
+                    <span className="text-sm truncate">{dl.title}</span>
+                  </div>
+                  <span className={`text-xs font-semibold flex-shrink-0 ml-2 ${
+                    dl.urgency === 'urgent' ? 'text-red-500'
+                    : dl.urgency === 'warning' ? 'text-amber-500'
+                    : 'text-muted-foreground'
+                  }`}>
+                    {dl.daysUntil === 0 ? 'Today' : dl.daysUntil === 1 ? 'Tomorrow' : `${dl.daysUntil}d`}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Last Match Result (hidden during offseason) */}
       {!isOffseason && lastResult?.result && (
         <Card>

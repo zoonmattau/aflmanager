@@ -201,4 +201,5 @@ export interface GameHistory {
   retirementLegacies: RetirementLegacyEntry[]
   originHistory: import('@/types/specialEvents').OriginHistoryRecord[]
   recordsBook: AFLRecordsBook
+  seasonArchives: import('@/types/historyArchive').SeasonArchive[]
 }

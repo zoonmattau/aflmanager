@@ -53,12 +53,25 @@ export const FacilityUpgradeCost: Record<number, number> = {
 }
 
 /**
+ * Construction time in weeks to upgrade TO the given level.
+ * Higher levels take longer to build.
+ */
+export const FacilityConstructionWeeks: Record<number, number> = {
+  2: 4,
+  3: 6,
+  4: 8,
+  5: 12,
+}
+
+/**
  * Returns the cost to upgrade a facility from its current level to the next.
  * Returns 0 if the facility is already at max level (5).
+ * Pass inflationIndex to scale the cost to this season's nominal dollars.
  */
-export function getUpgradeCost(currentLevel: number): number {
+export function getUpgradeCost(currentLevel: number, inflationIndex = 1.0): number {
   const nextLevel = currentLevel + 1
-  return FacilityUpgradeCost[nextLevel] ?? 0
+  const baseCost = FacilityUpgradeCost[nextLevel] ?? 0
+  return baseCost === 0 ? 0 : Math.round(baseCost * inflationIndex)
 }
 
 // ---------------------------------------------------------------------------
@@ -73,9 +86,10 @@ export function getUpgradeCost(currentLevel: number): number {
 export function canUpgradeFacility(
   club: Club,
   facility: keyof ClubFacilities,
+  inflationIndex = 1.0,
 ): { canUpgrade: boolean; cost: number; reason: string } {
   const currentLevel = club.facilities[facility]
-  const cost = getUpgradeCost(currentLevel)
+  const cost = getUpgradeCost(currentLevel, inflationIndex)
 
   if (currentLevel >= 5) {
     return { canUpgrade: false, cost: 0, reason: 'Facility is already at maximum level' }
@@ -103,8 +117,9 @@ export function canUpgradeFacility(
 export function upgradeFacility(
   club: Club,
   facility: keyof ClubFacilities,
+  inflationIndex = 1.0,
 ): Club {
-  const { canUpgrade, cost, reason } = canUpgradeFacility(club, facility)
+  const { canUpgrade, cost, reason } = canUpgradeFacility(club, facility, inflationIndex)
 
   if (!canUpgrade) {
     throw new Error(`Cannot upgrade ${facility}: ${reason}`)
@@ -131,14 +146,15 @@ export function upgradeFacility(
  * Calculate the impact bonuses provided by a club's current facility levels.
  * Each bonus is `(level - 1) * 0.05`, so level 1 = 0% and level 5 = 20%.
  */
-export function getFacilityImpact(facilities: ClubFacilities): FacilityImpact {
+export function getFacilityImpact(facilities: ClubFacilities, budgetMultiplier?: number): FacilityImpact {
+  const bm = budgetMultiplier ?? 1
   return {
-    trainingBonus: (facilities.trainingGround - 1) * 0.05,
-    injuryReduction: (facilities.medicalCentre - 1) * 0.05,
-    recoveryBonus: (facilities.recoveryPool - 1) * 0.05,
-    developmentBonus: (facilities.gym - 1) * 0.05,
-    analysisBonus: (facilities.analysisSuite - 1) * 0.05,
-    youthBonus: (facilities.youthAcademy - 1) * 0.05,
+    trainingBonus: (facilities.trainingGround - 1) * 0.05 * bm,
+    injuryReduction: (facilities.medicalCentre - 1) * 0.05 * bm,
+    recoveryBonus: (facilities.recoveryPool - 1) * 0.05 * bm,
+    developmentBonus: (facilities.gym - 1) * 0.05 * bm,
+    analysisBonus: (facilities.analysisSuite - 1) * 0.05 * bm,
+    youthBonus: (facilities.youthAcademy - 1) * 0.05 * bm,
   }
 }
 
@@ -162,33 +178,44 @@ function lerpByLadder(ladderPosition: number, best: number, worst: number): numb
  * @param rng            - Seeded RNG for slight random variation in membership numbers
  */
 export function calculateRevenue(
-  _club: Club,
+  club: Club,
   ladderPosition: number,
   isFinalist: boolean,
   rng: SeededRNG,
   accumulatedMatchDayRevenue?: number,
+  inflationIndex = 1.0,
 ): RevenueBreakdown {
-  // matchDay: use venue system accumulated revenue if available, else estimate by ladder
+  const ix = inflationIndex
+
+  // matchDay: use venue system accumulated revenue if available, else estimate by ladder (already nominal if accumulated)
   const matchDay = accumulatedMatchDayRevenue != null
     ? accumulatedMatchDayRevenue
-    : Math.round(lerpByLadder(ladderPosition, 5_000_000, 2_000_000))
+    : Math.round(lerpByLadder(ladderPosition, 5_000_000, 2_000_000) * ix)
 
-  // membership: $3M-$6M with slight random variance
-  const membershipBase = lerpByLadder(ladderPosition, 5_500_000, 3_500_000)
-  const membershipVariance = rng.nextFloat(-500_000, 500_000)
-  const membership = Math.round(membershipBase + membershipVariance)
+  // membership: $3.5M-$5.5M (real) with slight random variance
+  const membershipBase = lerpByLadder(ladderPosition, 5_500_000, 3_500_000) * ix
+  const membershipVariance = rng.nextFloat(-500_000, 500_000) * ix
+  let membership = Math.round(membershipBase + membershipVariance)
 
-  // sponsorship: $5M for 1st, $2M for 18th
-  const sponsorship = Math.round(lerpByLadder(ladderPosition, 5_000_000, 2_000_000))
+  // sponsorship: $5M-$2M (real)
+  let sponsorship = Math.round(lerpByLadder(ladderPosition, 5_000_000, 2_000_000) * ix)
 
-  // broadcasting: flat $4M for every club (equal distribution)
-  const broadcasting = 4_000_000
+  // broadcasting: flat $4M (real) for every club (equal distribution)
+  const broadcasting = Math.round(4_000_000 * ix)
 
-  // merchandise: $3M for 1st, $1M for 18th
-  const merchandise = Math.round(lerpByLadder(ladderPosition, 3_000_000, 1_000_000))
+  // merchandise: $3M-$1M (real)
+  const merchandise = Math.round(lerpByLadder(ladderPosition, 3_000_000, 1_000_000) * ix)
 
   // Finalist bonus
-  const finalistBonus = isFinalist ? 1_000_000 : 0
+  const finalistBonus = isFinalist ? Math.round(1_000_000 * ix) : 0
+
+  // Facility revenue bonus: average facility level above 3 adds 0-5% to membership + sponsorship
+  const avgFacility = FACILITY_KEYS.reduce((sum, k) => sum + club.facilities[k], 0) / FACILITY_KEYS.length
+  if (avgFacility > 3) {
+    const facilityBonus = Math.min(0.05, (avgFacility - 3) * 0.025) // 0-5%
+    membership = Math.round(membership * (1 + facilityBonus))
+    sponsorship = Math.round(sponsorship * (1 + facilityBonus))
+  }
 
   const total = matchDay + membership + sponsorship + broadcasting + merchandise + finalistBonus
 
@@ -227,15 +254,18 @@ export function calculateExpenses(
   club: Club,
   staffWageBill: number,
   playerWageBill: number,
+  inflationIndex = 1.0,
 ): ExpenseBreakdown {
-  // Facility maintenance: each facility costs (level * $100k) per season
-  const facilityMaintenance = FACILITY_KEYS.reduce(
+  const ix = inflationIndex
+
+  // Facility maintenance: each facility costs (level * $100k real) per season
+  const facilityMaintenance = Math.round(FACILITY_KEYS.reduce(
     (sum, key) => sum + club.facilities[key] * 100_000,
     0,
-  )
+  ) * ix)
 
-  // Flat operational cost
-  const operations = 2_000_000
+  // Flat operational cost ($2M real)
+  const operations = Math.round(2_000_000 * ix)
 
   const total = playerWageBill + staffWageBill + facilityMaintenance + operations
 

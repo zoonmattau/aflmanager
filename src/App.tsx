@@ -41,7 +41,10 @@ import { GameSettingsPage } from '@/pages/GameSettingsPage'
 import { TribunalPage } from '@/pages/TribunalPage'
 import { PreseasonPreviewPage } from '@/pages/PreseasonPreviewPage'
 import { RecordsPage } from '@/pages/RecordsPage'
+import { LeagueHistoryPage } from '@/pages/LeagueHistoryPage'
 import { JumperManagementPage } from '@/pages/JumperManagementPage'
+import { PlayerComparisonPage } from '@/pages/PlayerComparisonPage'
+import { RulesPage } from '@/pages/RulesPage'
 import { useGameStore } from '@/stores/gameStore'
 import { useAppStore } from '@/stores/appStore'
 
@@ -95,6 +98,7 @@ function GameRoutes() {
         <Route path="/squad/:clubId" element={<SquadPage />} />
         <Route path="/league" element={<LeaguePage />} />
         <Route path="/records" element={<RecordsPage />} />
+        <Route path="/history" element={<LeagueHistoryPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/reserves" element={<ReservesPage />} />
         <Route path="/reserves/match-preview" element={<ReservesMatchPreviewPage />} />
@@ -105,6 +109,10 @@ function GameRoutes() {
         <Route path="/brownlow-night" element={<BrownlowNightPage />} />
         <Route path="/development-report" element={<PlayerDevelopmentReportPage />} />
         <Route path="/injury-report" element={<InjuryReportPage />} />
+        <Route path="/compare" element={<PlayerComparisonPage />} />
+        <Route path="/rules" element={<RulesPage />} />
+        <Route path="/compare/:playerAId" element={<PlayerComparisonPage />} />
+        <Route path="/compare/:playerAId/:playerBId" element={<PlayerComparisonPage />} />
         <Route path="/matchup-preview" element={<MatchupPreviewPage />} />
         <Route path="/game-settings" element={<GameSettingsPage />} />
         <Route path="/tribunal" element={<TribunalPage />} />

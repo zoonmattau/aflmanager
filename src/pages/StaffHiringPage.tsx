@@ -2,6 +2,7 @@ import { useMemo, useState, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
 import type { StaffMember, StaffRole, StaffRatings } from '@/types/staff'
+import type { BoardApprovalResult } from '@/types/boardApproval'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,6 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { ArrowLeft, UserPlus } from 'lucide-react'
+import { BoardApprovalPanel } from '@/components/board/BoardApprovalPanel'
 
 // ---------------------------------------------------------------------------
 // Constants (duplicated from StaffPage – small display-only values)
@@ -166,6 +168,7 @@ export function StaffHiringPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const staff = useGameStore((s) => s.staff)
   const hireStaffMember = useGameStore((s) => s.hireStaffMember)
+  const previewBoardApproval = useGameStore((s) => s.previewBoardApproval)
 
   // Role filter from URL param
   const roleParam = searchParams.get('role') as StaffRole | null
@@ -173,6 +176,8 @@ export function StaffHiringPage() {
 
   const [sortBy, setSortBy] = useState<SortOption>('ovr')
   const [contractYears, setContractYears] = useState<Record<string, number>>({})
+  const [hireError, setHireError] = useState<{ candidateId: string; message: string } | null>(null)
+  const [boardPreview, setBoardPreview] = useState<{ candidateId: string; result: BoardApprovalResult } | null>(null)
 
   // Free agents filtered & sorted
   const candidates = useMemo(() => {
@@ -202,11 +207,38 @@ export function StaffHiringPage() {
 
   const handleHire = useCallback(
     (candidate: StaffMember) => {
+      setHireError(null)
+      setBoardPreview(null)
+
+      // Preview board approval if required
+      const preview = previewBoardApproval('staff-hire', { salary: candidate.salary })
+      if (preview.requiresApproval) {
+        // If we're already showing the panel for this candidate, proceed with the hire
+        if (boardPreview?.candidateId === candidate.id) {
+          const years = contractYears[candidate.id] ?? 2
+          const result = hireStaffMember(candidate.id, years)
+          if (!result.success) {
+            setHireError({ candidateId: candidate.id, message: result.error ?? 'Hire failed' })
+            setBoardPreview(null)
+            return
+          }
+          navigate('/staff')
+          return
+        }
+        // Show the approval panel first
+        setBoardPreview({ candidateId: candidate.id, result: preview })
+        return
+      }
+
       const years = contractYears[candidate.id] ?? 2
-      hireStaffMember(candidate.id, years)
+      const result = hireStaffMember(candidate.id, years)
+      if (!result.success) {
+        setHireError({ candidateId: candidate.id, message: result.error ?? 'Hire failed' })
+        return
+      }
       navigate('/staff')
     },
-    [contractYears, hireStaffMember, navigate],
+    [contractYears, hireStaffMember, navigate, previewBoardApproval, boardPreview],
   )
 
   const handleContractYearChange = useCallback((candidateId: string, years: string) => {
@@ -324,6 +356,26 @@ export function StaffHiringPage() {
                       <RatingBar key={key} label={RATING_LABELS[key]} value={candidate.ratings[key]} />
                     ))}
                   </div>
+
+                  {/* Board approval panel */}
+                  {boardPreview?.candidateId === candidate.id && (
+                    <div className="space-y-2">
+                      <BoardApprovalPanel result={boardPreview.result} compact />
+                      <div className="flex gap-2">
+                        <Button size="sm" className="h-7 text-xs" onClick={() => handleHire(candidate)}>
+                          Proceed to Board
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setBoardPreview(null)}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Hire error */}
+                  {hireError?.candidateId === candidate.id && (
+                    <p className="text-xs text-destructive">{hireError.message}</p>
+                  )}
                 </CardContent>
               </Card>
             )

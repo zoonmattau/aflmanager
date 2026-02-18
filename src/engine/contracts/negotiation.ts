@@ -159,10 +159,17 @@ export function buildYearByYear(aav: number, years: number, escalationRate: numb
  *
  * The valuation considers overall attribute average, age trajectory, position
  * premium, form, and morale. Values are clamped between MINIMUM_SALARY and
- * ELITE_SALARY_CEILING.
+ * ELITE_SALARY_CEILING — both scaled by inflationIndex so the entire salary
+ * band grows with the economy each year.
+ *
+ * @param inflationIndex - Cumulative CPI index (1.0 = base year, no inflation).
  */
-export function calculatePlayerValue(player: Player): number {
+export function calculatePlayerValue(player: Player, inflationIndex = 1.0): number {
   const overall = averageAttributes(player.attributes)
+
+  // Scale salary band by inflation so demands rise with the market each year.
+  const scaledMinimum = MINIMUM_SALARY * inflationIndex
+  const scaledCeiling = ELITE_SALARY_CEILING * inflationIndex
 
   // Map overall 1-100 onto a salary curve.
   // We use a power curve so that the difference between 70 and 80 is much
@@ -172,7 +179,7 @@ export function calculatePlayerValue(player: Player): number {
   // normalised 0-1 (treating 30 as the floor; anything below 30 overall is
   // minimum-salary territory)
   const normalised = Math.max(0, (overall - 30) / 70)
-  const baseSalary = MINIMUM_SALARY + Math.pow(normalised, 2.2) * (ELITE_SALARY_CEILING - MINIMUM_SALARY)
+  const baseSalary = scaledMinimum + Math.pow(normalised, 2.2) * (scaledCeiling - scaledMinimum)
 
   const value =
     baseSalary *
@@ -180,7 +187,7 @@ export function calculatePlayerValue(player: Player): number {
     positionMultiplier(player) *
     formMoraleMultiplier(player)
 
-  return roundSalary(Math.min(ELITE_SALARY_CEILING, Math.max(MINIMUM_SALARY, value)))
+  return roundSalary(Math.min(scaledCeiling, Math.max(scaledMinimum, value)))
 }
 
 // ---------------------------------------------------------------------------
@@ -199,9 +206,9 @@ export function generateContractDemand(
   player: Player,
   currentClubId: string,
   rng: SeededRNG,
-  options?: { playerLoyaltyEnabled?: boolean; clubIsContender?: boolean; isHomeState?: boolean },
+  options?: { playerLoyaltyEnabled?: boolean; clubIsContender?: boolean; isHomeState?: boolean; inflationIndex?: number },
 ): ContractDemand {
-  const baseValue = calculatePlayerValue(player)
+  const baseValue = calculatePlayerValue(player, options?.inflationIndex ?? 1.0)
   const loyaltyEnabled = options?.playerLoyaltyEnabled !== false
 
   // --- Personality modifiers ---

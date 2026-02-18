@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useCallback } from 'react'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -20,12 +20,22 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { simulateMatch } from '@/engine/match/simulateMatch'
+import type { SimulateMatchInput } from '@/engine/match/simulateMatch'
 import { processMatchResults } from '@/engine/season/processResults'
+import { LiveMatchView } from '@/components/match/LiveMatchView'
 import { getOverallRating } from '@/engine/player/playerRating'
 import { VENUES } from '@/data/venues'
 import type { Club } from '@/types/club'
 import type { Match } from '@/types/match'
 import type { Fixture, MatchDay } from '@/types/season'
+import { getFixtureDateIso } from '@/engine/season/fixtureDateUtils'
+import {
+  getBroadcastChannelShort,
+  getBroadcastChannelColor,
+  getBroadcastTierLabel,
+  getBroadcastTierColor,
+  getBroadcastChannelLabel,
+} from '@/engine/season/broadcastEngine'
 import type { Player, PlayerPreferredRole } from '@/types/player'
 import {
   Swords,
@@ -45,6 +55,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Users,
+  Eye,
 } from 'lucide-react'
 
 const MATCH_DAY_ORDER: MatchDay[] = [
@@ -91,50 +102,10 @@ function parseScheduledTimeToMinutes(time?: string): number {
   return hour * 60 + minute
 }
 
-function getMatchDayOffset(day?: MatchDay): number {
-  switch (day) {
-    case 'Thursday':
-      return 3
-    case 'Friday':
-      return 4
-    case 'Saturday-Early':
-    case 'Saturday-Twilight':
-    case 'Saturday-Night':
-      return 5
-    case 'Sunday-Early':
-    case 'Sunday-Twilight':
-      return 6
-    case 'Monday':
-      return 7
-    default:
-      return 5
-  }
-}
-
-function addDaysIso(dateStr: string, days: number): string {
-  const d = new Date(`${dateStr}T00:00:00`)
-  d.setDate(d.getDate() + days)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
-function toRoundWeekMonday(seasonStartDate: string): string {
-  const d = new Date(`${seasonStartDate}T00:00:00`)
-  const day = d.getDay() // 0 Sun, 1 Mon
-  const daysUntilMonday = day === 1 ? 0 : (8 - day) % 7
-  d.setDate(d.getDate() + daysUntilMonday)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
-function getFixtureDateIso(seasonStartDate: string, roundIdx: number, matchDay?: MatchDay): string {
-  const mondayAnchor = toRoundWeekMonday(seasonStartDate)
-  const roundBaseDate = addDaysIso(mondayAnchor, roundIdx * 7)
-  return addDaysIso(roundBaseDate, getMatchDayOffset(matchDay))
-}
-
 function formatFixtureDateLabel(seasonStartDate: string, roundIdx: number, matchDay?: MatchDay): string {
   const fixtureDate = getFixtureDateIso(seasonStartDate, roundIdx, matchDay)
   const d = new Date(`${fixtureDate}T00:00:00`)
-  return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })
+  return d.toLocaleDateString('en-AU', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function sortRoundFixtures(fixtures: Fixture[]): Fixture[] {
@@ -360,6 +331,7 @@ export function MatchDayPage() {
   const rngSeed = useGameStore((s) => s.rngSeed)
   const addMatchResult = useGameStore((s) => s.addMatchResult)
   const advanceRound = useGameStore((s) => s.advanceRound)
+  const simCurrentRound = useGameStore((s) => s.simCurrentRound)
   const updateFixtureGame = useGameStore((s) => s.updateFixtureGame)
   const moveFixtureInRound = useGameStore((s) => s.moveFixtureInRound)
   const swapFixturesInRound = useGameStore((s) => s.swapFixturesInRound)
@@ -373,6 +345,7 @@ export function MatchDayPage() {
   const [swapTargetIndex, setSwapTargetIndex] = useState<string>('')
   const [editorNotice, setEditorNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null)
   const [fixtureEditorOpen, setFixtureEditorOpen] = useState<boolean>(false)
+  const [liveMatchActive, setLiveMatchActive] = useState(false)
 
   const displayRoundIdx = viewingRound ?? currentRound
   const round = season?.rounds?.[displayRoundIdx]
@@ -609,6 +582,37 @@ export function MatchDayPage() {
     advanceRound()
   }
 
+  const handlePlayLive = () => {
+    setLiveMatchActive(true)
+  }
+
+  const handleLiveMatchComplete = useCallback((match: Match) => {
+    // Route through the full post-round pipeline via simCurrentRound
+    const result = simCurrentRound({ precomputedUserMatch: match })
+    setLiveMatchActive(false)
+    setLastMatchResult(result.userMatch ?? match)
+  }, [simCurrentRound])
+
+  // Build SimulateMatchInput for the user's fixture (used by LiveMatchView)
+  const userFixtureSimInput: SimulateMatchInput | null = useMemo(() => {
+    if (!playerFixture || !round) return null
+    const fixtureIndex = round.fixtures.indexOf(playerFixture)
+    return {
+      homeClubId: playerFixture.homeClubId,
+      awayClubId: playerFixture.awayClubId,
+      venue: playerFixture.venue,
+      venueId: playerFixture.venueId,
+      matchDay: playerFixture.matchDay,
+      round: currentRound,
+      players,
+      clubs,
+      seed: rngSeed + currentRound * 100 + (fixtureIndex >= 0 ? fixtureIndex : 0),
+      matchRules: settings.matchRules,
+      realism: settings.realism,
+      injuryFrequency: settings.injuryFrequency,
+    }
+  }, [playerFixture, round, currentRound, players, clubs, rngSeed, settings])
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3">
@@ -662,11 +666,19 @@ export function MatchDayPage() {
             <Settings2 className="h-4 w-4" />
             {fixtureEditorOpen ? 'Hide Fixture Editor' : 'Edit Fixture'}
           </Button>
-          {isCurrentRound && !roundPlayed && (
-            <Button onClick={handleSimRound} className="flex items-center gap-2">
-              <Play className="h-4 w-4" />
-              Simulate Round
-            </Button>
+          {isCurrentRound && !roundPlayed && !liveMatchActive && (
+            <>
+              {playerFixture && userFixtureSimInput && (
+                <Button variant="secondary" onClick={handlePlayLive} className="flex items-center gap-2">
+                  <Eye className="h-4 w-4" />
+                  Play Live
+                </Button>
+              )}
+              <Button onClick={handleSimRound} className="flex items-center gap-2">
+                <Play className="h-4 w-4" />
+                Simulate Round
+              </Button>
+            </>
           )}
         </div>
       </div>
@@ -678,6 +690,17 @@ export function MatchDayPage() {
             {(round.byeClubIds ?? []).map((id) => clubs[id]?.abbreviation ?? id).join(', ')}
           </CardContent>
         </Card>
+      )}
+
+      {liveMatchActive && playerFixture && userFixtureSimInput && (
+        <LiveMatchView
+          simInput={userFixtureSimInput}
+          userClubId={playerClubId}
+          homeClub={clubs[playerFixture.homeClubId]}
+          awayClub={clubs[playerFixture.awayClubId]}
+          onComplete={handleLiveMatchComplete}
+          onCancel={() => setLiveMatchActive(false)}
+        />
       )}
 
       {fixtureEditorOpen && (
@@ -889,6 +912,17 @@ export function MatchDayPage() {
                       <div className="flex items-center gap-2">
                         {isUserMatch && <Badge>Your Match</Badge>}
                         {isSelected && <Badge variant="secondary">Previewing</Badge>}
+                        {fixture.broadcastChannel && fixture.broadcastChannel !== 'None' && (
+                          <span
+                            className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getBroadcastChannelColor(fixture.broadcastChannel)}`}
+                            title={`${getBroadcastChannelLabel(fixture.broadcastChannel)} — ${getBroadcastTierLabel(fixture.broadcastTier)}`}
+                          >
+                            {getBroadcastChannelShort(fixture.broadcastChannel)}
+                            {fixture.broadcastTier === 'marquee' && (
+                              <Star className="ml-0.5 h-2.5 w-2.5 fill-current" />
+                            )}
+                          </span>
+                        )}
                         {fixture.scheduledTime && (
                           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                             <Clock className="h-3 w-3" />
@@ -959,6 +993,16 @@ export function MatchDayPage() {
                   <span className="inline-flex items-center gap-1"><Calendar className="h-3 w-3" />{MATCH_DAY_LABELS[selectedFixture.matchDay ?? 'Saturday-Twilight']}</span>
                   {selectedFixture.scheduledTime ? <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" />{selectedFixture.scheduledTime}</span> : null}
                   <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{selectedFixture.venue}</span>
+                  {selectedFixture.broadcastChannel && selectedFixture.broadcastChannel !== 'None' && (
+                    <span className={`inline-flex items-center gap-1 font-medium ${getBroadcastTierColor(selectedFixture.broadcastTier)}`}>
+                      <span
+                        className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getBroadcastChannelColor(selectedFixture.broadcastChannel)}`}
+                      >
+                        {getBroadcastChannelShort(selectedFixture.broadcastChannel)}
+                      </span>
+                      {getBroadcastTierLabel(selectedFixture.broadcastTier)} broadcast
+                    </span>
+                  )}
                   {selectedFixtureResult?.result?.simulationContext?.attendance != null && (
                     <span className="inline-flex items-center gap-1">
                       <Users className="h-3 w-3" />

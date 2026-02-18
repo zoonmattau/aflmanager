@@ -73,6 +73,7 @@ export function processAIReSignings(
   _currentRound: number,
   currentDate: string,
   settings: GameSettings,
+  inflationIndex = 1.0,
 ): {
   signings: { playerId: string; clubId: string }[]
   news: NewsItem[]
@@ -129,7 +130,7 @@ export function processAIReSignings(
 
     for (let i = 0; i < reSignCount && i < scored.length; i++) {
       const { player } = scored[i]
-      const marketValue = calculatePlayerValue(player)
+      const marketValue = calculatePlayerValue(player, inflationIndex)
 
       // Offer at 90-115% of market value based on window
       let offerMultiplier = 1.0
@@ -139,7 +140,7 @@ export function processAIReSignings(
         case 'rebuilding': offerMultiplier = 0.90 + rng.next() * 0.10; break
       }
 
-      const offerAav = roundSalary(Math.max(MINIMUM_SALARY, marketValue * offerMultiplier))
+      const offerAav = roundSalary(Math.max(MINIMUM_SALARY * inflationIndex, marketValue * offerMultiplier))
 
       // Cap check
       if (settings.salaryCap) {
@@ -230,6 +231,7 @@ export function processAIFreeAgentBidding(
   playerClubId: string,
   settings: GameSettings,
   currentDate: string,
+  inflationIndex = 1.0,
 ): {
   updatedPlayers: Record<string, Player>
   signings: { playerId: string; newClubId: string }[]
@@ -255,7 +257,7 @@ export function processAIFreeAgentBidding(
     if (!freeAgent) continue
     if (freeAgent.clubId === 'retired') continue
 
-    const marketValue = calculatePlayerValue(freeAgent)
+    const marketValue = calculatePlayerValue(freeAgent, inflationIndex)
     const overall = getOverall(freeAgent)
 
     // Skip very low-rated players
@@ -310,7 +312,7 @@ export function processAIFreeAgentBidding(
 
       // Generate bid
       const bidMultiplier = 0.85 + rng.next() * 0.35
-      const bidAmount = roundSalary(Math.max(MINIMUM_SALARY, marketValue * bidMultiplier))
+      const bidAmount = roundSalary(Math.max(MINIMUM_SALARY * inflationIndex, marketValue * bidMultiplier))
 
       // Verify bid fits cap
       if (settings.salaryCap) {

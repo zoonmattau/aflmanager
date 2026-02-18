@@ -490,11 +490,12 @@ export function calculateMatchAttendance(
 export function calculateMatchDayRevenue(
   attendance: number,
   venueId: string,
+  inflationIndex = 1.0,
 ): number {
   const venue = VENUES[venueId]
   const multiplier = venue?.revenueMultiplier ?? 1.0
-  // $45 per attendee × revenue multiplier × 60% home team share
-  return Math.round(attendance * 45 * multiplier * 0.6)
+  // $45 (real) per attendee × revenue multiplier × 60% home team share
+  return Math.round(attendance * 45 * inflationIndex * multiplier * 0.6)
 }
 
 // ---------------------------------------------------------------------------

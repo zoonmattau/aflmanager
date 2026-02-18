@@ -43,7 +43,7 @@ export interface MatchPlayerStats {
 export interface MatchKeyEvent {
   quarter: number         // 1-4
   minute: number          // 0-30 (approx)
-  type: 'goal' | 'behind' | 'injury' | 'milestone'
+  type: 'goal' | 'behind' | 'injury' | 'milestone' | 'tactical-change'
   description: string
   playerId?: string
   clubId: string
@@ -57,6 +57,9 @@ export interface MatchResult {
   homePlayerStats: MatchPlayerStats[]
   awayPlayerStats: MatchPlayerStats[]
   keyEvents: MatchKeyEvent[]
+  midMatchAdjustments?: import('@/types/matchEvent').MidMatchAdjustment[]
+  midMatchInjuredPlayerIds?: string[]
+  effectiveAggressionLevel?: 'high' | 'medium' | 'low'
   simulationContext?: {
     weather: 'clear' | 'windy' | 'wet' | 'hot' | 'humid'
     groundCondition: 'firm' | 'dewy' | 'soft' | 'heavy' | 'muddy'

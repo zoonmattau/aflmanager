@@ -5,140 +5,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ArrowLeft, Heart, Zap, TrendingUp, Shield, AlertTriangle, Trophy, Info } from 'lucide-react'
+import { ArrowLeft, ArrowLeftRight, Heart, Zap, TrendingUp, Shield, AlertTriangle, Trophy, Info } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import type { Player, PlayerAttributes, PlayerJumperPreferenceLevel, PlayerPositionType } from '@/types/player'
+import type { Player, PlayerJumperPreferenceLevel, PlayerPositionType } from '@/types/player'
 import { getPlayerEligiblePositionTypes } from '@/engine/player/positionEligibility'
 import { getOverallRating, getPlayerStarRating } from '@/engine/player/playerRating'
 import { PlayerStarRating } from '@/components/player/PlayerStarRating'
 import { getPositionBadgeClass } from '@/lib/positionColor'
 import { ShortlistAssignMenu } from '@/components/shortlists/ShortlistManager'
-
-const ATTR_CATEGORIES: { label: string; attrs: { key: keyof PlayerAttributes; label: string }[] }[] = [
-  {
-    label: 'Kicking',
-    attrs: [
-      { key: 'kickingEfficiency', label: 'Efficiency' },
-      { key: 'kickingDistance', label: 'Distance' },
-      { key: 'setShot', label: 'Set Shot' },
-      { key: 'dropPunt', label: 'Drop Punt' },
-      { key: 'snap', label: 'Snap' },
-    ],
-  },
-  {
-    label: 'Handball',
-    attrs: [
-      { key: 'handballEfficiency', label: 'Efficiency' },
-      { key: 'handballDistance', label: 'Distance' },
-      { key: 'handballReceive', label: 'Receive' },
-    ],
-  },
-  {
-    label: 'Marking',
-    attrs: [
-      { key: 'markingOverhead', label: 'Overhead' },
-      { key: 'markingLeading', label: 'Leading' },
-      { key: 'markingContested', label: 'Contested' },
-      { key: 'markingUncontested', label: 'Uncontested' },
-    ],
-  },
-  {
-    label: 'Physical',
-    attrs: [
-      { key: 'speed', label: 'Speed' },
-      { key: 'acceleration', label: 'Acceleration' },
-      { key: 'endurance', label: 'Endurance' },
-      { key: 'strength', label: 'Strength' },
-      { key: 'agility', label: 'Agility' },
-      { key: 'leap', label: 'Leap' },
-      { key: 'recovery', label: 'Recovery' },
-    ],
-  },
-  {
-    label: 'Contested',
-    attrs: [
-      { key: 'tackling', label: 'Tackling' },
-      { key: 'contested', label: 'Contested Ball' },
-      { key: 'clearance', label: 'Clearance' },
-      { key: 'hardness', label: 'Hardness' },
-    ],
-  },
-  {
-    label: 'Game Sense',
-    attrs: [
-      { key: 'disposalDecision', label: 'Decision Making' },
-      { key: 'fieldKicking', label: 'Field Kicking' },
-      { key: 'positioning', label: 'Positioning' },
-      { key: 'creativity', label: 'Creativity' },
-      { key: 'anticipation', label: 'Anticipation' },
-      { key: 'composure', label: 'Composure' },
-    ],
-  },
-  {
-    label: 'Offensive',
-    attrs: [
-      { key: 'goalkicking', label: 'Goalkicking' },
-      { key: 'groundBallGet', label: 'Ground Ball' },
-      { key: 'insideForward', label: 'Inside Forward' },
-      { key: 'leadingPatterns', label: 'Leading' },
-      { key: 'scoringInstinct', label: 'Scoring Instinct' },
-    ],
-  },
-  {
-    label: 'Defensive',
-    attrs: [
-      { key: 'intercept', label: 'Intercept' },
-      { key: 'spoiling', label: 'Spoiling' },
-      { key: 'oneOnOne', label: '1-on-1' },
-      { key: 'zonalAwareness', label: 'Zonal Awareness' },
-      { key: 'rebounding', label: 'Rebounding' },
-    ],
-  },
-  {
-    label: 'Ruck',
-    attrs: [
-      { key: 'hitouts', label: 'Hitouts' },
-      { key: 'ruckCreative', label: 'Ruck Creativity' },
-      { key: 'followUp', label: 'Follow-up' },
-    ],
-  },
-  {
-    label: 'Mental',
-    attrs: [
-      { key: 'pressure', label: 'Pressure' },
-      { key: 'leadership', label: 'Leadership' },
-      { key: 'workRate', label: 'Work Rate' },
-      { key: 'consistency', label: 'Consistency' },
-      { key: 'determination', label: 'Determination' },
-      { key: 'teamPlayer', label: 'Team Player' },
-      { key: 'clutch', label: 'Clutch' },
-    ],
-  },
-  {
-    label: 'Set Pieces',
-    attrs: [
-      { key: 'centreBounce', label: 'Centre Bounce' },
-      { key: 'boundaryThrowIn', label: 'Throw-in' },
-      { key: 'stoppage', label: 'Stoppage' },
-    ],
-  },
-]
-
-function attrColor(val: number): string {
-  if (val >= 80) return 'text-green-500'
-  if (val >= 65) return 'text-emerald-400'
-  if (val >= 50) return 'text-yellow-500'
-  if (val >= 35) return 'text-orange-500'
-  return 'text-red-500'
-}
-
-function attrBgColor(val: number): string {
-  if (val >= 80) return 'bg-green-500'
-  if (val >= 65) return 'bg-emerald-400'
-  if (val >= 50) return 'bg-yellow-500'
-  if (val >= 35) return 'bg-orange-500'
-  return 'bg-red-500'
-}
+import { ATTR_CATEGORIES, attrColor, attrBgColor } from '@/lib/attributeCategories'
 
 function moraleLabel(morale: number): string {
   if (morale >= 90) return 'Ecstatic'
@@ -485,10 +360,15 @@ export function PlayerProfilePage() {
             )}
           </div>
         </div>
-        <div className="ml-auto text-right">
-          <div className="text-3xl font-bold">{overall}</div>
-          <PlayerStarRating stars={getPlayerStarRating(player, overall)} player={player} overall={overall} className="justify-end" />
-          <p className="text-xs text-muted-foreground">Overall</p>
+        <div className="ml-auto flex items-center gap-3">
+          <Button variant="outline" size="sm" onClick={() => navigate(`/compare/${player.id}`)}>
+            <ArrowLeftRight className="mr-1.5 h-3.5 w-3.5" /> Compare
+          </Button>
+          <div className="text-right">
+            <div className="text-3xl font-bold">{overall}</div>
+            <PlayerStarRating stars={getPlayerStarRating(player, overall)} player={player} overall={overall} className="justify-end" />
+            <p className="text-xs text-muted-foreground">Overall</p>
+          </div>
         </div>
       </div>
 
@@ -801,6 +681,32 @@ export function PlayerProfilePage() {
               </CardContent>
             </Card>
           ) : null}
+
+          {(() => {
+            const playerMilestones = (history.milestones ?? [])
+              .filter((m) => m.playerId === playerId)
+              .sort((a, b) => b.year - a.year || b.round - a.round)
+            return playerMilestones.length > 0 ? (
+              <Card>
+                <CardHeader className="py-3">
+                  <CardTitle className="text-sm">Milestones</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  {playerMilestones.map((m) => (
+                    <div key={m.id} className="flex items-center justify-between border-b border-border/40 pb-1 last:border-0">
+                      <div>
+                        <p className="font-medium">{m.threshold} {m.type === 'games-played' ? 'Games' : m.type === 'career-goals' ? 'Goals' : m.type === 'career-disposals' ? 'Disposals' : m.type === 'career-marks' ? 'Marks' : m.type === 'career-tackles' ? 'Tackles' : m.type}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {m.year}, Round {m.round}
+                        </p>
+                      </div>
+                      <span className="font-mono text-xs">{m.value}</span>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            ) : null
+          })()}
 
           <Card>
             <CardHeader className="py-3">

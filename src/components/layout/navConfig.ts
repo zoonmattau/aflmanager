@@ -33,7 +33,7 @@ export const navGroups: NavGroup[] = [
     label: 'Team',
     icon: Users,
     defaultTo: '/squad',
-    matchPaths: ['/squad', '/lineup', '/gameplan', '/training', '/reserves', '/reserves/match-preview', '/injury-report', '/jumper-management'],
+    matchPaths: ['/squad', '/lineup', '/gameplan', '/training', '/reserves', '/reserves/match-preview', '/injury-report', '/jumper-management', '/compare'],
     items: [
       { to: '/squad', label: 'Squad' },
       { to: '/jumper-management', label: 'Jumper Numbers' },
@@ -43,6 +43,7 @@ export const navGroups: NavGroup[] = [
       { to: '/reserves', label: 'Reserves' },
       { to: '/reserves/match-preview', label: 'Reserves Preview' },
       { to: '/injury-report', label: 'Injuries' },
+      { to: '/compare', label: 'Compare' },
     ],
   },
   {
@@ -50,18 +51,20 @@ export const navGroups: NavGroup[] = [
     label: 'Season',
     icon: Swords,
     defaultTo: '/fixture',
-    matchPaths: ['/fixture', '/match', '/ladder', '/league', '/records', '/calendar', '/state-leagues', '/offseason', '/development-report', '/tribunal', '/preseason-preview'],
+    matchPaths: ['/fixture', '/match', '/ladder', '/league', '/records', '/history', '/calendar', '/state-leagues', '/offseason', '/development-report', '/tribunal', '/preseason-preview', '/rules'],
     items: [
       { to: '/fixture', label: 'Fixture' },
       { to: '/ladder', label: 'Ladder' },
       { to: '/league', label: 'League' },
       { to: '/records', label: 'Records' },
+      { to: '/history', label: 'History' },
       { to: '/calendar', label: 'Calendar' },
       { to: '/tribunal', label: 'Tribunal' },
       { to: '/state-leagues', label: 'State Leagues' },
       { to: '/preseason-preview', label: 'Season Preview' },
       { to: '/offseason', label: 'Offseason' },
       { to: '/development-report', label: 'Dev Report' },
+      { to: '/rules', label: 'Rulebook' },
     ],
   },
   {

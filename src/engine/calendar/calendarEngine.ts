@@ -333,6 +333,60 @@ export function getUpcomingEvents(calendar: GameCalendar, count: number = 5): Ga
   return calendar.events.filter((e) => !e.resolved).slice(0, count)
 }
 
+// ---------------------------------------------------------------------------
+// Deadline countdown helpers
+// ---------------------------------------------------------------------------
+
+export type DeadlineUrgency = 'urgent' | 'warning' | 'normal'
+
+export interface DeadlineCountdown {
+  eventId: string
+  type: GameEventType
+  title: string
+  date: string
+  daysUntil: number
+  urgency: DeadlineUrgency
+  linkTo: string
+}
+
+const DEADLINE_EVENT_TYPES = new Set<GameEventType>([
+  'contract-deadline', 'trade-deadline', 'draft', 'tribunal',
+])
+
+const DEADLINE_LINKS: Partial<Record<GameEventType, string>> = {
+  'contract-deadline': '/contracts',
+  'trade-deadline': '/trade',
+  'draft': '/draft',
+  'tribunal': '/squad',
+}
+
+/**
+ * Extract upcoming deadline-type events from an event list, annotated with
+ * days-until and urgency classification. Accepts a raw event array so callers
+ * can pass effectiveEvents (calendar + injected milestone events).
+ */
+export function getDeadlineCountdowns(
+  events: GameEvent[],
+  currentDate: string,
+  limit = 5,
+): DeadlineCountdown[] {
+  return events
+    .filter((e) => !e.resolved && DEADLINE_EVENT_TYPES.has(e.type) && e.date >= currentDate)
+    .slice(0, limit)
+    .map((e) => {
+      const daysUntil = diffDays(currentDate, e.date)
+      return {
+        eventId: e.id,
+        type: e.type,
+        title: e.title,
+        date: e.date,
+        daysUntil,
+        urgency: daysUntil <= 2 ? 'urgent' : daysUntil <= 7 ? 'warning' : 'normal',
+        linkTo: DEADLINE_LINKS[e.type] ?? '/',
+      }
+    })
+}
+
 /** Mark all events up to and including a date as resolved. */
 export function resolveEventsUpTo(calendar: GameCalendar, date: string): GameEvent[] {
   const resolved: GameEvent[] = []

@@ -12,6 +12,7 @@ import type {
 } from '@/types/game'
 import type { SpecialEventsSettings, OriginConfig } from '@/types/specialEvents'
 import { computeDefaultGameStartDate } from '@/engine/calendar/calendarEngine'
+import { DEFAULT_INFLATION_SETTINGS } from '@/engine/inflation/inflationEngine'
 
 // ---------------------------------------------------------------------------
 // Default realistic match time slots (expanded AFL-style pool spanning Thu–Mon)
@@ -416,6 +417,7 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   listRules: { ...DEFAULT_LIST_RULES },
   salaryCap: true,
   salaryCapAmount: 18_300_000,
+  inflation: { ...DEFAULT_INFLATION_SETTINGS },
   realism: { ...DEFAULT_REALISM },
   injuryFrequency: 'medium',
   developmentSpeed: 'normal',
@@ -460,6 +462,7 @@ export function createDefaultSettings(): GameSettings {
     ladderPoints: { ...DEFAULT_GAME_SETTINGS.ladderPoints },
     listRules: { ...DEFAULT_GAME_SETTINGS.listRules },
     realism: { ...DEFAULT_REALISM },
+    inflation: { ...DEFAULT_INFLATION_SETTINGS },
     finals: { ...DEFAULT_GAME_SETTINGS.finals },
     fixtureSchedule: {
       matchSlots: DEFAULT_MATCH_SLOTS.map((s) => ({ ...s })),

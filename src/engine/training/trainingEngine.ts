@@ -313,6 +313,7 @@ export function runTrainingSessions(
   staff: Record<string, StaffMember>,
   facilities: ClubFacilities,
   rng: SeededRNG,
+  budgetMultiplier?: number,
 ): TrainingResult[] {
   // Build a map of player results to accumulate across multiple sessions
   const resultMap: Record<
@@ -377,7 +378,8 @@ export function runTrainingSessions(
           devRate *
           ageFactor *
           getPlayerTrainingFocusAttributeMultiplier(player.trainingFocus, attr) *
-          ceilingDiminish
+          ceilingDiminish *
+          (budgetMultiplier ?? 1)
 
         const prev = (result.attributeChanges[attr] as number | undefined) ?? 0
         result.attributeChanges[attr] = prev + gain

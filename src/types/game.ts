@@ -20,6 +20,8 @@ import type { ClubGameplan } from './club'
 import type { LadderPrimarySort, LadderTieBreaker } from './customLeague'
 import type { MultiTierState } from '@/engine/league/multiTierEngine'
 import type { SpecialEventsSettings, SpecialEventsState } from './specialEvents'
+import type { FacilityUpgradeTracker } from './facilityUpgrade'
+import type { BoardApprovalTracker } from './boardApproval'
 
 export type GamePhase =
   | 'setup'           // Choosing club
@@ -297,6 +299,8 @@ export interface Shortlist {
 
 export interface GameSettings {
   difficulty: 'easy' | 'medium' | 'hard' | 'custom'
+  /** Annual CPI / inflation configuration */
+  inflation?: import('@/engine/inflation/inflationEngine').InflationSettings
   simSpeed: 'instant' | 'fast' | 'normal'
   leagueMode: 'real' | 'fictional' | 'custom'
   leagueNamingTemplate: 'real-life' | 'fictional'
@@ -422,6 +426,9 @@ export interface GameState {
   // Historical tracking
   history: GameHistory
 
+  // League evolution (expansion / contraction / relocation history)
+  leagueEvolutionHistory?: import('@/types/leagueEvolution').LeagueEvolutionHistory
+
   // League configuration (expansion teams, custom clubs)
   leagueConfig: LeagueConfig
 
@@ -474,9 +481,23 @@ export interface GameState {
   // Multi-tier custom league tracking
   multiTierState: MultiTierState | null
 
+  // Facility upgrade tracking
+  facilityUpgrades: FacilityUpgradeTracker
+
+  // Board approval tracking
+  boardApprovals: BoardApprovalTracker
+
+  // Board instability & spill events
+  boardInstability: import('@/types/boardApproval').BoardInstabilityState | null
+
   // Global blocking simulation/loading UX
   simulation: SimulationStatus
   jumperManagement: JumperManagementState
+
+  /** Cumulative inflation index (1.0 = base year). Compounds annually. */
+  inflationIndex: number
+  /** Year-by-year history of inflation index and actual rate applied. */
+  inflationHistory: import('@/engine/inflation/inflationEngine').InflationYearRecord[]
 }
 
 export interface WeeklyGameplan {

@@ -17,8 +17,13 @@ import {
   getYear,
   getLastOfMonth,
   getMonthName,
+  diffDays,
 } from '@/engine/calendar/calendarEngine'
 import type { GameEventType } from '@/types/calendar'
+
+const DEADLINE_EVENT_TYPES = new Set<GameEventType>([
+  'contract-deadline', 'trade-deadline', 'draft', 'tribunal',
+])
 
 const EVENT_COLORS: Record<GameEventType, string> = {
   match: 'bg-blue-500',
@@ -240,15 +245,31 @@ export function CalendarPage() {
                 <p className="text-sm text-muted-foreground">No upcoming events.</p>
               ) : (
                 <div className="space-y-2">
-                  {upcoming.map((evt) => (
-                    <div key={evt.id} className="flex items-start gap-2">
-                      <div className={`h-2 w-2 rounded-full mt-1.5 flex-shrink-0 ${EVENT_COLORS[evt.type]}`} />
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{evt.title}</p>
-                        <p className="text-[10px] text-muted-foreground">{formatDate(evt.date)}</p>
+                  {upcoming.map((evt) => {
+                    const isDeadline = DEADLINE_EVENT_TYPES.has(evt.type)
+                    const daysUntil = diffDays(currentDate, evt.date)
+                    const urgency = isDeadline
+                      ? daysUntil <= 2 ? 'urgent' : daysUntil <= 7 ? 'warning' : null
+                      : null
+                    return (
+                      <div key={evt.id} className="flex items-start gap-2">
+                        <div className={`h-2 w-2 rounded-full mt-1.5 flex-shrink-0 ${EVENT_COLORS[evt.type]}`} />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium truncate">{evt.title}</p>
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-[10px] text-muted-foreground">{formatDate(evt.date)}</p>
+                            {urgency && (
+                              <span className={`text-[10px] font-semibold ${
+                                urgency === 'urgent' ? 'text-red-500' : 'text-amber-500'
+                              }`}>
+                                {daysUntil === 0 ? 'Today!' : daysUntil === 1 ? '1 day' : `${daysUntil} days`}
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </CardContent>

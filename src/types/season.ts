@@ -8,6 +8,12 @@ export type MatchDay =
   | 'Sunday-Twilight'
   | 'Monday'
 
+/** Television/streaming channel airing the match. */
+export type BroadcastChannel = 'FTA' | 'PayTV' | 'Streaming' | 'None'
+
+/** How premium the broadcast timeslot is. */
+export type BroadcastTier = 'marquee' | 'prime' | 'standard' | 'non-broadcast'
+
 export interface Fixture {
   homeClubId: string
   awayClubId: string
@@ -17,6 +23,8 @@ export interface Fixture {
   scheduledTime?: string  // e.g. "7:25pm"
   isBlockbuster?: boolean
   blockbusterName?: string   // e.g. "ANZAC Day"
+  broadcastChannel?: BroadcastChannel
+  broadcastTier?: BroadcastTier
 }
 
 export interface Round {

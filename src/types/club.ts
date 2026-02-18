@@ -30,6 +30,16 @@ export interface ClubFinances {
   revenue: number
   expenses: number
   balance: number
+  /** Running match-day gate total accumulated during the season */
+  matchDayAccumulated?: number
+  /** Performance momentum modifier from recent form (-0.10 to +0.15) */
+  momentumModifier?: number
+  /** Last season's revenue breakdown */
+  seasonRevenue?: import('@/engine/clubs/clubManagement').RevenueBreakdown
+  /** Last season's expense breakdown */
+  seasonExpenses?: import('@/engine/clubs/clubManagement').ExpenseBreakdown
+  /** Net profit/loss from last season */
+  seasonPnL?: number
 }
 
 export interface DraftPick {
@@ -107,6 +117,46 @@ export interface ClubHallOfFameEntry {
   primaryPosition: import('./player').PlayerPositionType
 }
 
+// ---------------------------------------------------------------------------
+// Media pressure
+// ---------------------------------------------------------------------------
+
+export type PressureStoryType =
+  | 'losing-streak'
+  | 'blowout-loss'
+  | 'controversial-trade'
+  | 'player-unrest'
+  | 'discipline'
+
+export interface MediaPressureStory {
+  id: string
+  type: PressureStoryType
+  headline: string
+  severity: 'minor' | 'moderate' | 'major'
+  points: number
+  expiresRound: number
+}
+
+export interface MediaPressure {
+  score: number                     // 0-100
+  lastScore: number                 // score from previous update, for trend
+  activeStories: MediaPressureStory[]
+}
+
+// ---------------------------------------------------------------------------
+// Budget allocation
+// ---------------------------------------------------------------------------
+
+export type BudgetDepartment = 'facilities' | 'coaching' | 'recruiting' | 'medical' | 'scouting'
+
+export interface ClubBudgetAllocation {
+  facilities: number   // 5-50, percentage
+  coaching: number     // 5-50, percentage
+  recruiting: number   // 5-50, percentage
+  medical: number      // 5-50, percentage
+  scouting: number     // 5-50, percentage
+}
+
 export interface Club {
   id: string
   name: string              // e.g. "Richmond"
@@ -134,6 +184,8 @@ export interface Club {
   secondaryHomeGrounds?: string[]
   guernseyStyle?: GuernseyStyle
   rivalryClubIds?: string[]
+  budgetAllocation?: ClubBudgetAllocation
+  mediaPressure?: MediaPressure
   /** AI personality for non-player clubs */
   aiPersonality: {
     competitiveWindow: 'win-now' | 'balanced' | 'rebuilding'

@@ -403,7 +403,7 @@ export function generateNegotiationDemand(
   _isReSigning: boolean,
   rng: SeededRNG,
   ladderPosition: number,
-  options?: { playerLoyaltyEnabled?: boolean },
+  options?: { playerLoyaltyEnabled?: boolean; inflationIndex?: number },
 ): NegotiationOffer {
   const demand = generateContractDemand(player, clubId, rng, options)
 
@@ -456,7 +456,7 @@ export function startNegotiation(
   currentDate: string,
   rng: SeededRNG,
   ladderPosition: number,
-  options?: { playerLoyaltyEnabled?: boolean },
+  options?: { playerLoyaltyEnabled?: boolean; inflationIndex?: number },
   teamCount?: number,
 ): StartNegotiationResult {
   // Check willingness based on professionalism + ambition

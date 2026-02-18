@@ -15,12 +15,14 @@ import type {
 } from '@/types/history'
 import type { OffseasonCalendarState } from '@/engine/offseason/offseasonCalendar'
 import type { FreeAgencyMarketState } from '@/engine/contracts/freeAgencyMarket'
+import type { PracticeMatchFixture, PracticeMatchResult } from '@/engine/season/preseasonEngine'
 import type { WeekSchedule } from '@/types/calendar'
 import type { TrainingFocus } from '@/engine/training/trainingEngine'
 import { recordDraftPick } from '@/engine/history/historyEngine'
 import { getCoachingImpact } from '@/engine/staff/staffEngine'
 import { autoSelectLeadership } from '@/engine/leadership/leadershipEngine'
 import { getCultureDevelopmentModifier } from '@/engine/culture/cultureEngine'
+import { getAISpendingConservatism } from '@/engine/clubs/financeEngine'
 
 import {
   processEndOfSeasonContracts,
@@ -69,6 +71,12 @@ export type OffseasonPhase =
   | 'practice-matches' // Practice matches
   | 'ready' // Ready for new season
 
+export interface PracticeMatchState {
+  scheduled: PracticeMatchFixture[]
+  results: PracticeMatchResult[]
+  delegated: boolean
+}
+
 export interface OffseasonState {
   currentPhase: OffseasonPhase
   completedPhases: OffseasonPhase[]
@@ -79,6 +87,9 @@ export interface OffseasonState {
   venueConfig?: import('@/types/venue').ClubVenueConfig
   calendarState?: OffseasonCalendarState
   freeAgencyMarket?: FreeAgencyMarketState
+  practiceMatchState?: PracticeMatchState
+  /** Scheduled league evolution events to apply at the start of the following season. */
+  pendingLeagueEvolution?: import('@/types/leagueEvolution').LeagueEvolutionEvent[]
 }
 
 // ---------------------------------------------------------------------------
@@ -433,6 +444,7 @@ export function initOffseason(): OffseasonState {
     retiredPlayerIds: [],
     delistedPlayerIds: [],
     newDraftees: [],
+    practiceMatchState: { scheduled: [], results: [], delegated: false },
   }
 }
 
@@ -1132,6 +1144,10 @@ export function processAIFreeAgency(
         : { maxTotal: 44, maxSenior: 38, maxRookie: 6, minSenior: 0, minRookie: 0, minDraftSelections: 1 }
       if (!canAddToSeniorList(updatedPlayers, club.id, faConstraints)) continue
 
+      // Balance-based conservatism: low-balance clubs skip expensive free agents
+      const conservatism = getAISpendingConservatism(club.finances.balance)
+      if (conservatism < 1.0 && marketValue > 400_000 * conservatism) continue
+
       // Evaluate interest based on positional need
       const posCounts = getPositionalCounts(updatedPlayers, club.id)
       const primaryCount = posCounts[freeAgent.position.primary] ?? 0
@@ -1274,6 +1290,7 @@ export function processAIDraft(
     retirementLegacies: [],
     originHistory: [],
     recordsBook: createDefaultRecordsBook(),
+    seasonArchives: [],
   }
 
   // Track which prospects have been drafted

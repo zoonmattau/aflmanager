@@ -265,6 +265,7 @@ export function healInjuries(
   players: Record<string, Player>,
   currentDate?: string,
   medicalImpactByClub?: Record<string, MedicalStaffImpact>,
+  medicalCentreLevelByClub?: Record<string, number>,
 ): string[] {
   const recovered: string[] = []
 
@@ -284,12 +285,16 @@ export function healInjuries(
     const baseStep = 100 / Math.max(1, injury.initialWeeks ?? injury.weeksRemaining)
     const severityDrag = injury.severity === 'severe' ? 0.8 : injury.severity === 'major' ? 0.9 : 1
     const recurringDrag = injury.recurring ? 0.88 : 1
+    // Medical centre facility modifier: level 3 = 1.0x (baseline), level 5 = 1.1x, level 1 = 0.9x
+    const facilityLevel = medicalCentreLevelByClub?.[player.clubId] ?? 3
+    const facilityRecoveryMod = 1 + (facilityLevel - 3) * 0.05
     const weeklyRecovery =
       baseStep *
       (1 + professionalismBoost + durabilityBoost + agePenalty + fatiguePenalty) *
       severityDrag *
       recurringDrag *
-      (medical?.rehabProgressMultiplier ?? 1)
+      (medical?.rehabProgressMultiplier ?? 1) *
+      facilityRecoveryMod
 
     injury.recoveryProgress = (injury.recoveryProgress ?? 0) + Math.max(8, weeklyRecovery)
     injury.gamesMissed = (injury.gamesMissed ?? 0) + 1

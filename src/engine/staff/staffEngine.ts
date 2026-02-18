@@ -397,6 +397,7 @@ export function fireStaff(
 export function getCoachingImpact(
   staff: StaffMember[],
   clubId: string,
+  budgetMultiplier?: number,
 ): CoachingImpact {
   const clubStaff = staff.filter((s) => s.clubId === clubId)
 
@@ -515,12 +516,19 @@ export function getCoachingImpact(
     impact.defensiveDev = defensiveCoach.ratings.development / 100
   }
 
+  // Apply budget multiplier to development and match bonuses
+  if (budgetMultiplier != null && budgetMultiplier !== 1) {
+    impact.developmentBonus *= budgetMultiplier
+    impact.matchBonus *= budgetMultiplier
+  }
+
   return impact
 }
 
 export function getMedicalStaffImpact(
   staff: StaffMember[],
   clubId: string,
+  budgetMultiplier?: number,
 ): MedicalStaffImpact {
   const clubStaff = staff.filter((s) => s.clubId === clubId)
   const physio = clubStaff.find((s) => s.role === 'physio')
@@ -535,10 +543,13 @@ export function getMedicalStaffImpact(
   const rehabScore = physioSkill * 0.6 + doctorSkill * 0.25 + conditioningSkill * 0.15
   const recurrenceScore = doctorSkill * 0.5 + physioSkill * 0.35 + conditioningSkill * 0.15
 
+  const bm = budgetMultiplier ?? 1
+
   return {
-    injuryRiskMultiplier: Math.max(0.72, Math.min(1.05, 1 - (preventionScore - 50) / 260)),
-    rehabProgressMultiplier: Math.max(0.82, Math.min(1.25, 1 + (rehabScore - 50) / 220)),
-    recurrenceRiskMultiplier: Math.max(0.68, Math.min(1.08, 1 - (recurrenceScore - 50) / 240)),
+    // Budget multiplier scales the deviation from baseline (1.0)
+    injuryRiskMultiplier: Math.max(0.72, Math.min(1.05, 1 - (preventionScore - 50) / 260 * bm)),
+    rehabProgressMultiplier: Math.max(0.82, Math.min(1.25, 1 + (rehabScore - 50) / 220 * bm)),
+    recurrenceRiskMultiplier: Math.max(0.68, Math.min(1.08, 1 - (recurrenceScore - 50) / 240 * bm)),
   }
 }
 

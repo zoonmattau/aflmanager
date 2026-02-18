@@ -21,7 +21,7 @@ import type { TradeInboxItem, TradeNegotiationOffer } from '@/types/trade'
 import type { ScheduleSlot } from '@/types/calendar'
 import type { TrainingFocus } from '@/engine/training/trainingEngine'
 import type { GameHistory } from '@/types/history'
-import type { Club } from '@/types/club'
+import type { Club, ClubBudgetAllocation, ClubFacilities } from '@/types/club'
 import type { LeagueConfig } from '@/types/expansion'
 import type {
   LineupSlot,
@@ -44,6 +44,7 @@ import { computeWeeklyPowerRankings } from '@/engine/season/powerRankings'
 import { buildSeasonCalibrationReport } from '@/engine/season/calibrationReport'
 import { generateFinalsRound, isSeasonComplete, getPremier } from '@/engine/season/finals'
 import { recordSeasonResult } from '@/engine/history/historyEngine'
+import { createSeasonArchive } from '@/engine/history/seasonArchive'
 import {
   createDefaultRecordsBook,
   normalizeRecordsBook,
@@ -96,6 +97,8 @@ import { simulateReservesRound } from '@/engine/stateLeague/reservesSimulation'
 import { createDefaultSettings, DEFAULT_REALISM } from '@/engine/core/defaultSettings'
 import { autoSelectLeadership, getTeamLeadershipRating, getLeadershipMoraleBonus } from '@/engine/leadership/leadershipEngine'
 import { updateClubCulture, getCultureMoraleBuffer, createDefaultCulture } from '@/engine/culture/cultureEngine'
+import { calculateMomentumModifier, processSeasonEndFinances } from '@/engine/clubs/financeEngine'
+import { advanceInflationIndex, DEFAULT_INFLATION_SETTINGS } from '@/engine/inflation/inflationEngine'
 import type { ClubLeadership } from '@/types/club'
 import { getDevelopmentSpeedMultiplier } from '@/engine/core/difficultyPresets'
 import {
@@ -104,8 +107,64 @@ import {
   applyVenueAllocationsToFixture,
   resolveVenueId,
   updateFanSatisfaction,
+  calculateMatchDayRevenue,
 } from '@/engine/venues/venueEngine'
 import { createInitialClubIdentity } from '@/engine/clubs/identity'
+import {
+  updateMediaPressure,
+  generateRoundPressureStories,
+  generateTradePressureStory,
+  generatePlayerUnrestPressureStory,
+  getMediaPressureMoraleEffect,
+} from '@/engine/media/pressureEngine'
+import {
+  generateAIBudgetAllocation,
+  getClubBudgetAllocation,
+  getBudgetMultiplier,
+  validateBudgetAllocation,
+} from '@/engine/clubs/budgetEngine'
+import {
+  assignRoundBroadcasts,
+  getBroadcastRevenue,
+  getBroadcastSatisfactionSwing,
+} from '@/engine/season/broadcastEngine'
+import {
+  evaluateLeagueEvolution,
+  buildExpansionClub,
+  applyContraction,
+  applyRelocation,
+  applyMerger,
+} from '@/engine/leagueEvolution/leagueEvolutionEngine'
+import type {
+  LeagueExpansionEvent,
+  LeagueContractionEvent,
+  LeagueRelocationEvent,
+  LeagueMergerEvent,
+} from '@/types/leagueEvolution'
+import {
+  computeApprovalProbability,
+  canRequestUpgrade,
+  requestFacilityUpgrade as requestFacilityUpgradeEngine,
+  tickFacilityUpgrades,
+  tickAIFacilityUpgrades,
+} from '@/engine/clubs/facilityUpgradeEngine'
+import {
+  needsBoardApproval,
+  computeBoardApproval,
+  rollBoardApproval,
+  isApprovalOnCooldown,
+} from '@/engine/board/boardApprovalEngine'
+import type { BoardApprovalResult } from '@/types/boardApproval'
+import {
+  computeInstabilityScore,
+  shouldCheckForSpill,
+  rollForSpillEvent,
+  generateSpillEvent,
+  resolveSpillEvent as resolveSpillEventEngine,
+  updateConsecutiveLosses,
+  createInitialBoardInstabilityState,
+  resetSeasonInstability,
+} from '@/engine/board/boardInstabilityEngine'
 import { VENUES } from '@/data/venues'
 import {
   initOffseason,
@@ -117,6 +176,13 @@ import {
   processPreseason,
   startNewSeason,
 } from '@/engine/season/offseasonFlow'
+import type { PracticeMatchState } from '@/engine/season/offseasonFlow'
+import {
+  buildPracticeMatchFixture,
+  simulatePracticeMatch,
+  applyPracticeMatchEffects,
+} from '@/engine/season/preseasonEngine'
+import type { PracticeMatchResult } from '@/engine/season/preseasonEngine'
 import { mapPrimaryPositionToPreferredRole, pickArchetypeForRole } from '@/engine/player/roles'
 import { getOverallRating, getPlayerStarRating, syncPlayerPositionRatings } from '@/engine/player/playerRating'
 import {
@@ -685,6 +751,7 @@ const DEFAULT_HISTORY: GameHistory = {
   retirementLegacies: [],
   originHistory: [],
   recordsBook: createDefaultRecordsBook(),
+  seasonArchives: [],
 }
 
 const DEFAULT_META: GameMeta = {
@@ -794,6 +861,9 @@ const createDefaultState = (): GameState => ({
   },
   specialEvents: null,
   multiTierState: null,
+  facilityUpgrades: { requests: [], activeConstructionByClub: {}, denialCooldowns: {} },
+  boardApprovals: { records: [], denialCooldowns: {} },
+  boardInstability: createInitialBoardInstabilityState(),
   manager: {
     name: 'Manager',
     employmentStatus: 'employed',
@@ -810,6 +880,8 @@ const createDefaultState = (): GameState => ({
     seasonYear: null,
     lastCompletedYear: null,
   },
+  inflationIndex: 1.0,
+  inflationHistory: [],
 })
 
 function getAvailableProspectsForDraft(
@@ -1278,6 +1350,10 @@ interface GameActions {
   completeJumperManagement: () => { success: boolean; error?: string }
   setPlayerTrainingFocus: (playerId: string, focus: PlayerTrainingFocus | null) => { success: boolean; error?: string }
   updateClub: (clubId: string, updates: Partial<Club>) => void
+  updateBudgetAllocation: (allocation: ClubBudgetAllocation) => { success: boolean; error?: string }
+  requestFacilityUpgrade: (facility: keyof ClubFacilities) => {
+    success: boolean; approved: boolean; reason: string; probability?: number
+  }
   setClubLeadership: (clubId: string, leadership: ClubLeadership) => void
   addMatchResult: (match: Match) => void
   updateLadder: (ladder: LadderEntry[]) => void
@@ -1336,8 +1412,9 @@ interface GameActions {
   generateWeeklyCounterGameplanForUser: () => { success: boolean; error?: string }
   setWeeklyMatchupTactics: (tactics: WeeklyMatchupTactics) => { success: boolean; error?: string }
   clearWeeklyMatchupTactics: () => void
-  hireStaffMember: (staffId: string, contractYears: number) => void
+  hireStaffMember: (staffId: string, contractYears: number) => { success: boolean; error?: string }
   fireStaffMember: (staffId: string) => void
+  previewBoardApproval: (category: 'contract' | 'trade' | 'staff-hire', params: { aav?: number; userSalaryRetention?: number; salary?: number }) => BoardApprovalResult
   saveGame: () => void
   sendToReserves: (playerId: string) => void
   recallFromReserves: (playerId: string) => void
@@ -1379,7 +1456,7 @@ interface GameActions {
   simSpecialEvent: (eventId: string) => { result: import('@/types/specialEvents').SpecialEventMatchResult | null }
 
   // Season progression
-  simCurrentRound: (options?: { internal?: boolean }) => { userMatch: Match | null }
+  simCurrentRound: (options?: { internal?: boolean; precomputedUserMatch?: Match }) => { userMatch: Match | null }
   simToEnd: () => void
   startFinals: () => void
   simFinalsRound: () => { userMatch: Match | null; seasonOver: boolean }
@@ -1393,6 +1470,12 @@ interface GameActions {
   acceptVenueOffer: (offerId: string) => void
   rejectVenueOffer: (offerId: string) => void
   setSecondaryHomeGames: (count: number) => void
+
+  // Practice matches
+  schedulePracticeMatch: (type: 'friendly' | 'intra-squad', opponentClubId?: string) => void
+  simulatePracticeMatchAction: (fixtureId: string) => void
+  delegatePracticeMatchesToAssistant: () => void
+  cancelPracticeMatchFixture: (fixtureId: string) => void
 
   // Offseason sim controls
   simOffseasonHalfDay: () => { success: boolean; error?: string }
@@ -1537,6 +1620,13 @@ export const useGameStore = create<GameStore>()(
           club.culture = createDefaultCulture()
         }
 
+        // Initialize AI budget allocations for non-player clubs
+        for (const club of Object.values(clubsWithPicks)) {
+          if (club.id !== initialClubId) {
+            club.budgetAllocation = generateAIBudgetAllocation(club)
+          }
+        }
+
         // Generate staff for all clubs + a free agent pool
         const staffRecord: Record<string, import('@/types/staff').StaffMember> = {}
         const staffRng = new SeededRNG(seed + 7777)
@@ -1665,6 +1755,7 @@ export const useGameStore = create<GameStore>()(
             retirementLegacies: [],
             originHistory: [],
             recordsBook: createDefaultRecordsBook(),
+            seasonArchives: [],
           }
           state.jumperManagement = {
             pending: true,
@@ -2065,6 +2156,92 @@ export const useGameStore = create<GameStore>()(
             Object.assign(existing, updates)
           }
         })
+      },
+
+      updateBudgetAllocation: (allocation: ClubBudgetAllocation) => {
+        const state = get()
+        const clubId = state.playerClubId
+        if (!clubId) return { success: false, error: 'No club selected' }
+
+        const validation = validateBudgetAllocation(allocation)
+        if (!validation.valid) {
+          return { success: false, error: validation.error }
+        }
+
+        set((s) => {
+          const club = s.clubs[clubId]
+          if (club) {
+            club.budgetAllocation = { ...allocation }
+          }
+        })
+        return { success: true }
+      },
+
+      requestFacilityUpgrade: (facility: keyof ClubFacilities) => {
+        const state = get()
+        const club = state.clubs[state.playerClubId]
+        if (!club) return { success: false, approved: false, reason: 'Club not found' }
+
+        const tracker = state.facilityUpgrades ?? { requests: [], activeConstructionByClub: {}, denialCooldowns: {} }
+
+        // Check if upgrade is possible
+        const check = canRequestUpgrade(tracker, club, facility, state.currentDate)
+        if (!check.allowed) {
+          return { success: false, approved: false, reason: check.reason }
+        }
+
+        // Compute approval probability
+        const ladderIdx = state.ladder.findIndex((e) => e.clubId === state.playerClubId)
+        const ladderPosition = ladderIdx >= 0 ? ladderIdx + 1 : 18
+        const { probability } = computeApprovalProbability(
+          club, facility, check.cost, state.manager.jobSecurity, ladderPosition,
+        )
+
+        // Build a deterministic seed for this request
+        const facilityKeys: (keyof ClubFacilities)[] = [
+          'trainingGround', 'gym', 'medicalCentre', 'recoveryPool', 'analysisSuite', 'youthAcademy',
+        ]
+        const facilityIndex = facilityKeys.indexOf(facility)
+        const rng = new SeededRNG(state.rngSeed + state.currentRound * 9973 + facilityIndex)
+
+        const { updatedTracker, request, approved } = requestFacilityUpgradeEngine(
+          tracker, club, facility, probability, rng, state.currentDate,
+        )
+
+        set((s) => {
+          s.facilityUpgrades = updatedTracker
+
+          if (approved) {
+            // Deduct cost from club balance
+            const c = s.clubs[s.playerClubId]
+            if (c) c.finances.balance -= request.cost
+          }
+
+          // Push news item
+          const facilityLabel = facility.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase()).trim()
+          appendNewsItem(s, {
+            id: crypto.randomUUID(),
+            date: s.currentDate,
+            headline: approved
+              ? `${club.name} begins ${facilityLabel} upgrade`
+              : `${club.name} ${facilityLabel} upgrade denied by board`,
+            body: approved
+              ? `The board has approved the ${facilityLabel} upgrade from Level ${request.fromLevel} to Level ${request.toLevel}. Construction will take ${request.constructionWeeksTotal} weeks at a cost of $${request.cost.toLocaleString()}.`
+              : `The board has denied the request to upgrade the ${facilityLabel}. ${request.denialReason ?? ''}`,
+            category: 'general',
+            clubIds: [club.id],
+            playerIds: [],
+          })
+        })
+
+        return {
+          success: true,
+          approved,
+          reason: approved
+            ? `Upgrade approved! Construction begins (${request.constructionWeeksTotal} weeks).`
+            : request.denialReason ?? 'The board denied the upgrade.',
+          probability,
+        }
       },
 
       setClubLeadership: (clubId: string, leadership: ClubLeadership) => {
@@ -2721,6 +2898,13 @@ export const useGameStore = create<GameStore>()(
           return { success: false, error: consent.reason ?? 'A player refused the trade' }
         }
         const executed = executeTradeOffer(baseOffer, state.players, state.clubs, state.currentDate)
+        // Compute trade pressure before players move clubs
+        const playerClubIdForTrade = state.playerClubId
+        const playersLeavingUserClub = baseOffer.playerMoves
+          .filter((mv) => mv.fromClubId === playerClubIdForTrade)
+          .map((mv) => ({ id: mv.playerId, player: state.players[mv.playerId] }))
+          .filter((p) => p.player != null)
+
         set((s) => {
           s.players = executed.updatedPlayers
           s.clubs = executed.updatedClubs
@@ -2732,6 +2916,40 @@ export const useGameStore = create<GameStore>()(
           const allPlayers = Object.values(s.players)
           for (const club of Object.values(s.clubs)) {
             club.finances.currentSpend = syncClubCurrentSpend(allPlayers, club.id)
+          }
+
+          // Apply trade pressure for players leaving the user's club
+          const userClub = s.clubs[playerClubIdForTrade]
+          if (userClub) {
+            const tradeStories = []
+            for (const { player } of playersLeavingUserClub) {
+              if (!player) continue
+              const overallRating = getOverallRating(player)
+              const story = generateTradePressureStory(
+                overallRating,
+                `${player.firstName} ${player.lastName}`,
+                true,
+                s.currentRound,
+              )
+              if (story) tradeStories.push(story)
+            }
+            if (tradeStories.length > 0) {
+              userClub.mediaPressure = updateMediaPressure(
+                userClub.mediaPressure,
+                tradeStories,
+                s.currentRound,
+                false,
+              )
+              // Immediate morale hit from pressure spike
+              const moraleHit = getMediaPressureMoraleEffect(userClub.mediaPressure.score)
+              if (moraleHit !== 0) {
+                for (const p of Object.values(s.players)) {
+                  if (p.clubId === playerClubIdForTrade) {
+                    p.morale = Math.max(1, Math.min(100, p.morale + moraleHit))
+                  }
+                }
+              }
+            }
           }
         })
 
@@ -2770,11 +2988,71 @@ export const useGameStore = create<GameStore>()(
             return { success: false, error: valid.error ?? 'Trade cannot be executed' }
           }
 
+          // Board approval check for salary retention trades
+          const userRetention = offer.salaryRetentions
+            .filter((r) => r.retainingClubId === state.playerClubId)
+            .reduce((sum, r) => sum + r.amount, 0)
+          if (needsBoardApproval({ category: 'trade', params: { userSalaryRetention: userRetention } }, state.settings)) {
+            const club = state.clubs[state.playerClubId]
+            if (club) {
+              const tracker = state.boardApprovals ?? { records: [], denialCooldowns: {} }
+
+              if (isApprovalOnCooldown(tracker, 'trade', offerId, state.currentDate)) {
+                return { success: false, error: 'The board recently denied this trade. Please wait before trying again.' }
+              }
+
+              const ladderIdx = state.ladder.findIndex((e) => e.clubId === state.playerClubId)
+              const ladderPosition = ladderIdx >= 0 ? ladderIdx + 1 : 18
+
+              const approvalResult = computeBoardApproval({
+                category: 'trade',
+                club,
+                jobSecurity: state.manager.jobSecurity,
+                ladderPosition,
+                settings: state.settings,
+                tradeParams: { userSalaryRetention: userRetention },
+              })
+
+              const rng = new SeededRNG(state.rngSeed + offerId.length * 6131 + state.currentRound * 2909)
+              const { updatedTracker, approved } = rollBoardApproval(
+                tracker, approvalResult, rng, state.currentDate,
+                `Trade with salary retention of $${userRetention.toLocaleString()}`,
+                state.playerClubId, offerId,
+              )
+
+              set((s) => {
+                s.boardApprovals = updatedTracker
+              })
+
+              if (!approved) {
+                set((s) => {
+                  appendNewsItem(s, {
+                    id: crypto.randomUUID(),
+                    date: s.currentDate,
+                    headline: 'Board blocks trade with salary retention',
+                    body: `The board has denied a proposed trade that would require the club to retain $${userRetention.toLocaleString()} in salary.`,
+                    category: 'trade',
+                    clubIds: [s.playerClubId],
+                    playerIds: [],
+                  })
+                })
+                return { success: false, error: 'The board has blocked this trade due to salary retention concerns.' }
+              }
+            }
+          }
+
           const consent = validateTradeConsent(offer, state.players, state.clubs, state.settings, new SeededRNG(state.rngSeed + Date.now()))
           if (!consent.ok) {
             return { success: false, error: consent.reason ?? 'A player refused the trade' }
           }
           const executed = executeTradeOffer(offer, state.players, state.clubs, state.currentDate)
+          // Pre-compute players leaving user's club before state mutation
+          const playerClubIdForTrade2 = state.playerClubId
+          const playersLeavingUserClub2 = offer.playerMoves
+            .filter((mv) => mv.fromClubId === playerClubIdForTrade2)
+            .map((mv) => ({ id: mv.playerId, player: state.players[mv.playerId] }))
+            .filter((p) => p.player != null)
+
           set((s) => {
             const item = s.tradeInbox.find((i) => i.id === offerId)
             if (item) {
@@ -2791,6 +3069,39 @@ export const useGameStore = create<GameStore>()(
             const allPlayers = Object.values(s.players)
             for (const club of Object.values(s.clubs)) {
               club.finances.currentSpend = syncClubCurrentSpend(allPlayers, club.id)
+            }
+
+            // Trade pressure for players leaving user's club
+            const userClub2 = s.clubs[playerClubIdForTrade2]
+            if (userClub2) {
+              const tradeStories2 = []
+              for (const { id: _id, player } of playersLeavingUserClub2) {
+                if (!player) continue
+                const overallRating = getOverallRating(player)
+                const story = generateTradePressureStory(
+                  overallRating,
+                  `${player.firstName} ${player.lastName}`,
+                  true,
+                  s.currentRound,
+                )
+                if (story) tradeStories2.push(story)
+              }
+              if (tradeStories2.length > 0) {
+                userClub2.mediaPressure = updateMediaPressure(
+                  userClub2.mediaPressure,
+                  tradeStories2,
+                  s.currentRound,
+                  false,
+                )
+                const moraleHit2 = getMediaPressureMoraleEffect(userClub2.mediaPressure.score)
+                if (moraleHit2 !== 0) {
+                  for (const p of Object.values(s.players)) {
+                    if (p.clubId === playerClubIdForTrade2) {
+                      p.morale = Math.max(1, Math.min(100, p.morale + moraleHit2))
+                    }
+                  }
+                }
+              }
             }
           })
           return { success: true }
@@ -3982,38 +4293,86 @@ export const useGameStore = create<GameStore>()(
             playerIds: [],
           })
 
-          // Season-end financial processing: luxury tax + cap breach warnings
-          if (s.settings.salaryCap) {
+          // Season-end financial processing: full revenue/expense + luxury tax
+          {
             const allPlayers = Object.values(s.players)
+            const allStaff = Object.values(s.staff)
+            const financeRng = new SeededRNG(s.rngSeed + s.currentYear * 31)
+            const finalsQualifying = Math.min(8, s.ladder.length)
+
             for (const club of Object.values(s.clubs)) {
-              const financials = calculateSeasonEndFinancials(
+              const ladderIdx = s.ladder.findIndex((e) => e.clubId === club.id)
+              const ladderPos = ladderIdx >= 0 ? ladderIdx + 1 : 18
+              const isFinalist = ladderPos <= finalsQualifying
+
+              const result = processSeasonEndFinances(
+                club,
                 allPlayers,
-                club.id,
+                allStaff,
+                ladderPos,
+                isFinalist,
+                financeRng,
                 s.settings.salaryCapAmount,
                 s.settings.realism.softCapSpending,
+                s.inflationIndex ?? 1.0,
               )
 
-              // Sync currentSpend
-              club.finances.currentSpend = financials.totalSpend
+              // Update club finances
+              club.finances.seasonRevenue = result.revenue
+              club.finances.seasonExpenses = result.expenses
+              club.finances.seasonPnL = result.pnl
+              club.finances.balance = result.newBalance
+              club.finances.revenue = result.revenue.total
+              club.finances.expenses = result.expenses.total
 
-              if (s.settings.realism.softCapSpending && financials.luxuryTax > 0) {
-                // Deduct luxury tax from balance
-                club.finances.balance -= financials.luxuryTax
+              // Sync currentSpend from cap engine if salary cap is enabled
+              if (s.settings.salaryCap) {
+                const capFinancials = calculateSeasonEndFinancials(
+                  allPlayers,
+                  club.id,
+                  s.settings.salaryCapAmount,
+                  s.settings.realism.softCapSpending,
+                )
+                club.finances.currentSpend = capFinancials.totalSpend
+
+                if (capFinancials.isOverCap && !s.settings.realism.softCapSpending) {
+                  appendNewsItem(s, {
+                    id: crypto.randomUUID(),
+                    date: `${s.currentYear}-10-01`,
+                    headline: `${club.name} over salary cap`,
+                    body: `${club.fullName} finished the ${s.currentYear} season over the salary cap with a total player spend of $${capFinancials.totalSpend.toLocaleString()} against a cap of $${s.settings.salaryCapAmount.toLocaleString()}.`,
+                    category: 'general',
+                    clubIds: [club.id],
+                    playerIds: [],
+                  })
+                }
+              }
+
+              // Luxury tax news (already deducted via pnl)
+              if (result.luxuryTax > 0) {
                 appendNewsItem(s, {
                   id: crypto.randomUUID(),
                   date: `${s.currentYear}-10-01`,
-                  headline: `${club.name} hit with $${financials.luxuryTax.toLocaleString()} luxury tax`,
-                  body: `${club.fullName} have been penalised $${financials.luxuryTax.toLocaleString()} in luxury tax for exceeding the salary cap of $${s.settings.salaryCapAmount.toLocaleString()} during the ${s.currentYear} season. Their total player spend was $${financials.totalSpend.toLocaleString()}.`,
+                  headline: `${club.name} hit with $${result.luxuryTax.toLocaleString()} luxury tax`,
+                  body: `${club.fullName} have been penalised $${result.luxuryTax.toLocaleString()} in luxury tax for exceeding the salary cap during the ${s.currentYear} season.`,
                   category: 'general',
                   clubIds: [club.id],
                   playerIds: [],
                 })
-              } else if (financials.isOverCap && !s.settings.realism.softCapSpending) {
+              }
+
+              // Financial report news for user's club
+              if (club.id === s.playerClubId) {
+                const pnlStr = result.pnl >= 0
+                  ? `profit of $${result.pnl.toLocaleString()}`
+                  : `loss of $${Math.abs(result.pnl).toLocaleString()}`
                 appendNewsItem(s, {
                   id: crypto.randomUUID(),
                   date: `${s.currentYear}-10-01`,
-                  headline: `${club.name} over salary cap`,
-                  body: `${club.fullName} finished the ${s.currentYear} season over the salary cap with a total player spend of $${financials.totalSpend.toLocaleString()} against a cap of $${s.settings.salaryCapAmount.toLocaleString()}.`,
+                  headline: `${club.name} end-of-season financial report`,
+                  body: `${club.fullName} recorded a ${pnlStr} for the ${s.currentYear} season. ` +
+                    `Revenue: $${result.revenue.total.toLocaleString()} | Expenses: $${result.expenses.total.toLocaleString()}. ` +
+                    `Club balance now stands at $${result.newBalance.toLocaleString()}.`,
                   category: 'general',
                   clubIds: [club.id],
                   playerIds: [],
@@ -4030,6 +4389,53 @@ export const useGameStore = create<GameStore>()(
           s.offseasonState = offseason
         })
         updateSimulationStatus(set as (fn: (state: GameState) => void) => void, 'Offseason initialized.')
+
+        // Evaluate league evolution for next season (expansion / contraction / relocation)
+        const postSeasonState = get()
+        if (postSeasonState.settings.realism.aflHouseExpansionEvolution) {
+          const evolutionRng = new SeededRNG(postSeasonState.rngSeed + postSeasonState.currentYear * 98341)
+          const history = postSeasonState.leagueEvolutionHistory ?? { events: [] }
+          const events = evaluateLeagueEvolution(
+            postSeasonState.clubs,
+            postSeasonState.ladder,
+            postSeasonState.players,
+            history,
+            postSeasonState.currentYear,
+            postSeasonState.playerClubId,
+            evolutionRng,
+            postSeasonState.settings,
+          )
+          if (events.length > 0) {
+            set((s) => {
+              if (!s.offseasonState) return
+              s.offseasonState.pendingLeagueEvolution = events
+              for (const ev of events) {
+                const headline =
+                  ev.type === 'expansion'
+                    ? `AFL announces expansion: ${(ev as LeagueExpansionEvent).newClubFullName} join from ${ev.appliedYear}`
+                    : ev.type === 'contraction'
+                    ? `AFL folds ${(ev as LeagueContractionEvent).clubFullName}`
+                    : `AFL approves ${(ev as LeagueRelocationEvent).oldName} relocation to ${(ev as LeagueRelocationEvent).newCity}`
+                const affectedClubId =
+                  ev.type === 'expansion'
+                    ? null
+                    : ev.type === 'contraction'
+                    ? (ev as LeagueContractionEvent).clubId
+                    : (ev as LeagueRelocationEvent).clubId
+                appendNewsItem(s, {
+                  id: crypto.randomUUID(),
+                  date: s.currentDate,
+                  headline,
+                  body: ev.description,
+                  category: 'general',
+                  clubIds: affectedClubId ? [affectedClubId] : [],
+                  playerIds: [],
+                })
+              }
+            })
+          }
+        }
+
         } finally {
           finishSimulationStatus(set as (fn: (state: GameState) => void) => void)
         }
@@ -4195,6 +4601,124 @@ export const useGameStore = create<GameStore>()(
               const allPlayers = Object.values(s.players)
               for (const club of Object.values(s.clubs)) {
                 club.finances.currentSpend = syncClubCurrentSpend(allPlayers, club.id)
+              }
+            })
+          }
+        } else if (leavingPhase === 'supplemental-signing') {
+          // Apply any pending league evolution events before preseason begins
+          const freshState = get()
+          const pending = freshState.offseasonState?.pendingLeagueEvolution ?? []
+          if (pending.length > 0) {
+            for (const event of pending) {
+              if (event.type === 'contraction') {
+                const ce = event as LeagueContractionEvent
+                set((s) => {
+                  // Disperse players — set clubId to '' so they enter the unsigned pool
+                  const dispersed = applyContraction(s.players, ce.clubId)
+                  // Remove club from the clubs map
+                  delete s.clubs[ce.clubId]
+                  // Remove from current-season ladder (new season will regenerate it)
+                  s.ladder = s.ladder.filter((e) => e.clubId !== ce.clubId)
+                  // Record in history
+                  if (!s.leagueEvolutionHistory) s.leagueEvolutionHistory = { events: [] }
+                  s.leagueEvolutionHistory.events.push({ ...ce, dispersedPlayerCount: dispersed.length })
+                  appendNewsItem(s, {
+                    id: crypto.randomUUID(),
+                    date: s.currentDate,
+                    headline: `${ce.clubFullName} officially wound up — ${dispersed.length} players enter the pool`,
+                    body:
+                      `The ${ce.clubFullName} have been formally folded. All ${dispersed.length} listed players ` +
+                      `are now available for rival clubs to sign. The club will not compete in the ${ce.appliedYear} season.`,
+                    category: 'general',
+                    clubIds: [],
+                    playerIds: [],
+                  })
+                })
+              } else if (event.type === 'expansion') {
+                const ee = event as LeagueExpansionEvent
+                const newClub = buildExpansionClub(ee.newClubId, freshState.currentYear)
+                if (newClub) {
+                  const newPlayers = generatePlayers(
+                    ee.newClubId,
+                    freshState.rngSeed + freshState.currentYear * 13337,
+                    {
+                      salaryCapAmount: freshState.settings.salaryCapAmount,
+                      enforceCapCompliance: true,
+                    },
+                  )
+                  set((s) => {
+                    s.clubs[newClub.id] = newClub
+                    for (const p of newPlayers) {
+                      s.players[p.id] = p
+                    }
+                    if (!s.leagueEvolutionHistory) s.leagueEvolutionHistory = { events: [] }
+                    s.leagueEvolutionHistory.events.push(ee)
+                    appendNewsItem(s, {
+                      id: crypto.randomUUID(),
+                      date: s.currentDate,
+                      headline: `${ee.newClubFullName} set for debut in ${ee.appliedYear}`,
+                      body:
+                        `The ${ee.newClubFullName} have assembled their inaugural squad of ${newPlayers.length} players ` +
+                        `and will take the field from Round 1 of the ${ee.appliedYear} season.`,
+                      category: 'general',
+                      clubIds: [newClub.id],
+                      playerIds: [],
+                    })
+                  })
+                }
+              } else if (event.type === 'relocation') {
+                const re = event as LeagueRelocationEvent
+                set((s) => {
+                  const club = s.clubs[re.clubId]
+                  if (club) {
+                    applyRelocation(club, re)
+                  }
+                  if (!s.leagueEvolutionHistory) s.leagueEvolutionHistory = { events: [] }
+                  s.leagueEvolutionHistory.events.push(re)
+                  appendNewsItem(s, {
+                    id: crypto.randomUUID(),
+                    date: s.currentDate,
+                    headline: `${re.oldName} complete relocation to ${re.newCity}`,
+                    body:
+                      `The club officially rebrands as the ${re.newFullName}, playing out of ` +
+                      `${re.newHomeGround} from ${re.appliedYear}.`,
+                    category: 'general',
+                    clubIds: [re.clubId],
+                    playerIds: [],
+                  })
+                })
+              } else if (event.type === 'merger') {
+                const me = event as LeagueMergerEvent
+                set((s) => {
+                  const dispersed = applyMerger(s.players, me)
+                  // Remove the dissolved club entirely
+                  delete s.clubs[me.dissolvedClubId]
+                  s.ladder = s.ladder.filter((e) => e.clubId !== me.dissolvedClubId)
+                  // If the player was managing the dissolved club, transfer them to the surviving club
+                  if (s.playerClubId === me.dissolvedClubId) {
+                    s.playerClubId = me.survivingClubId
+                  }
+                  if (!s.leagueEvolutionHistory) s.leagueEvolutionHistory = { events: [] }
+                  s.leagueEvolutionHistory.events.push({ ...me, dispersedPlayerCount: dispersed.length })
+                  appendNewsItem(s, {
+                    id: crypto.randomUUID(),
+                    date: s.currentDate,
+                    headline: `${me.club1FullName} and ${me.club2FullName} officially merge`,
+                    body:
+                      `The AFL-brokered merger is complete. The ${me.survivingClubFullName} absorb ` +
+                      `${me.absorbedPlayerCount} players from the dissolved ${me.dissolvedClubId === me.club1Id ? me.club1FullName : me.club2FullName}. ` +
+                      `${dispersed.length} players enter the unsigned pool ahead of the ${me.appliedYear} season.`,
+                    category: 'general',
+                    clubIds: [me.survivingClubId],
+                    playerIds: [],
+                  })
+                })
+              }
+            }
+            // Clear pending events now that they have been applied
+            set((s) => {
+              if (s.offseasonState) {
+                s.offseasonState.pendingLeagueEvolution = []
               }
             })
           }
@@ -4494,6 +5018,179 @@ export const useGameStore = create<GameStore>()(
         })
       },
 
+      // ---- Practice Matches ----
+
+      schedulePracticeMatch: (type: 'friendly' | 'intra-squad', opponentClubId?: string) => {
+        const state = get()
+        if (state.offseasonState?.currentPhase !== 'practice-matches') return
+        const pmState = state.offseasonState.practiceMatchState
+        if (!pmState) return
+        const totalCount = pmState.scheduled.length + pmState.results.length
+        if (totalCount >= 5) return
+        const friendlyCount =
+          pmState.scheduled.filter((x) => x.type === 'friendly').length +
+          pmState.results.filter((x) => x.type === 'friendly').length
+        const intraCount =
+          pmState.scheduled.filter((x) => x.type === 'intra-squad').length +
+          pmState.results.filter((x) => x.type === 'intra-squad').length
+        if (type === 'friendly' && friendlyCount >= 3) return
+        if (type === 'intra-squad' && intraCount >= 2) return
+
+        const seed = state.rngSeed + state.currentYear * 97 + totalCount
+        const rng = new SeededRNG(seed)
+        const fixture = buildPracticeMatchFixture(
+          type,
+          state.playerClubId,
+          state.clubs,
+          rng,
+          totalCount,
+          opponentClubId,
+        )
+        set((s) => {
+          if (!s.offseasonState?.practiceMatchState) return
+          s.offseasonState.practiceMatchState.scheduled.push(fixture)
+        })
+      },
+
+      simulatePracticeMatchAction: (fixtureId: string) => {
+        const state = get()
+        const pmState = state.offseasonState?.practiceMatchState
+        if (!pmState) return
+        const fixture = pmState.scheduled.find((f) => f.id === fixtureId)
+        if (!fixture) return
+
+        const seed = state.rngSeed + state.currentYear * 1337 + pmState.results.length * 113
+        const rng = new SeededRNG(seed)
+
+        // Clone players for mutation
+        const playersCopy: Record<string, import('@/types/player').Player> = {}
+        for (const [id, p] of Object.entries(state.players)) {
+          playersCopy[id] = {
+            ...p,
+            attributes: { ...p.attributes },
+            injury: p.injury ? { ...p.injury } : null,
+            injuryHistory: [...(p.injuryHistory ?? [])],
+          }
+        }
+
+        const result = simulatePracticeMatch(fixture, playersCopy, state.clubs, rng)
+        applyPracticeMatchEffects(result, playersCopy, state.playerClubId)
+
+        set((s) => {
+          if (!s.offseasonState?.practiceMatchState) return
+          // Move fixture from scheduled to results
+          s.offseasonState.practiceMatchState.scheduled = s.offseasonState.practiceMatchState.scheduled.filter(
+            (f) => f.id !== fixtureId,
+          )
+          s.offseasonState.practiceMatchState.results.push(result)
+          // Write back mutated players
+          for (const [id, p] of Object.entries(playersCopy)) {
+            if (s.players[id]) {
+              s.players[id].form = p.form
+              s.players[id].fatigue = p.fatigue
+              s.players[id].injury = p.injury
+              s.players[id].injuryHistory = p.injuryHistory
+              s.players[id].fitness = p.fitness
+              s.players[id].morale = p.morale
+            }
+          }
+          // News for injuries
+          if (result.injuredPlayerIds.length > 0) {
+            for (const playerId of result.injuredPlayerIds) {
+              const player = s.players[playerId]
+              if (!player) continue
+              const fullName = `${player.firstName} ${player.lastName}`
+              const weeks = player.injury?.weeksRemaining ?? 1
+              appendNewsItem(s, {
+                id: `pm-injury-${fixtureId}-${playerId}`,
+                date: s.currentDate,
+                headline: `Practice match injury: ${fullName} (${weeks} wks)`,
+                body: `${fullName} suffered ${player.injury?.type ?? 'an injury'} during a practice match and is expected to miss ${weeks} week${weeks === 1 ? '' : 's'}.`,
+                category: 'injury',
+                clubIds: [player.clubId],
+                playerIds: [playerId],
+              })
+            }
+          }
+        })
+      },
+
+      delegatePracticeMatchesToAssistant: () => {
+        const state = get()
+        const pmState = state.offseasonState?.practiceMatchState
+        if (!pmState) return
+
+        const scheduled = [...pmState.scheduled]
+        const results: PracticeMatchResult[] = []
+        const playersCopy: Record<string, import('@/types/player').Player> = {}
+        for (const [id, p] of Object.entries(state.players)) {
+          playersCopy[id] = {
+            ...p,
+            attributes: { ...p.attributes },
+            injury: p.injury ? { ...p.injury } : null,
+            injuryHistory: [...(p.injuryHistory ?? [])],
+          }
+        }
+
+        let resultOffset = pmState.results.length
+        for (const fixture of scheduled) {
+          const seed = state.rngSeed + state.currentYear * 1337 + resultOffset * 113
+          const rng = new SeededRNG(seed)
+          const result = simulatePracticeMatch(fixture, playersCopy, state.clubs, rng)
+          applyPracticeMatchEffects(result, playersCopy, state.playerClubId)
+          results.push(result)
+          resultOffset++
+        }
+
+        set((s) => {
+          if (!s.offseasonState?.practiceMatchState) return
+          s.offseasonState.practiceMatchState.delegated = true
+          s.offseasonState.practiceMatchState.scheduled = []
+          s.offseasonState.practiceMatchState.results = [
+            ...s.offseasonState.practiceMatchState.results,
+            ...results,
+          ]
+          // Write back mutated players
+          for (const [id, p] of Object.entries(playersCopy)) {
+            if (s.players[id]) {
+              s.players[id].form = p.form
+              s.players[id].fatigue = p.fatigue
+              s.players[id].injury = p.injury
+              s.players[id].injuryHistory = p.injuryHistory
+              s.players[id].fitness = p.fitness
+              s.players[id].morale = p.morale
+            }
+          }
+          // News for injuries
+          for (const result of results) {
+            for (const playerId of result.injuredPlayerIds) {
+              const player = s.players[playerId]
+              if (!player) continue
+              const fullName = `${player.firstName} ${player.lastName}`
+              const weeks = player.injury?.weeksRemaining ?? 1
+              appendNewsItem(s, {
+                id: `pm-injury-${result.fixtureId}-${playerId}`,
+                date: s.currentDate,
+                headline: `Practice match injury: ${fullName} (${weeks} wks)`,
+                body: `${fullName} suffered ${player.injury?.type ?? 'an injury'} during a practice match and is expected to miss ${weeks} week${weeks === 1 ? '' : 's'}.`,
+                category: 'injury',
+                clubIds: [player.clubId],
+                playerIds: [playerId],
+              })
+            }
+          }
+        })
+      },
+
+      cancelPracticeMatchFixture: (fixtureId: string) => {
+        set((s) => {
+          if (!s.offseasonState?.practiceMatchState) return
+          s.offseasonState.practiceMatchState.scheduled = s.offseasonState.practiceMatchState.scheduled.filter(
+            (f) => f.id !== fixtureId,
+          )
+        })
+      },
+
       // ---- Offseason Sim Controls ----
 
       simOffseasonHalfDay: () => {
@@ -4595,6 +5292,26 @@ export const useGameStore = create<GameStore>()(
           }
           for (const news of generatedNews) {
             appendNewsItem(s, news)
+          }
+
+          // Tick facility construction (half-day = 0.5 days)
+          if (s.facilityUpgrades) {
+            const { updatedTracker, completedUpgrades } = tickFacilityUpgrades(s.facilityUpgrades, 0.5, s.currentDate)
+            s.facilityUpgrades = updatedTracker
+            for (const completed of completedUpgrades) {
+              const club = s.clubs[completed.clubId]
+              if (club) club.facilities[completed.facility] = completed.toLevel
+              const facilityLabel = completed.facility.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase()).trim()
+              appendNewsItem(s, {
+                id: crypto.randomUUID(),
+                date: s.currentDate,
+                headline: `${club?.name ?? completed.clubId} completes ${facilityLabel} upgrade`,
+                body: `The ${facilityLabel} has been upgraded to Level ${completed.toLevel}. The new facilities are now operational.`,
+                category: 'general',
+                clubIds: [completed.clubId],
+                playerIds: [],
+              })
+            }
           }
         })
         updateSimulationStatus(set as (fn: (state: GameState) => void) => void, `Simulation reached ${nextDate}.`)
@@ -4929,6 +5646,25 @@ export const useGameStore = create<GameStore>()(
               stateLeagueContractTargetCount: previousStateLeagueContractTargetCount,
             }
             s.clubs = ledgered
+            // Reset season finance tracking for all clubs
+            for (const club of Object.values(s.clubs)) {
+              club.finances.matchDayAccumulated = 0
+              club.finances.momentumModifier = 0
+              club.finances.seasonRevenue = undefined
+              club.finances.seasonExpenses = undefined
+              club.finances.seasonPnL = undefined
+            }
+            // Advance inflation index for the new season
+            {
+              const inflSettings = s.settings.inflation ?? DEFAULT_INFLATION_SETTINGS
+              const { newIndex, actualRate } = advanceInflationIndex(
+                s.inflationIndex ?? 1.0,
+                inflSettings,
+                s.rngSeed + newYear,
+              )
+              s.inflationIndex = newIndex
+              s.inflationHistory = [...(s.inflationHistory ?? []), { year: newYear, index: newIndex, rate: actualRate }]
+            }
             s.players = evolution.players
             processStateLeagueContractsForNewSeason(s)
             normalizeAllClubJumperNumbers(s)
@@ -4986,6 +5722,12 @@ export const useGameStore = create<GameStore>()(
               settings: s.settings,
               seed: s.rngSeed + s.currentYear * 31,
             })
+            // Reset season-specific instability (keep history and chairman support)
+            if (s.boardInstability) {
+              s.boardInstability = resetSeasonInstability(s.boardInstability)
+            } else {
+              s.boardInstability = createInitialBoardInstabilityState()
+            }
             pushUpcomingMilestoneNews(s)
           })
 
@@ -5035,7 +5777,7 @@ export const useGameStore = create<GameStore>()(
         const result = startNegotiation(
           player, state.playerClubId, isReSigning, state.currentRound,
           state.currentDate, rng, ladderPos || 9,
-          { playerLoyaltyEnabled: state.settings.realism.playerLoyalty },
+          { playerLoyaltyEnabled: state.settings.realism.playerLoyalty, inflationIndex: state.inflationIndex ?? 1.0 },
           teamCount,
         )
 
@@ -5067,6 +5809,58 @@ export const useGameStore = create<GameStore>()(
         set((s) => {
           trackSigningInteraction(s, negotiation.playerId)
         })
+
+        // Board approval check for high-value contracts
+        if (needsBoardApproval({ category: 'contract', params: { aav: offer.aav } }, state.settings)) {
+          const club = state.clubs[state.playerClubId]
+          if (club) {
+            const tracker = state.boardApprovals ?? { records: [], denialCooldowns: {} }
+
+            if (isApprovalOnCooldown(tracker, 'contract', negotiation.playerId, state.currentDate)) {
+              return { success: false, error: 'The board recently denied this contract. Please wait before trying again.' }
+            }
+
+            const ladderIdx = state.ladder.findIndex((e) => e.clubId === state.playerClubId)
+            const ladderPosition = ladderIdx >= 0 ? ladderIdx + 1 : 18
+            const player = state.players[negotiation.playerId]
+
+            const approvalResult = computeBoardApproval({
+              category: 'contract',
+              club,
+              jobSecurity: state.manager.jobSecurity,
+              ladderPosition,
+              settings: state.settings,
+              contractParams: { aav: offer.aav },
+            })
+
+            const rng = new SeededRNG(state.rngSeed + negotiationId.length * 7919 + state.currentRound * 3571)
+            const { updatedTracker, approved } = rollBoardApproval(
+              tracker, approvalResult, rng, state.currentDate,
+              `Contract offer for ${player?.firstName ?? ''} ${player?.lastName ?? ''} ($${offer.aav.toLocaleString()}/yr × ${offer.years}yr)`,
+              state.playerClubId, negotiation.playerId,
+            )
+
+            set((s) => {
+              s.boardApprovals = updatedTracker
+            })
+
+            if (!approved) {
+              set((s) => {
+                const p = s.players[negotiation.playerId]
+                appendNewsItem(s, {
+                  id: crypto.randomUUID(),
+                  date: s.currentDate,
+                  headline: `Board blocks contract offer for ${p?.firstName ?? ''} ${p?.lastName ?? ''}`,
+                  body: `The board has denied the $${offer.aav.toLocaleString()}/yr contract offer for ${p?.firstName ?? ''} ${p?.lastName ?? ''}. They feel the investment is too risky.`,
+                  category: 'contract',
+                  clubIds: [s.playerClubId],
+                  playerIds: [negotiation.playerId],
+                })
+              })
+              return { success: false, error: 'The board has denied this contract offer.' }
+            }
+          }
+        }
 
         // Use a mutable copy via immer
         let submitResult: { success: boolean; error?: string } = { success: false }
@@ -5144,6 +5938,59 @@ export const useGameStore = create<GameStore>()(
 
         const negotiation = state.negotiations.active[negotiationId]
         if (!negotiation) return { success: false, error: 'Negotiation not found' }
+
+        // Board approval check for accepting counter-offer
+        const counterAav = negotiation.playerDemand.aav
+        if (needsBoardApproval({ category: 'contract', params: { aav: counterAav } }, state.settings)) {
+          const club = state.clubs[state.playerClubId]
+          if (club) {
+            const tracker = state.boardApprovals ?? { records: [], denialCooldowns: {} }
+
+            if (isApprovalOnCooldown(tracker, 'contract', negotiation.playerId, state.currentDate)) {
+              return { success: false, error: 'The board recently denied this contract. Please wait before trying again.' }
+            }
+
+            const ladderIdx = state.ladder.findIndex((e) => e.clubId === state.playerClubId)
+            const ladderPosition = ladderIdx >= 0 ? ladderIdx + 1 : 18
+            const player = state.players[negotiation.playerId]
+
+            const approvalResult = computeBoardApproval({
+              category: 'contract',
+              club,
+              jobSecurity: state.manager.jobSecurity,
+              ladderPosition,
+              settings: state.settings,
+              contractParams: { aav: counterAav },
+            })
+
+            const rng = new SeededRNG(state.rngSeed + negotiationId.length * 8111 + state.currentRound * 4219)
+            const { updatedTracker, approved } = rollBoardApproval(
+              tracker, approvalResult, rng, state.currentDate,
+              `Accept counter-offer from ${player?.firstName ?? ''} ${player?.lastName ?? ''} ($${counterAav.toLocaleString()}/yr)`,
+              state.playerClubId, negotiation.playerId,
+            )
+
+            set((s) => {
+              s.boardApprovals = updatedTracker
+            })
+
+            if (!approved) {
+              set((s) => {
+                const p = s.players[negotiation.playerId]
+                appendNewsItem(s, {
+                  id: crypto.randomUUID(),
+                  date: s.currentDate,
+                  headline: `Board blocks counter-offer acceptance for ${p?.firstName ?? ''} ${p?.lastName ?? ''}`,
+                  body: `The board has refused to accept the $${counterAav.toLocaleString()}/yr counter-offer from ${p?.firstName ?? ''} ${p?.lastName ?? ''}.`,
+                  category: 'contract',
+                  clubIds: [s.playerClubId],
+                  playerIds: [negotiation.playerId],
+                })
+              })
+              return { success: false, error: 'The board has refused to accept this counter-offer.' }
+            }
+          }
+        }
 
         let result: { success: boolean; error?: string } = { success: false }
         set((s) => {
@@ -5507,13 +6354,69 @@ export const useGameStore = create<GameStore>()(
       },
 
       hireStaffMember: (staffId: string, contractYears: number) => {
-        set((state) => {
-          const member = state.staff[staffId]
-          if (member) {
-            member.clubId = state.playerClubId
-            member.contractYears = contractYears
+        const state = get()
+        const member = state.staff[staffId]
+        if (!member) return { success: false, error: 'Staff member not found' }
+
+        // Board approval check
+        if (needsBoardApproval({ category: 'staff-hire', params: { salary: member.salary } }, state.settings)) {
+          const club = state.clubs[state.playerClubId]
+          if (!club) return { success: false, error: 'Club not found' }
+
+          const tracker = state.boardApprovals ?? { records: [], denialCooldowns: {} }
+
+          // Check cooldown
+          if (isApprovalOnCooldown(tracker, 'staff-hire', staffId, state.currentDate)) {
+            return { success: false, error: 'The board recently denied this hire. Please wait before trying again.' }
+          }
+
+          const ladderIdx = state.ladder.findIndex((e) => e.clubId === state.playerClubId)
+          const ladderPosition = ladderIdx >= 0 ? ladderIdx + 1 : 18
+
+          const approvalResult = computeBoardApproval({
+            category: 'staff-hire',
+            club,
+            jobSecurity: state.manager.jobSecurity,
+            ladderPosition,
+            settings: state.settings,
+            staffParams: { salary: member.salary },
+          })
+
+          const rng = new SeededRNG(state.rngSeed + staffId.length * 7919 + state.currentRound * 3571)
+          const { updatedTracker, approved } = rollBoardApproval(
+            tracker, approvalResult, rng, state.currentDate,
+            `Hire ${member.firstName} ${member.lastName} ($${member.salary.toLocaleString()}/yr)`,
+            state.playerClubId, staffId,
+          )
+
+          set((s) => {
+            s.boardApprovals = updatedTracker
+          })
+
+          if (!approved) {
+            set((s) => {
+              appendNewsItem(s, {
+                id: crypto.randomUUID(),
+                date: s.currentDate,
+                headline: `Board blocks hiring of ${member.firstName} ${member.lastName}`,
+                body: `The board has denied the request to hire ${member.firstName} ${member.lastName} at $${member.salary.toLocaleString()} per year. They feel the salary is not justified at this time.`,
+                category: 'general',
+                clubIds: [s.playerClubId],
+                playerIds: [],
+              })
+            })
+            return { success: false, error: 'The board has denied this hire.' }
+          }
+        }
+
+        set((s) => {
+          const m = s.staff[staffId]
+          if (m) {
+            m.clubId = s.playerClubId
+            m.contractYears = contractYears
           }
         })
+        return { success: true }
       },
 
       fireStaffMember: (staffId: string) => {
@@ -5523,6 +6426,27 @@ export const useGameStore = create<GameStore>()(
             member.clubId = ''
             member.contractYears = 0
           }
+        })
+      },
+
+      previewBoardApproval: (category, params) => {
+        const state = get()
+        const club = state.clubs[state.playerClubId]
+        if (!club) {
+          return { category, probability: 100, factors: [], requiresApproval: false }
+        }
+        const ladderIdx = state.ladder.findIndex((e) => e.clubId === state.playerClubId)
+        const ladderPosition = ladderIdx >= 0 ? ladderIdx + 1 : 18
+
+        return computeBoardApproval({
+          category,
+          club,
+          jobSecurity: state.manager.jobSecurity,
+          ladderPosition,
+          settings: state.settings,
+          contractParams: params.aav != null ? { aav: params.aav } : undefined,
+          tradeParams: params.userSalaryRetention != null ? { userSalaryRetention: params.userSalaryRetention } : undefined,
+          staffParams: params.salary != null ? { salary: params.salary } : undefined,
         })
       },
 
@@ -6005,7 +6929,7 @@ export const useGameStore = create<GameStore>()(
         return { result }
       },
 
-      simCurrentRound: (options?: { internal?: boolean }) => {
+      simCurrentRound: (options?: { internal?: boolean; precomputedUserMatch?: Match }) => {
         const internal = options?.internal === true
         let state = get()
         if (state.simulation.active && !internal) return { userMatch: null }
@@ -6125,8 +7049,18 @@ export const useGameStore = create<GameStore>()(
           substitutesByClub[fixture.awayClubId] = buildSimSubstituteForClub(state, fixture.awayClubId, awayLineup)
         }
 
+        // Re-assign broadcast tiers using current ladder before simulating
+        set((s) => {
+          const currentRound = s.season.rounds[s.currentRound]
+          if (currentRound) {
+            currentRound.fixtures = assignRoundBroadcasts(currentRound.fixtures, s.clubs, s.ladder)
+          }
+        })
+        state = get()
+
+        const precomputed = options?.precomputedUserMatch
         const result = simulateRound({
-          round,
+          round: state.season.rounds[state.currentRound] ?? round,
           roundIndex: state.currentRound,
           players: state.players,
           clubs: state.clubs,
@@ -6142,7 +7076,19 @@ export const useGameStore = create<GameStore>()(
           lineupsByClub,
           substitutesByClub,
           matchResults: state.matchResults,
+          excludeClubIds: precomputed ? [state.playerClubId] : undefined,
         })
+
+        // Replace the null placeholder with precomputed user match if provided
+        if (precomputed) {
+          const placeholderIdx = result.matches.findIndex((m) => m === null)
+          if (placeholderIdx >= 0) {
+            result.matches[placeholderIdx] = precomputed
+          } else {
+            result.matches.push(precomputed)
+          }
+          result.userMatch = precomputed
+        }
 
         // Accumulate venue revenue
         if (state.venueState) {
@@ -6217,19 +7163,26 @@ export const useGameStore = create<GameStore>()(
         const staffListForMedical = Object.values(state.staff)
         const medicalImpactByClub: Record<string, import('@/engine/staff/staffEngine').MedicalStaffImpact> = {}
         for (const clubId of fixtureClubIds) {
-          medicalImpactByClub[clubId] = getMedicalStaffImpact(staffListForMedical, clubId)
+          const clubBudget = getClubBudgetAllocation(state.clubs[clubId])
+          medicalImpactByClub[clubId] = getMedicalStaffImpact(staffListForMedical, clubId, getBudgetMultiplier(clubBudget, 'medical'))
         }
+        // Collect mid-match injured player IDs from precomputed match to avoid double injuries
+        const midMatchInjuredIds = new Set<string>(
+          precomputed?.result?.midMatchInjuredPlayerIds ?? [],
+        )
         const allInjuries = result.matches.flatMap((m) => {
           if (!m.result) return []
+          // Use effectiveAggressionLevel from the match result if available (interactive mode)
+          const aggressionLevel: 'high' | 'medium' | 'low' = m.result.effectiveAggressionLevel ?? 'medium'
           const matchPlayerIds = [
             ...m.result.homePlayerStats.filter((ps) => ps.participated || ps.minutesPlayed > 0).map((ps) => ps.playerId),
             ...m.result.awayPlayerStats.filter((ps) => ps.participated || ps.minutesPlayed > 0).map((ps) => ps.playerId),
-          ]
+          ].filter((id) => !midMatchInjuredIds.has(id))
           return rollMatchInjuries(
             matchPlayerIds,
             state.players,
             injuryRng,
-            'medium',
+            aggressionLevel,
             state.settings.injuryFrequency,
             state.currentDate,
             medicalImpactByClub,
@@ -6325,7 +7278,11 @@ export const useGameStore = create<GameStore>()(
           }
 
           // Heal existing injuries (decrement weeks)
-          healInjuries(s.players, s.currentDate, medicalImpactByClub)
+          const medCentreLevels: Record<string, number> = {}
+          for (const [cid, c] of Object.entries(s.clubs)) {
+            medCentreLevels[cid] = c.facilities.medicalCentre
+          }
+          healInjuries(s.players, s.currentDate, medicalImpactByClub, medCentreLevels)
           serveSuspensionWeeks(s.players)
 
           // Apply resolved AI tribunal outcomes immediately
@@ -6404,6 +7361,181 @@ export const useGameStore = create<GameStore>()(
               t => t.clubA === clubId || t.clubB === clubId,
             ).length
             updateClubCulture(club, s.players, s.ladder, tradeCount, s.currentRound, s.currentYear, Object.keys(s.clubs).length, recentResults)
+
+            // Update financial momentum modifier from recent form
+            club.finances.momentumModifier = calculateMomentumModifier(recentResults)
+
+            // Media pressure update for the player's club only
+            if (clubId === s.playerClubId) {
+              const playerClubMatch = result.matches.find(
+                (m) => m.homeClubId === clubId || m.awayClubId === clubId,
+              )
+              let matchResultForPressure: { won: boolean; draw: boolean; scoreDiff: number } | null = null
+              let won = false
+              if (playerClubMatch?.result) {
+                const isHome = playerClubMatch.homeClubId === clubId
+                const myScore = isHome ? playerClubMatch.result.homeTotalScore : playerClubMatch.result.awayTotalScore
+                const oppScore = isHome ? playerClubMatch.result.awayTotalScore : playerClubMatch.result.homeTotalScore
+                won = myScore > oppScore
+                const draw = myScore === oppScore
+                matchResultForPressure = { won, draw, scoreDiff: myScore - oppScore }
+              }
+
+              const pressureStories = generateRoundPressureStories(
+                matchResultForPressure,
+                recentResults,
+                club.name,
+                s.currentRound,
+              )
+              club.mediaPressure = updateMediaPressure(
+                club.mediaPressure,
+                pressureStories,
+                s.currentRound,
+                won,
+              )
+
+              // Apply pressure morale hit to all player club players this round
+              const moraleHit = getMediaPressureMoraleEffect(club.mediaPressure.score)
+              if (moraleHit !== 0) {
+                for (const player of Object.values(s.players)) {
+                  if (player.clubId === clubId) {
+                    player.morale = Math.max(1, Math.min(100, player.morale + moraleHit))
+                  }
+                }
+              }
+
+              // Generate news for significant new stories
+              for (const story of pressureStories) {
+                if (story.severity !== 'minor') {
+                  appendNewsItem(s, {
+                    id: crypto.randomUUID(),
+                    date: s.currentDate,
+                    headline: story.headline,
+                    body: `Media pressure continues to mount around ${club.name}. The club's current media pressure score is ${club.mediaPressure.score}/100.`,
+                    category: 'general',
+                    clubIds: [clubId],
+                    playerIds: [],
+                  })
+                }
+              }
+
+              // ---- Board instability check (boardPolitics realism) ----
+              if (s.settings.realism.boardPolitics && s.boardInstability) {
+                // Update consecutive losses from this round's result
+                if (matchResultForPressure) {
+                  const wonOrDraw = matchResultForPressure.won || matchResultForPressure.draw
+                  s.boardInstability.consecutiveLosses = updateConsecutiveLosses(
+                    s.boardInstability.consecutiveLosses,
+                    wonOrDraw,
+                  )
+                }
+
+                // Compute new instability score
+                const ladderPos = (s.ladder.findIndex((e) => e.clubId === clubId) + 1) || 1
+                const teamCount = Object.keys(s.clubs).length
+                const salaryCap = s.settings.salaryCapAmount || 15_500_000
+                const newInstabilityScore = computeInstabilityScore({
+                  jobSecurity: s.manager.jobSecurity,
+                  consecutiveLosses: s.boardInstability.consecutiveLosses,
+                  fanSatisfaction: club.fanSatisfaction ?? 60,
+                  ladderPosition: ladderPos,
+                  teamCount,
+                  financeBalance: club.finances.balance,
+                  salaryCap,
+                  mediaPressureScore: club.mediaPressure?.score ?? 0,
+                  chairmanSupportLevel: s.boardInstability.chairmanSupportLevel,
+                })
+                s.boardInstability.score = newInstabilityScore
+
+                // Check if a spill event should trigger this round
+                if (shouldCheckForSpill(s.boardInstability, s.currentRound, true)) {
+                  const instRng = new SeededRNG(s.rngSeed + s.currentYear * 5483 + s.currentRound * 17)
+                  if (rollForSpillEvent(newInstabilityScore, instRng)) {
+                    const spill = generateSpillEvent({
+                      instabilityScore: newInstabilityScore,
+                      jobSecurity: s.manager.jobSecurity,
+                      consecutiveLosses: s.boardInstability.consecutiveLosses,
+                      currentRound: s.currentRound,
+                      currentYear: s.currentYear,
+                      currentDate: s.currentDate,
+                      clubName: club.name,
+                      managerName: s.manager.name,
+                      rng: instRng,
+                    })
+
+                    const resolution = resolveSpillEventEngine({
+                      event: spill,
+                      jobSecurity: s.manager.jobSecurity,
+                      chairmanSupportLevel: s.boardInstability.chairmanSupportLevel,
+                      currentDate: s.currentDate,
+                      clubId,
+                      clubName: club.name,
+                      managerName: s.manager.name,
+                      rng: instRng,
+                    })
+
+                    // Apply job security delta
+                    s.manager.jobSecurity = Math.max(0, Math.min(100,
+                      s.manager.jobSecurity + resolution.jobSecurityDelta,
+                    ))
+
+                    // Shift season expectation if changed
+                    if (resolution.newExpectation) {
+                      s.manager.seasonExpectation = resolution.newExpectation
+                    }
+
+                    // New chairman support level
+                    if (resolution.newChairmanSupportLevel !== null) {
+                      s.boardInstability.chairmanSupportLevel = resolution.newChairmanSupportLevel
+                    }
+
+                    // Competitive window change (advisory for player club)
+                    if (resolution.newCompetitiveWindow && s.clubs[clubId]) {
+                      s.clubs[clubId].aiPersonality.competitiveWindow = resolution.newCompetitiveWindow
+                    }
+
+                    // Record event and update tracking
+                    s.boardInstability.lastSpillRound = s.currentRound
+                    s.boardInstability.spillHistory.push(resolution.resolvedEvent)
+
+                    // Push news items
+                    for (const item of resolution.newsItems) {
+                      appendNewsItem(s, item)
+                    }
+
+                    // Rare: mid-season dismissal (outcome === 'dismissed')
+                    if (resolution.outcome === 'dismissed') {
+                      s.manager.jobSecurity = 0
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          // Tick facility construction (1 round = ~7 days)
+          if (s.facilityUpgrades) {
+            const { updatedTracker, completedUpgrades } = tickFacilityUpgrades(s.facilityUpgrades, 7, s.currentDate)
+            s.facilityUpgrades = updatedTracker
+            for (const completed of completedUpgrades) {
+              const club = s.clubs[completed.clubId]
+              if (club) club.facilities[completed.facility] = completed.toLevel
+              const facilityLabel = completed.facility.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase()).trim()
+              appendNewsItem(s, {
+                id: crypto.randomUUID(),
+                date: s.currentDate,
+                headline: `${club?.name ?? completed.clubId} completes ${facilityLabel} upgrade`,
+                body: `The ${facilityLabel} has been upgraded to Level ${completed.toLevel}. The new facilities are now operational.`,
+                category: 'general',
+                clubIds: [completed.clubId],
+                playerIds: [],
+              })
+            }
+            // AI facility upgrades
+            const aiRng = new SeededRNG(s.rngSeed + s.currentRound * 1337 + 7)
+            s.facilityUpgrades = tickAIFacilityUpgrades(
+              s.facilityUpgrades, s.clubs, s.playerClubId, aiRng, s.currentDate,
+            )
           }
 
           // Update morale post-match for each club
@@ -6442,7 +7574,7 @@ export const useGameStore = create<GameStore>()(
           }
           applyBetweenRoundMorale(s.players, s.clubs, s.ladder, s.currentRound, Object.keys(s.clubs).length)
 
-          // Generate morale warning news for user's team
+          // Generate morale warning news for user's team; also add pressure story for unrest
           const userClubName = s.clubs[s.playerClubId]?.name ?? s.playerClubId
           for (const p of Object.values(s.players)) {
             if (p.clubId !== s.playerClubId) continue
@@ -6451,6 +7583,22 @@ export const useGameStore = create<GameStore>()(
             const warning = generateMoraleWarnings(p, prevMorale, userClubName, s.currentDate)
             if (warning) {
               appendNewsItem(s, warning)
+              // Crossed below 30: add player unrest pressure story
+              if (p.morale < 30 && prevMorale >= 30) {
+                const userClub = s.clubs[s.playerClubId]
+                if (userClub) {
+                  const unrestStory = generatePlayerUnrestPressureStory(
+                    `${p.firstName} ${p.lastName}`,
+                    s.currentRound,
+                  )
+                  userClub.mediaPressure = updateMediaPressure(
+                    userClub.mediaPressure,
+                    [unrestStory],
+                    s.currentRound,
+                    false,
+                  )
+                }
+              }
             }
           }
 
@@ -6495,29 +7643,110 @@ export const useGameStore = create<GameStore>()(
             }
           }
 
-          // Update fan satisfaction based on match results
-          if (s.venueState && s.settings.realism.venueScheduling) {
-            for (const m of result.matches) {
-              if (!m.result) continue
-              const homeWon = m.result.homeTotalScore > m.result.awayTotalScore
-              const homeClub = s.clubs[m.homeClubId]
-              if (homeClub) {
-                const current = homeClub.fanSatisfaction ?? 60
-                let delta = 0
-                if (homeWon) delta += 1
-                else delta -= 1
-                // Big crowd bonus
+          // Accumulate match-day gate revenue and update fan satisfaction
+          for (const m of result.matches) {
+            if (!m.result) continue
+
+            const homeWon = m.result.homeTotalScore > m.result.awayTotalScore
+            const awayWon = m.result.awayTotalScore > m.result.homeTotalScore
+            const homeClub = s.clubs[m.homeClubId]
+            const awayClub = s.clubs[m.awayClubId]
+
+            // Rivalry check: either club lists the other as a rival
+            const isRivalry = !!(
+              homeClub?.rivalryClubIds?.includes(m.awayClubId) ||
+              awayClub?.rivalryClubIds?.includes(m.homeClubId)
+            )
+
+            // Accumulate gate revenue for the home club
+            const simCtx = m.result.simulationContext
+            if (homeClub && simCtx?.attendance && simCtx.venueId) {
+              const gateRevenue = calculateMatchDayRevenue(simCtx.attendance, simCtx.venueId, s.inflationIndex ?? 1.0)
+              homeClub.finances.matchDayAccumulated = (homeClub.finances.matchDayAccumulated ?? 0) + gateRevenue
+              // Rivalry gate revenue bonus: 15% extra due to higher demand (already in attendance)
+              // No additional bonus needed — rivalry attendance boost is built into calculateMatchAttendanceFull
+            }
+
+            // Broadcast rights revenue: both clubs benefit, home gets full, away gets 40%
+            const matchFixture = s.season.rounds[s.currentRound]?.fixtures.find(
+              (f) => f.homeClubId === m.homeClubId && f.awayClubId === m.awayClubId,
+            )
+            if (matchFixture?.broadcastTier) {
+              const broadcastRev = getBroadcastRevenue(matchFixture.broadcastTier)
+              if (broadcastRev > 0) {
+                if (homeClub) {
+                  homeClub.finances.matchDayAccumulated = (homeClub.finances.matchDayAccumulated ?? 0) + broadcastRev
+                }
+                if (awayClub) {
+                  awayClub.finances.matchDayAccumulated = (awayClub.finances.matchDayAccumulated ?? 0) + Math.round(broadcastRev * 0.4)
+                }
+              }
+            }
+
+            // Fan satisfaction: rivalry swing = ±3, normal = ±1
+            const swing = isRivalry ? 3 : 1
+
+            // Broadcast satisfaction: marquee = +3, prime = +1, non-broadcast = -1
+            const broadcastSatSwing = getBroadcastSatisfactionSwing(matchFixture?.broadcastTier)
+
+            if (homeClub) {
+              const current = homeClub.fanSatisfaction ?? 60
+              let delta = homeWon ? swing : awayWon ? -swing : 0
+              delta += broadcastSatSwing
+              // Big crowd bonus (venueScheduling-only, keep existing behaviour)
+              if (s.venueState && s.settings.realism.venueScheduling) {
                 const assignment = s.venueState.assignments.find(
                   (a) => a.roundNumber === round.number &&
                     round.fixtures[a.fixtureIndex]?.homeClubId === m.homeClubId,
                 )
                 if (assignment) {
                   const venue = VENUES[assignment.venueId]
-                  if (venue && assignment.expectedAttendance > venue.capacity * 0.8) {
-                    delta += 1
-                  }
+                  if (venue && assignment.expectedAttendance > venue.capacity * 0.8) delta += 1
                 }
-                homeClub.fanSatisfaction = updateFanSatisfaction(current, delta)
+              }
+              homeClub.fanSatisfaction = updateFanSatisfaction(current, delta)
+            }
+
+            if (awayClub) {
+              const current = awayClub.fanSatisfaction ?? 60
+              const delta = (awayWon ? swing : homeWon ? -swing : 0) + broadcastSatSwing
+              awayClub.fanSatisfaction = updateFanSatisfaction(current, delta)
+            }
+
+            // Rivalry news for the user's club
+            if (isRivalry && s.playerClubId) {
+              const isUserHome = m.homeClubId === s.playerClubId
+              const isUserAway = m.awayClubId === s.playerClubId
+              if (isUserHome || isUserAway) {
+                const userClub = s.clubs[s.playerClubId]
+                const opponentId = isUserHome ? m.awayClubId : m.homeClubId
+                const opponent = s.clubs[opponentId]
+                const userScore = isUserHome ? m.result.homeTotalScore : m.result.awayTotalScore
+                const oppScore = isUserHome ? m.result.awayTotalScore : m.result.homeTotalScore
+                const userWon = userScore > oppScore
+                const isDraw = userScore === oppScore
+
+                const headline = userWon
+                  ? `${userClub?.name ?? 'Your club'} defeat rivals ${opponent?.name ?? 'opponent'}`
+                  : isDraw
+                    ? `${userClub?.name ?? 'Your club'} draw with rivals ${opponent?.name ?? 'opponent'}`
+                    : `${userClub?.name ?? 'Your club'} fall to rivals ${opponent?.name ?? 'opponent'}`
+
+                const body = userWon
+                  ? `A vital rivalry win for ${userClub?.fullName ?? 'your club'}. The ${userScore}-${oppScore} victory over ${opponent?.fullName ?? 'rivals'} energises supporters and lifts the entire club. Fan satisfaction surges.`
+                  : isDraw
+                    ? `${userClub?.fullName ?? 'Your club'} and ${opponent?.fullName ?? 'rivals'} played out an intense rivalry draw (${userScore}-${oppScore}). Honours even on the day.`
+                    : `A stinging rivalry loss for ${userClub?.fullName ?? 'your club'}. The ${userScore}-${oppScore} defeat to ${opponent?.fullName ?? 'rivals'} weighs heavily on supporters. The board will be watching.`
+
+                appendNewsItem(s, {
+                  id: crypto.randomUUID(),
+                  date: s.currentDate,
+                  headline,
+                  body,
+                  category: 'match',
+                  clubIds: [s.playerClubId, opponentId],
+                  playerIds: [],
+                })
               }
             }
           }
@@ -6627,6 +7856,7 @@ export const useGameStore = create<GameStore>()(
             const aiResult = processAIReSignings(
               s.players, s.clubs, aiRng, s.playerClubId,
               s.currentRound, s.currentDate, s.settings,
+              s.inflationIndex ?? 1.0,
             )
             for (const n of aiResult.news) {
               pushSigningNotification(s, n)
@@ -6920,7 +8150,8 @@ export const useGameStore = create<GameStore>()(
           const staffListForMedical = Object.values(state.staff)
           const finalsMedicalImpact: Record<string, import('@/engine/staff/staffEngine').MedicalStaffImpact> = {}
           for (const clubId of finalsClubIds) {
-            finalsMedicalImpact[clubId] = getMedicalStaffImpact(staffListForMedical, clubId)
+            const clubBudget = getClubBudgetAllocation(state.clubs[clubId])
+            finalsMedicalImpact[clubId] = getMedicalStaffImpact(staffListForMedical, clubId, getBudgetMultiplier(clubBudget, 'medical'))
           }
           const finalsInjuries = finalsResults.flatMap((m) => {
             if (!m.result) return []
@@ -6979,7 +8210,11 @@ export const useGameStore = create<GameStore>()(
               }
             }
 
-            healInjuries(s.players, s.currentDate, finalsMedicalImpact)
+            const finalsmedCentreLevels: Record<string, number> = {}
+            for (const [cid, c] of Object.entries(s.clubs)) {
+              finalsmedCentreLevels[cid] = c.facilities.medicalCentre
+            }
+            healInjuries(s.players, s.currentDate, finalsMedicalImpact, finalsmedCentreLevels)
             serveSuspensionWeeks(s.players)
 
             for (const tribunalCase of resolvedAICases) {
@@ -7152,6 +8387,12 @@ export const useGameStore = create<GameStore>()(
                 })
               }
 
+              // Archive full ladder and finals results for history page
+              if (!s.history.seasonArchives) s.history.seasonArchives = []
+              s.history.seasonArchives.push(
+                createSeasonArchive(s.currentYear, s.ladder, s.matchResults.filter(m => m.isFinal))
+              )
+
               // Compute end-of-season awards
               const seasonAwards = computeSeasonAwards(
                 s.currentYear,
@@ -7307,6 +8548,7 @@ export const useGameStore = create<GameStore>()(
             retirementLegacies: [],
             originHistory: [],
             recordsBook: createDefaultRecordsBook(),
+            seasonArchives: [],
           }
         }
         if (merged.history && !(merged.history as { developmentReports?: unknown }).developmentReports) {
@@ -7329,6 +8571,9 @@ export const useGameStore = create<GameStore>()(
         }
         if (merged.history && !(merged.history as { recordsBook?: unknown }).recordsBook) {
           ;(merged.history as import('@/types/history').GameHistory).recordsBook = createDefaultRecordsBook()
+        }
+        if (merged.history && !(merged.history as { seasonArchives?: unknown }).seasonArchives) {
+          ;(merged.history as import('@/types/history').GameHistory).seasonArchives = []
         }
         if (merged.history) {
           ;(merged.history as import('@/types/history').GameHistory).recordsBook = normalizeRecordsBook(
@@ -7561,6 +8806,10 @@ export const useGameStore = create<GameStore>()(
         }
         if (merged.offseasonState === undefined) {
           merged.offseasonState = null
+        }
+        if (merged.offseasonState && !(merged.offseasonState as { practiceMatchState?: unknown }).practiceMatchState) {
+          ;(merged.offseasonState as { practiceMatchState: PracticeMatchState }).practiceMatchState =
+            { scheduled: [], results: [], delegated: false }
         }
         if (!merged.trainingWeekPlan) {
           merged.trainingWeekPlan = null
@@ -7828,6 +9077,30 @@ export const useGameStore = create<GameStore>()(
             seasonYear: null,
             lastCompletedYear: null,
           }
+        }
+        if ((merged as Record<string, unknown>).facilityUpgrades === undefined) {
+          ;(merged as Record<string, unknown>).facilityUpgrades = {
+            requests: [],
+            activeConstructionByClub: {},
+            denialCooldowns: {},
+          }
+        }
+        if ((merged as Record<string, unknown>).boardApprovals === undefined) {
+          ;(merged as Record<string, unknown>).boardApprovals = {
+            records: [],
+            denialCooldowns: {},
+          }
+        }
+        if ((merged as Record<string, unknown>).boardInstability === undefined || (merged as Record<string, unknown>).boardInstability === null) {
+          ;(merged as Record<string, unknown>).boardInstability = createInitialBoardInstabilityState()
+        } else {
+          // Backfill any missing fields on existing saves
+          const bi = (merged as Record<string, unknown>).boardInstability as Record<string, unknown>
+          if (!('spillHistory' in bi)) bi.spillHistory = []
+          if (!('lastSpillRound' in bi)) bi.lastSpillRound = -1
+          if (!('chairmanSupportLevel' in bi)) bi.chairmanSupportLevel = 50
+          if (!('score' in bi)) bi.score = 0
+          if (!('consecutiveLosses' in bi)) bi.consecutiveLosses = 0
         }
         if ((merged as Record<string, unknown>).signingInteractionPlayerIds === undefined) {
           ;(merged as Record<string, unknown>).signingInteractionPlayerIds = []
@@ -8161,6 +9434,17 @@ export const useGameStore = create<GameStore>()(
         }
         if (merged.emailLog) {
           merged.emailLog = merged.emailLog.map((item) => applyMediaCoverage(item))
+        }
+
+        // Migrate inflation fields
+        if ((merged as Record<string, unknown>).inflationIndex === undefined) {
+          (merged as Record<string, unknown>).inflationIndex = 1.0
+        }
+        if ((merged as Record<string, unknown>).inflationHistory === undefined) {
+          (merged as Record<string, unknown>).inflationHistory = []
+        }
+        if (merged.settings && !merged.settings.inflation) {
+          merged.settings.inflation = { ...DEFAULT_INFLATION_SETTINGS }
         }
 
         return merged as GameStore

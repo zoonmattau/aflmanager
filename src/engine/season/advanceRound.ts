@@ -32,6 +32,7 @@ interface SimRoundInput {
   lineupsByClub?: Record<string, Record<string, string>>
   substitutesByClub?: Record<string, string | null | undefined>
   matchResults?: Match[]
+  excludeClubIds?: string[]
 }
 
 export interface SimRoundResult {
@@ -46,7 +47,13 @@ export interface SimRoundResult {
 export function simulateRound(input: SimRoundInput): SimRoundResult {
   const { round, roundIndex, players, clubs, rngSeed, playerClubId } = input
 
+  const excludeSet = input.excludeClubIds ? new Set(input.excludeClubIds) : null
+
   const matches: Match[] = round.fixtures.map((fixture, i) => {
+    // Skip fixtures involving excluded clubs (interactive match handled separately)
+    if (excludeSet && (excludeSet.has(fixture.homeClubId) || excludeSet.has(fixture.awayClubId))) {
+      return null as unknown as Match // placeholder — caller must replace
+    }
     // Resolve venue-specific HGA and travel fatigue
     let venueHGA: number | undefined
     let resolvedVenueId = fixture.venueId ?? resolveVenueId(fixture.venue) ?? undefined

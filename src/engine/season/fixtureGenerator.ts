@@ -1,4 +1,5 @@
 import type { Round, Fixture, Season, LadderEntry, MatchDay } from '@/types/season'
+import { assignRoundBroadcasts } from './broadcastEngine'
 import type { Club } from '@/types/club'
 import type { GameSettings, MatchTimeSlot, BlockbusterMatch } from '@/types/game'
 import { SeededRNG } from '@/engine/core/rng'
@@ -258,6 +259,24 @@ function generateFixtureWithRetry(options: FixtureGeneratorOptions, attempt: num
   }
   if (errors.length > 0) {
     console.warn('[FixtureGenerator] Validation errors after 3 attempts:', errors)
+  }
+
+  // ---- Phase 8.5: Assign broadcast channels (uses a blank ladder for initial gen) ----
+  // Broadcast tiers will be re-assigned each round in the store as the ladder evolves.
+  // We do a default pass here so fixtures have channels from the start.
+  const initialLadder: LadderEntry[] = clubIds.map((id) => ({
+    clubId: id,
+    played: 0,
+    wins: 0,
+    losses: 0,
+    draws: 0,
+    points: 0,
+    pointsFor: 0,
+    pointsAgainst: 0,
+    percentage: 100,
+  }))
+  for (const round of allRounds) {
+    round.fixtures = assignRoundBroadcasts(round.fixtures, clubs, initialLadder)
   }
 
   return {

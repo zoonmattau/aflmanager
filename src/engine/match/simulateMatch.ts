@@ -23,8 +23,9 @@ import type { LadderEntry } from '@/types/season'
 import { getCultureMatchModifier } from '@/engine/culture/cultureEngine'
 import { getTacticalModifiers } from '@/engine/core/tacticalIdentity'
 import type { TacticalIdentity } from '@/types/club'
+import type { MidMatchAdjustment } from '@/types/matchEvent'
 
-interface SimulateMatchInput {
+export interface SimulateMatchInput {
   homeClubId: string
   awayClubId: string
   venue: string
@@ -52,10 +53,10 @@ interface SimulateMatchInput {
   awaySubstituteId?: string | null
 }
 
-type WeatherCondition = 'clear' | 'windy' | 'wet' | 'hot' | 'humid'
-type GroundCondition = 'firm' | 'dewy' | 'soft' | 'heavy' | 'muddy'
+export type WeatherCondition = 'clear' | 'windy' | 'wet' | 'hot' | 'humid'
+export type GroundCondition = 'firm' | 'dewy' | 'soft' | 'heavy' | 'muddy'
 
-interface WeatherModifiers {
+export interface WeatherModifiers {
   condition: WeatherCondition
   groundCondition: GroundCondition
   possessionMult: number
@@ -87,10 +88,73 @@ interface TacticalTargetFocus {
   extraFreeRisk: number
 }
 
-interface TacticalRuntime {
+export interface TacticalRuntime {
   focusByTarget: Map<string, TacticalTargetFocus>
   fatigueLoadByPlayer: Map<string, number>
   interceptBoostByPlayer: Map<string, number>
+}
+
+export interface MatchContext {
+  rng: SeededRNG
+  input: SimulateMatchInput
+
+  // Teams (mutable — shrink on mid-match injuries)
+  homeActivePlayers: Player[]
+  awayActivePlayers: Player[]
+  homePlayers: Player[]
+  awayPlayers: Player[]
+  homeSubstitute: Player | null
+  awaySubstitute: Player | null
+
+  // Accumulated results
+  homeStats: MatchPlayerStats[]
+  awayStats: MatchPlayerStats[]
+  homeScores: QuarterScore[]
+  awayScores: QuarterScore[]
+  keyEvents: MatchKeyEvent[]
+  currentHomeTotal: number
+  currentAwayTotal: number
+  quartersCompleted: number
+
+  // Mutable simulation parameters
+  homeMods: GameplanModifiers
+  awayMods: GameplanModifiers
+  matchup: MatchupModifiers
+  homeTactical: TacticalRuntime
+  awayTactical: TacticalRuntime
+  resolvedHomeGameplan: ClubGameplan
+  resolvedAwayGameplan: ClubGameplan
+  homeTeamFreeRisk: number
+  awayTeamFreeRisk: number
+
+  // Fixed context
+  weather: WeatherModifiers
+  adjustedHomeRating: number
+  adjustedAwayRating: number
+  homeCaptainPresent: boolean
+  awayCaptainPresent: boolean
+  quartersPerMatch: number
+  possessionsBase: number
+  pointsPerGoal: number
+  pointsPerBehind: number
+  substitutesEnabled: boolean
+  suspensionStrictness: number
+  attendanceResult: { attendance?: number; capacityPct?: number } | null
+  venueId: string | undefined
+
+  // Club references (for modifier chain re-runs)
+  homeClubTacticalIdentity: TacticalIdentity | undefined
+  awayClubTacticalIdentity: TacticalIdentity | undefined
+
+  // Interactive tracking
+  midMatchAdjustments: MidMatchAdjustment[]
+  midMatchInjuredPlayerIds: Set<string>
+  positionOverrides: Map<string, 'forward' | 'back'>
+  userSubActivated: boolean
+  effectiveAggressionQuarters: Array<'high' | 'medium' | 'low'>
+
+  // Per-quarter stat snapshots (for tag-failing detection)
+  quarterStartDisposals: Map<string, number>
 }
 
 type TeamLine = 'DEF' | 'MID' | 'FWD' | 'RK'
@@ -114,7 +178,7 @@ function intensityToWeight(intensity: 'light' | 'standard' | 'hard'): number {
   return 1
 }
 
-function buildTacticalRuntime(
+export function buildTacticalRuntime(
   tactics: WeeklyMatchupTactics | undefined,
   ownPlayers: Player[],
   oppPlayers: Player[],
@@ -495,7 +559,7 @@ function getForwardModifier(player: Player): number {
 // are applied to the base probabilities inside the possession loop.
 // ---------------------------------------------------------------------------
 
-interface GameplanModifiers {
+export interface GameplanModifiers {
   /** Extra possessions per quarter (added to base) */
   possessionBonus: number
   /** Multiplier on the inside-50 chance */
@@ -516,7 +580,7 @@ interface GameplanModifiers {
   hitoutMult: number
 }
 
-function applyTacticalIdentityModifiers(mods: GameplanModifiers, identity?: TacticalIdentity): GameplanModifiers {
+export function applyTacticalIdentityModifiers(mods: GameplanModifiers, identity?: TacticalIdentity): GameplanModifiers {
   if (!identity) return mods
   const t = getTacticalModifiers(identity)
   return {
@@ -532,7 +596,7 @@ function applyTacticalIdentityModifiers(mods: GameplanModifiers, identity?: Tact
   }
 }
 
-function computeGameplanModifiers(gameplan: ClubGameplan): GameplanModifiers {
+export function computeGameplanModifiers(gameplan: ClubGameplan): GameplanModifiers {
   const mods: GameplanModifiers = {
     possessionBonus: 0,
     inside50Mult: 1.0,
@@ -683,7 +747,7 @@ function getPlayerFreeRiskMultiplier(player: Player, weather: WeatherModifiers):
   return clampMultiplier(1 + disciplinePenalty + aggressionPenalty + temperamentPenalty + weatherPenalty, 0.75, 1.65)
 }
 
-function applyConditionToGameplanModifiers(
+export function applyConditionToGameplanModifiers(
   mods: GameplanModifiers,
   gameplan: ClubGameplan,
   weather: WeatherModifiers,
@@ -725,11 +789,10 @@ function applyConditionToGameplanModifiers(
   return adjusted
 }
 
-export function simulateMatch(input: SimulateMatchInput): Match {
+export function createMatchContext(input: SimulateMatchInput): MatchContext {
   const rng = new SeededRNG(input.seed)
-  const { homeClubId, awayClubId, venue, round, players, clubs, isFinal, finalType, matchRules } = input
+  const { homeClubId, awayClubId, venue, players, clubs, isFinal, finalType, matchRules } = input
 
-  // Use settings-driven values or fall back to constants
   const quartersPerMatch = matchRules?.quartersPerMatch ?? QUARTERS_PER_MATCH
   const possessionsMultiplier = matchRules?.possessionsMultiplier ?? 1.0
   const possessionsBase = Math.round(POSSESSIONS_PER_QUARTER * possessionsMultiplier)
@@ -759,7 +822,6 @@ export function simulateMatch(input: SimulateMatchInput): Match {
   const homeRating = getTeamRating(homePlayers)
   const awayRating = getTeamRating(awayPlayers)
 
-  // Compute gameplan modifiers for both clubs
   const homeGameplan = input.gameplanOverrides?.[homeClubId] ?? clubs[homeClubId]?.gameplan
   const awayGameplan = input.gameplanOverrides?.[awayClubId] ?? clubs[awayClubId]?.gameplan
   const resolvedHomeGameplan = homeGameplan ?? createDefaultGameplan()
@@ -785,7 +847,6 @@ export function simulateMatch(input: SimulateMatchInput): Match {
   const homeVenueFamiliarity = getVenueFamiliarityRatingBonus(homeClubId, venueId)
   const awayVenueFamiliarity = getVenueFamiliarityRatingBonus(awayClubId, venueId)
 
-  // Home advantage: dynamic from venue system, or fallback to 3
   const homeAdvantage = input.venueHGA ?? 3
   const homeTravelPenalty = (input.travelFatigue?.home ?? 0) * 0.5
   const awayTravelPenalty = (input.travelFatigue?.away ?? 0) * 0.5
@@ -794,7 +855,6 @@ export function simulateMatch(input: SimulateMatchInput): Match {
   const adjustedHomeRating = (homeRating + homeAdvantage + homeVenueFamiliarity - homeTravelPenalty) * homeCultureMod
   const adjustedAwayRating = (awayRating + awayVenueFamiliarity - awayTravelPenalty) * awayCultureMod
 
-  // Calculate attendance
   const homeStarCount = homePlayers.filter((p) => getOverall(p) >= 80).length
   const awayStarCount = awayPlayers.filter((p) => getOverall(p) >= 80).length
   const attendanceResult = venueId
@@ -814,12 +874,9 @@ export function simulateMatch(input: SimulateMatchInput): Match {
       })
     : null
 
-  // Initialize stats
   const homeStats = initPlayerStats(homePlayers, homeSubstitute)
   const awayStats = initPlayerStats(awayPlayers, awaySubstitute)
 
-  const homeScores: QuarterScore[] = []
-  const awayScores: QuarterScore[] = []
   const keyEvents: MatchKeyEvent[] = []
   keyEvents.push({
     quarter: 1,
@@ -829,361 +886,421 @@ export function simulateMatch(input: SimulateMatchInput): Match {
     clubId: homeClubId,
   })
 
-  // Pre-compute leadership context for clutch modifiers
   const homeLeadership = clubs[homeClubId]?.leadership
   const awayLeadership = clubs[awayClubId]?.leadership
   const homeCaptainPresent = homePlayers.some(p => p.id === homeLeadership?.captainId)
   const awayCaptainPresent = awayPlayers.some(p => p.id === awayLeadership?.captainId)
 
-  // Running score totals for clutch margin tracking
-  let currentHomeTotal = 0
-  let currentAwayTotal = 0
+  return {
+    rng,
+    input,
+    homeActivePlayers: [...homePlayers],
+    awayActivePlayers: [...awayPlayers],
+    homePlayers,
+    awayPlayers,
+    homeSubstitute,
+    awaySubstitute,
+    homeStats,
+    awayStats,
+    homeScores: [],
+    awayScores: [],
+    keyEvents,
+    currentHomeTotal: 0,
+    currentAwayTotal: 0,
+    quartersCompleted: 0,
+    homeMods,
+    awayMods,
+    matchup,
+    homeTactical,
+    awayTactical,
+    resolvedHomeGameplan,
+    resolvedAwayGameplan,
+    homeTeamFreeRisk,
+    awayTeamFreeRisk,
+    weather,
+    adjustedHomeRating,
+    adjustedAwayRating,
+    homeCaptainPresent,
+    awayCaptainPresent,
+    quartersPerMatch,
+    possessionsBase,
+    pointsPerGoal,
+    pointsPerBehind,
+    substitutesEnabled,
+    suspensionStrictness,
+    attendanceResult,
+    venueId,
+    homeClubTacticalIdentity: clubs[homeClubId]?.tacticalIdentity,
+    awayClubTacticalIdentity: clubs[awayClubId]?.tacticalIdentity,
+    midMatchAdjustments: [],
+    midMatchInjuredPlayerIds: new Set(),
+    positionOverrides: new Map(),
+    userSubActivated: false,
+    effectiveAggressionQuarters: [],
+    quarterStartDisposals: new Map(),
+  }
+}
 
-  // Simulate quarter by quarter
-  for (let q = 0; q < quartersPerMatch; q++) {
-    let homeGoals = 0
-    let homeBehinds = 0
-    let awayGoals = 0
-    let awayBehinds = 0
+export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
+  const {
+    rng, input, homeStats, awayStats, keyEvents,
+    homeMods, awayMods, matchup, homeTactical, awayTactical,
+    weather, homeTeamFreeRisk, awayTeamFreeRisk,
+    adjustedHomeRating, adjustedAwayRating,
+    homeCaptainPresent, awayCaptainPresent,
+    possessionsBase, pointsPerGoal, pointsPerBehind,
+    suspensionStrictness, positionOverrides,
+  } = ctx
+  const { homeClubId, awayClubId, isFinal } = input
 
-    // Average both team's possession bonuses for the match pace
-    const avgPossessionBonus = Math.round((homeMods.possessionBonus + awayMods.possessionBonus) / 2)
-    const possessions = Math.max(
-      65,
-      Math.round((possessionsBase + avgPossessionBonus + rng.nextInt(-20, 20)) * weather.possessionMult),
+  // Use active players (may be reduced by mid-match injuries)
+  const homePlayers = ctx.homeActivePlayers
+  const awayPlayers = ctx.awayActivePlayers
+
+  // Snapshot disposals at quarter start for tag-failing detection
+  for (const stat of [...homeStats, ...awayStats]) {
+    ctx.quarterStartDisposals.set(stat.playerId, stat.disposals)
+  }
+
+  let homeGoals = 0
+  let homeBehinds = 0
+  let awayGoals = 0
+  let awayBehinds = 0
+
+  const avgPossessionBonus = Math.round((homeMods.possessionBonus + awayMods.possessionBonus) / 2)
+  const possessions = Math.max(
+    65,
+    Math.round((possessionsBase + avgPossessionBonus + rng.nextInt(-20, 20)) * weather.possessionMult),
+  )
+
+  for (let p = 0; p < possessions; p++) {
+    const homeChance = adjustedHomeRating / (adjustedHomeRating + adjustedAwayRating)
+    const homeWins = rng.chance(homeChance)
+
+    const attackingPlayers = homeWins ? homePlayers : awayPlayers
+    const attackingStats = homeWins ? homeStats : awayStats
+    const attackClubId = homeWins ? homeClubId : awayClubId
+    const defendingPlayers = homeWins ? awayPlayers : homePlayers
+    const attMods = homeWins ? homeMods : awayMods
+    const defMods = homeWins ? awayMods : homeMods
+    const matchupInside50Mult = homeWins ? matchup.homeInside50Mult : matchup.awayInside50Mult
+    const matchupAccuracyMult = homeWins ? matchup.homeAccuracyMult : matchup.awayAccuracyMult
+    const matchupMarkMult = homeWins ? matchup.homeMarkMult : matchup.awayMarkMult
+    const matchupTurnoverMult = homeWins ? matchup.homeTurnoverMult : matchup.awayTurnoverMult
+    const matchupTackleMult = homeWins ? matchup.awayTackleMult : matchup.homeTackleMult
+    const defendingTeamFreeRisk = homeWins ? awayTeamFreeRisk : homeTeamFreeRisk
+    const attackingTeamFreeRisk = homeWins ? homeTeamFreeRisk : awayTeamFreeRisk
+    const defendingTactical = homeWins ? awayTactical : homeTactical
+    const surfaceContext = {
+      contestedBoost: weather.contestedPlayerBoost,
+      kickingPenalty: Math.max(0, 1 - weather.kickingEfficiencyMult),
+    }
+
+    const currentMargin = Math.abs(
+      (ctx.currentHomeTotal + homeGoals * pointsPerGoal + homeBehinds * pointsPerBehind) -
+      (ctx.currentAwayTotal + awayGoals * pointsPerGoal + awayBehinds * pointsPerBehind),
     )
+    const attClutchCtx: ClutchContext = {
+      quarter: quarterIndex,
+      margin: currentMargin,
+      isFinal: !!isFinal,
+      captainPresent: homeWins ? homeCaptainPresent : awayCaptainPresent,
+    }
+    const defClutchCtx: ClutchContext = {
+      quarter: quarterIndex,
+      margin: currentMargin,
+      isFinal: !!isFinal,
+      captainPresent: homeWins ? awayCaptainPresent : homeCaptainPresent,
+    }
 
-    for (let p = 0; p < possessions; p++) {
-      // Determine which team wins this possession
-      const homeChance = adjustedHomeRating / (adjustedHomeRating + adjustedAwayRating)
-      const homeWins = rng.chance(homeChance)
+    const primaryPlayer = pickWeightedPlayer(rng, attackingPlayers, surfaceContext, attClutchCtx)
+    const primaryStatIndex = attackingStats.findIndex((s) => s.playerId === primaryPlayer.id)
+    const primaryRatings = getGranularRatings(primaryPlayer)
+    const tacticalFocus = defendingTactical.focusByTarget.get(primaryPlayer.id)
+    const tagPenalty = tacticalFocus?.tagPressure ?? 0
+    const roughPenalty = tacticalFocus?.roughPressure ?? 0
+    const pressurePenalty = tagPenalty + roughPenalty * 0.6
 
-      const attackingPlayers = homeWins ? homePlayers : awayPlayers
-      const attackingStats = homeWins ? homeStats : awayStats
-      const attackClubId = homeWins ? homeClubId : awayClubId
-      const defendingPlayers = homeWins ? awayPlayers : homePlayers
-      const attMods = homeWins ? homeMods : awayMods
-      const defMods = homeWins ? awayMods : homeMods
-      const matchupInside50Mult = homeWins ? matchup.homeInside50Mult : matchup.awayInside50Mult
-      const matchupAccuracyMult = homeWins ? matchup.homeAccuracyMult : matchup.awayAccuracyMult
-      const matchupMarkMult = homeWins ? matchup.homeMarkMult : matchup.awayMarkMult
-      const matchupTurnoverMult = homeWins ? matchup.homeTurnoverMult : matchup.awayTurnoverMult
-      const matchupTackleMult = homeWins ? matchup.awayTackleMult : matchup.homeTackleMult
-      const defendingTeamFreeRisk = homeWins ? awayTeamFreeRisk : homeTeamFreeRisk
-      const attackingTeamFreeRisk = homeWins ? homeTeamFreeRisk : awayTeamFreeRisk
-      const defendingTactical = homeWins ? awayTactical : homeTactical
-      const surfaceContext = {
-        contestedBoost: weather.contestedPlayerBoost,
-        kickingPenalty: Math.max(0, 1 - weather.kickingEfficiencyMult),
-      }
-
-      // Clutch context for leadership/morale modifiers
-      const currentMargin = Math.abs(
-        (currentHomeTotal + homeGoals * pointsPerGoal + homeBehinds * pointsPerBehind) -
-        (currentAwayTotal + awayGoals * pointsPerGoal + awayBehinds * pointsPerBehind),
+    const isKick = rng.chance(0.55)
+    if (isKick) {
+      attackingStats[primaryStatIndex].kicks++
+    } else {
+      attackingStats[primaryStatIndex].handballs++
+    }
+    attackingStats[primaryStatIndex].disposals++
+    if (isKick) {
+      const kickExecution = clampChance(
+        weather.kickingEfficiencyMult * (0.62 + primaryRatings.kicking / 260) * (1 - pressurePenalty * 0.34),
       )
-      const attClutchCtx: ClutchContext = {
-        quarter: q,
-        margin: currentMargin,
-        isFinal: !!isFinal,
-        captainPresent: homeWins ? homeCaptainPresent : awayCaptainPresent,
-      }
-      const defClutchCtx: ClutchContext = {
-        quarter: q,
-        margin: currentMargin,
-        isFinal: !!isFinal,
-        captainPresent: homeWins ? awayCaptainPresent : homeCaptainPresent,
-      }
-
-      // Pick a primary player for this possession (weighted by overall + role)
-      const primaryPlayer = pickWeightedPlayer(rng, attackingPlayers, surfaceContext, attClutchCtx)
-      const primaryStatIndex = attackingStats.findIndex((s) => s.playerId === primaryPlayer.id)
-      const primaryRatings = getGranularRatings(primaryPlayer)
-      const tacticalFocus = defendingTactical.focusByTarget.get(primaryPlayer.id)
-      const tagPenalty = tacticalFocus?.tagPressure ?? 0
-      const roughPenalty = tacticalFocus?.roughPressure ?? 0
-      const pressurePenalty = tagPenalty + roughPenalty * 0.6
-
-      // Generate disposal
-      const isKick = rng.chance(0.55)
-      if (isKick) {
-        attackingStats[primaryStatIndex].kicks++
-      } else {
-        attackingStats[primaryStatIndex].handballs++
-      }
-      attackingStats[primaryStatIndex].disposals++
-      if (isKick) {
-        const kickExecution = clampChance(
-          weather.kickingEfficiencyMult * (0.62 + primaryRatings.kicking / 260) * (1 - pressurePenalty * 0.34),
-        )
-        if (!rng.chance(kickExecution)) {
-          attackingStats[primaryStatIndex].turnovers++
-          if (rng.chance(0.55)) attackingStats[primaryStatIndex].clangers++
-          continue
-        }
-      }
-
-      // Contested possession chance (modified by gameplan)
-      const contestedChance = clampChance(
-        (0.22 + primaryRatings.strength * 0.0012 + primaryRatings.tackling * 0.0012)
-        * attMods.contestedMult
-        * weather.contestedMult
-        * (1 + tagPenalty * 0.1),
-      )
-      if (rng.chance(contestedChance)) {
-        attackingStats[primaryStatIndex].contestedPossessions++
-        const attackerFreeRisk = getPlayerFreeRiskMultiplier(primaryPlayer, weather)
-        const holdingBallChance = clampChance(0.006 * attackingTeamFreeRisk * attackerFreeRisk)
-        if (rng.chance(holdingBallChance)) {
-          const tackler = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx)
-          const defStats = homeWins ? awayStats : homeStats
-          const tacklerIdx = defStats.findIndex((s) => s.playerId === tackler.id)
-          attackingStats[primaryStatIndex].freesAgainst++
-          if (tacklerIdx >= 0) defStats[tacklerIdx].freesFor++
-          continue
-        }
-        const clearanceChance = clampChance(0.1 + primaryPlayer.attributes.clearance * 0.003 + primaryRatings.decisionMaking * 0.0015)
-        if (rng.chance(clearanceChance)) {
-          attackingStats[primaryStatIndex].clearances++
-        }
-      } else {
-        const uncontestedRoll = 0.65 + (primaryRatings.decisionMaking + primaryRatings.agility) / 220
-        const uncontestedChance = clampChance(uncontestedRoll * attMods.uncontestedMult * (1 - pressurePenalty * 0.22))
-        if (rng.chance(uncontestedChance)) {
-          attackingStats[primaryStatIndex].uncontestedPossessions++
-          attackingStats[primaryStatIndex].uncountestedPossessions = attackingStats[primaryStatIndex].uncontestedPossessions
-        }
-      }
-
-      // Mark chance (modified by attacker gameplan)
-      const markBaseChance = clampChance(
-        (0.09 + primaryRatings.kicking * 0.001 + primaryRatings.decisionMaking * 0.0009)
-        * attMods.markMult
-        * matchupMarkMult
-        * weather.markMult,
-      )
-      if (rng.chance(markBaseChance)) {
-        const marker = pickWeightedPlayer(rng, attackingPlayers, surfaceContext, attClutchCtx)
-        const markerIdx = attackingStats.findIndex((s) => s.playerId === marker.id)
-        const markerRatings = getGranularRatings(marker)
-        const completesMark = rng.chance(clampChance(0.2 + markerRatings.marking * 0.006))
-        if (!completesMark) {
-          continue
-        }
-        attackingStats[markerIdx].marks++
-        // Contested mark subset
-        if (rng.chance(clampChance(0.08 + marker.attributes.markingContested * 0.005))) {
-          attackingStats[markerIdx].contestedMarks++
-        }
-      }
-
-      // Tackle from defending team (modified by defender gameplan)
-      const tackleBaseChance = clampChance(
-        (0.07 + ((100 - primaryRatings.agility) * 0.001) + ((100 - primaryRatings.discipline) * 0.0008))
-        * defMods.tackleMult
-        * matchupTackleMult
-        * (1 + roughPenalty * 0.35),
-      )
-      if (rng.chance(tackleBaseChance)) {
-        const tackler = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx)
-        const defStats = homeWins ? awayStats : homeStats
-        const tacklerIdx = defStats.findIndex((s) => s.playerId === tackler.id)
-        const tacklerRatings = getGranularRatings(tackler)
-        const tackleGain = rng.chance(
-          clampChance(
-            getRoleSimulationMultiplier(tackler.preferredRole, 'defense') - 0.95 +
-            tacklerRatings.tackling * 0.0025 +
-            tacklerRatings.strength * 0.0015,
-          ),
-        ) ? 2 : 1
-        defStats[tacklerIdx].tackles += tackleGain
-
-        // Discipline: high-risk tacklers and aggressive systems concede more frees.
-        const tacklerFreeRisk = getPlayerFreeRiskMultiplier(tackler, weather)
-        const highContactChance = clampChance(
-          0.0075 *
-          defendingTeamFreeRisk *
-          tacklerFreeRisk *
-          matchupTackleMult *
-          (1 + (tacticalFocus?.extraFreeRisk ?? 0) * 2.8) *
-          suspensionStrictness,
-        )
-        if (rng.chance(highContactChance)) {
-          defStats[tacklerIdx].freesAgainst++
-          attackingStats[primaryStatIndex].freesFor++
-        }
-      }
-
-      // Hitout for rucks (modified by gameplan)
-      if (rng.chance(0.08 * attMods.hitoutMult)) {
-        const ruck = attackingPlayers.find((pl) => pl.position.primary === 'RK')
-        if (ruck) {
-          const ruckIdx = attackingStats.findIndex((s) => s.playerId === ruck.id)
-          const ruckSkill = (ruck.attributes.hitouts + ruck.attributes.leap + ruck.attributes.strength) / 3
-          const hitoutGain = rng.chance(
-            clampChance(getRoleSimulationMultiplier(ruck.preferredRole, 'ruck') - 0.9 + ruckSkill * 0.003),
-          ) ? 2 : 1
-          attackingStats[ruckIdx].hitouts += hitoutGain
-        }
-      }
-
-      // Inside 50 chance (~30% of possessions, modified by gameplan)
-      const inside50Chance = clampChance(
-        (0.14 + primaryRatings.kicking * 0.0014 + primaryRatings.speed * 0.0008 + primaryRatings.decisionMaking * 0.0012)
-        * attMods.inside50Mult
-        * matchupInside50Mult
-        * (1 - pressurePenalty * 0.18),
-      )
-      if (rng.chance(inside50Chance)) {
-        const i50Player = pickWeightedPlayer(rng, attackingPlayers, surfaceContext, attClutchCtx)
-        const i50Idx = attackingStats.findIndex((s) => s.playerId === i50Player.id)
-        const i50Ratings = getGranularRatings(i50Player)
-        attackingStats[i50Idx].insideFifties++
-
-        // Score chance from I50 (~40%)
-        const scoreChance = clampChance(0.16 + i50Ratings.decisionMaking * 0.0015 + i50Ratings.kicking * 0.001)
-        if (rng.chance(scoreChance)) {
-          // Pick a scoring player (weighted toward forwards)
-          const scorer = pickScoringPlayer(rng, attackingPlayers, attClutchCtx)
-          const scorerIdx = attackingStats.findIndex((s) => s.playerId === scorer.id)
-          const scorerRatings = getGranularRatings(scorer)
-
-          // Goal vs behind (~50/50 adjusted by goalkicking skill + gameplan accuracy)
-          const goalChance = clampChance(
-            (0.2 + scorerRatings.goalSense * 0.005 + scorerRatings.kicking * 0.001)
-            * attMods.accuracyMult,
-          )
-          if (rng.chance(clampChance(goalChance * matchupAccuracyMult * weather.accuracyMult))) {
-            // Goal!
-            if (homeWins) homeGoals++
-            else awayGoals++
-            attackingStats[scorerIdx].goals++
-            attackingStats[scorerIdx].scoreInvolvements++
-
-            // Goal assist — credit the I50 player if different from scorer
-            if (i50Player.id !== scorer.id) {
-              attackingStats[i50Idx].goalAssists++
-              attackingStats[i50Idx].scoreInvolvements++
-            }
-
-            keyEvents.push({
-              quarter: q + 1,
-              minute: Math.floor((p / possessions) * 30),
-              type: 'goal',
-              description: `${scorer.firstName} ${scorer.lastName} kicks a goal`,
-              playerId: scorer.id,
-              clubId: attackClubId,
-            })
-          } else {
-            // Behind
-            if (homeWins) homeBehinds++
-            else awayBehinds++
-            attackingStats[scorerIdx].behinds++
-          }
-        }
-      }
-
-      // Rebound 50 (modified by attacker's rebound vulnerability)
-      const reboundChance = clampChance((0.08 + primaryRatings.discipline * 0.0008) * attMods.opponentReboundMult)
-      if (!homeWins && rng.chance(reboundChance)) {
-        const rebounder = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx)
-        const rebStats = homeWins ? awayStats : homeStats
-        const rebIdx = rebStats.findIndex((s) => s.playerId === rebounder.id)
-        rebStats[rebIdx].rebound50s++
-      }
-
-      // --- Extended stats ---
-      // Metres gained (on each disposal)
-      attackingStats[primaryStatIndex].metresGained += Math.max(
-        1,
-        Math.round(rng.nextInt(4, 20) * (0.75 + (primaryRatings.speed + primaryRatings.kicking) / 200)),
-      )
-
-      // Turnover chance (~12% of disposals)
-      const turnoverChance = clampChance(
-        (
-          0.2
-          - primaryRatings.decisionMaking * 0.0012
-          - primaryRatings.kicking * 0.0008
-          + (100 - primaryRatings.discipline) * 0.0006
-        ) * matchupTurnoverMult * weather.turnoverMult * (1 + pressurePenalty * 0.28),
-      )
-      if (rng.chance(turnoverChance)) {
+      if (!rng.chance(kickExecution)) {
         attackingStats[primaryStatIndex].turnovers++
-        if (rng.chance(clampChance(0.3 + (100 - primaryRatings.decisionMaking) * 0.004))) {
-          attackingStats[primaryStatIndex].clangers++
-        }
-      }
-
-      // Intercept for defending team
-      const interceptBaseChance = clampChance(0.03 + (100 - primaryRatings.kicking) * 0.0007 + (100 - primaryRatings.decisionMaking) * 0.0008)
-      if (rng.chance(interceptBaseChance)) {
-        const interceptor = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx)
-        const defStats = homeWins ? awayStats : homeStats
-        const intIdx = defStats.findIndex((s) => s.playerId === interceptor.id)
-        const interceptorRatings = getGranularRatings(interceptor)
-        const interceptBoost = (homeWins ? awayTactical : homeTactical).interceptBoostByPlayer.get(interceptor.id) ?? 0
-        const interceptGain = rng.chance(
-          clampChance(
-            getRoleSimulationMultiplier(interceptor.preferredRole, 'defense') - 0.92 +
-            interceptorRatings.intercepting * 0.002 +
-            interceptorRatings.spoiling * 0.0012 +
-            interceptBoost,
-          ),
-        ) ? 2 : 1
-        defStats[intIdx].intercepts += interceptGain
-      }
-
-      // One-percenter for defending team (spoils, smothers)
-      if (rng.chance(0.03 + averageGranularRating(defendingPlayers, 'spoiling') * 0.00035)) {
-        const defender = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx)
-        const defStats = homeWins ? awayStats : homeStats
-        const defIdx = defStats.findIndex((s) => s.playerId === defender.id)
-        defStats[defIdx].onePercenters++
-      }
-
-      // Bounce (midfield run)
-      if (rng.chance(clampChance(0.01 + primaryRatings.speed * 0.0002 + primaryRatings.agility * 0.0002))) {
-        attackingStats[primaryStatIndex].bounces++
+        if (rng.chance(0.55)) attackingStats[primaryStatIndex].clangers++
+        continue
       }
     }
 
-    const homeQScore = homeGoals * pointsPerGoal + homeBehinds * pointsPerBehind
-    const awayQScore = awayGoals * pointsPerGoal + awayBehinds * pointsPerBehind
-    homeScores.push({ goals: homeGoals, behinds: homeBehinds, total: homeQScore })
-    awayScores.push({ goals: awayGoals, behinds: awayBehinds, total: awayQScore })
-    currentHomeTotal += homeQScore
-    currentAwayTotal += awayQScore
+    const contestedChance = clampChance(
+      (0.22 + primaryRatings.strength * 0.0012 + primaryRatings.tackling * 0.0012)
+      * attMods.contestedMult
+      * weather.contestedMult
+      * (1 + tagPenalty * 0.1),
+    )
+    if (rng.chance(contestedChance)) {
+      attackingStats[primaryStatIndex].contestedPossessions++
+      const attackerFreeRisk = getPlayerFreeRiskMultiplier(primaryPlayer, weather)
+      const holdingBallChance = clampChance(0.006 * attackingTeamFreeRisk * attackerFreeRisk)
+      if (rng.chance(holdingBallChance)) {
+        const tackler = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx)
+        const defStats = homeWins ? awayStats : homeStats
+        const tacklerIdx = defStats.findIndex((s) => s.playerId === tackler.id)
+        attackingStats[primaryStatIndex].freesAgainst++
+        if (tacklerIdx >= 0) defStats[tacklerIdx].freesFor++
+        continue
+      }
+      const clearanceChance = clampChance(0.1 + primaryPlayer.attributes.clearance * 0.003 + primaryRatings.decisionMaking * 0.0015)
+      if (rng.chance(clearanceChance)) {
+        attackingStats[primaryStatIndex].clearances++
+      }
+    } else {
+      const uncontestedRoll = 0.65 + (primaryRatings.decisionMaking + primaryRatings.agility) / 220
+      const uncontestedChance = clampChance(uncontestedRoll * attMods.uncontestedMult * (1 - pressurePenalty * 0.22))
+      if (rng.chance(uncontestedChance)) {
+        attackingStats[primaryStatIndex].uncontestedPossessions++
+        attackingStats[primaryStatIndex].uncountestedPossessions = attackingStats[primaryStatIndex].uncontestedPossessions
+      }
+    }
+
+    const markBaseChance = clampChance(
+      (0.09 + primaryRatings.kicking * 0.001 + primaryRatings.decisionMaking * 0.0009)
+      * attMods.markMult
+      * matchupMarkMult
+      * weather.markMult,
+    )
+    if (rng.chance(markBaseChance)) {
+      const marker = pickWeightedPlayer(rng, attackingPlayers, surfaceContext, attClutchCtx)
+      const markerIdx = attackingStats.findIndex((s) => s.playerId === marker.id)
+      const markerRatings = getGranularRatings(marker)
+      const completesMark = rng.chance(clampChance(0.2 + markerRatings.marking * 0.006))
+      if (!completesMark) {
+        continue
+      }
+      attackingStats[markerIdx].marks++
+      if (rng.chance(clampChance(0.08 + marker.attributes.markingContested * 0.005))) {
+        attackingStats[markerIdx].contestedMarks++
+      }
+    }
+
+    const tackleBaseChance = clampChance(
+      (0.07 + ((100 - primaryRatings.agility) * 0.001) + ((100 - primaryRatings.discipline) * 0.0008))
+      * defMods.tackleMult
+      * matchupTackleMult
+      * (1 + roughPenalty * 0.35),
+    )
+    if (rng.chance(tackleBaseChance)) {
+      const tackler = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx)
+      const defStats = homeWins ? awayStats : homeStats
+      const tacklerIdx = defStats.findIndex((s) => s.playerId === tackler.id)
+      const tacklerRatings = getGranularRatings(tackler)
+      const tackleGain = rng.chance(
+        clampChance(
+          getRoleSimulationMultiplier(tackler.preferredRole, 'defense') - 0.95 +
+          tacklerRatings.tackling * 0.0025 +
+          tacklerRatings.strength * 0.0015,
+        ),
+      ) ? 2 : 1
+      defStats[tacklerIdx].tackles += tackleGain
+
+      const tacklerFreeRisk = getPlayerFreeRiskMultiplier(tackler, weather)
+      const highContactChance = clampChance(
+        0.0075 *
+        defendingTeamFreeRisk *
+        tacklerFreeRisk *
+        matchupTackleMult *
+        (1 + (tacticalFocus?.extraFreeRisk ?? 0) * 2.8) *
+        suspensionStrictness,
+      )
+      if (rng.chance(highContactChance)) {
+        defStats[tacklerIdx].freesAgainst++
+        attackingStats[primaryStatIndex].freesFor++
+      }
+    }
+
+    if (rng.chance(0.08 * attMods.hitoutMult)) {
+      const ruck = attackingPlayers.find((pl) => pl.position.primary === 'RK')
+      if (ruck) {
+        const ruckIdx = attackingStats.findIndex((s) => s.playerId === ruck.id)
+        const ruckSkill = (ruck.attributes.hitouts + ruck.attributes.leap + ruck.attributes.strength) / 3
+        const hitoutGain = rng.chance(
+          clampChance(getRoleSimulationMultiplier(ruck.preferredRole, 'ruck') - 0.9 + ruckSkill * 0.003),
+        ) ? 2 : 1
+        attackingStats[ruckIdx].hitouts += hitoutGain
+      }
+    }
+
+    const inside50Chance = clampChance(
+      (0.14 + primaryRatings.kicking * 0.0014 + primaryRatings.speed * 0.0008 + primaryRatings.decisionMaking * 0.0012)
+      * attMods.inside50Mult
+      * matchupInside50Mult
+      * (1 - pressurePenalty * 0.18),
+    )
+    if (rng.chance(inside50Chance)) {
+      const i50Player = pickWeightedPlayer(rng, attackingPlayers, surfaceContext, attClutchCtx)
+      const i50Idx = attackingStats.findIndex((s) => s.playerId === i50Player.id)
+      const i50Ratings = getGranularRatings(i50Player)
+      attackingStats[i50Idx].insideFifties++
+
+      const scoreChance = clampChance(0.16 + i50Ratings.decisionMaking * 0.0015 + i50Ratings.kicking * 0.001)
+      if (rng.chance(scoreChance)) {
+        const scorer = pickScoringPlayer(rng, attackingPlayers, attClutchCtx, positionOverrides)
+        const scorerIdx = attackingStats.findIndex((s) => s.playerId === scorer.id)
+        const scorerRatings = getGranularRatings(scorer)
+
+        const goalChance = clampChance(
+          (0.2 + scorerRatings.goalSense * 0.005 + scorerRatings.kicking * 0.001)
+          * attMods.accuracyMult,
+        )
+        if (rng.chance(clampChance(goalChance * matchupAccuracyMult * weather.accuracyMult))) {
+          if (homeWins) homeGoals++
+          else awayGoals++
+          attackingStats[scorerIdx].goals++
+          attackingStats[scorerIdx].scoreInvolvements++
+
+          if (i50Player.id !== scorer.id) {
+            attackingStats[i50Idx].goalAssists++
+            attackingStats[i50Idx].scoreInvolvements++
+          }
+
+          keyEvents.push({
+            quarter: quarterIndex + 1,
+            minute: Math.floor((p / possessions) * 30),
+            type: 'goal',
+            description: `${scorer.firstName} ${scorer.lastName} kicks a goal`,
+            playerId: scorer.id,
+            clubId: attackClubId,
+          })
+        } else {
+          if (homeWins) homeBehinds++
+          else awayBehinds++
+          attackingStats[scorerIdx].behinds++
+        }
+      }
+    }
+
+    const reboundChance = clampChance((0.08 + primaryRatings.discipline * 0.0008) * attMods.opponentReboundMult)
+    if (!homeWins && rng.chance(reboundChance)) {
+      const rebounder = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx)
+      const rebStats = homeWins ? awayStats : homeStats
+      const rebIdx = rebStats.findIndex((s) => s.playerId === rebounder.id)
+      rebStats[rebIdx].rebound50s++
+    }
+
+    attackingStats[primaryStatIndex].metresGained += Math.max(
+      1,
+      Math.round(rng.nextInt(4, 20) * (0.75 + (primaryRatings.speed + primaryRatings.kicking) / 200)),
+    )
+
+    const turnoverChance = clampChance(
+      (
+        0.2
+        - primaryRatings.decisionMaking * 0.0012
+        - primaryRatings.kicking * 0.0008
+        + (100 - primaryRatings.discipline) * 0.0006
+      ) * matchupTurnoverMult * weather.turnoverMult * (1 + pressurePenalty * 0.28),
+    )
+    if (rng.chance(turnoverChance)) {
+      attackingStats[primaryStatIndex].turnovers++
+      if (rng.chance(clampChance(0.3 + (100 - primaryRatings.decisionMaking) * 0.004))) {
+        attackingStats[primaryStatIndex].clangers++
+      }
+    }
+
+    const interceptBaseChance = clampChance(0.03 + (100 - primaryRatings.kicking) * 0.0007 + (100 - primaryRatings.decisionMaking) * 0.0008)
+    if (rng.chance(interceptBaseChance)) {
+      const interceptor = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx)
+      const defStats = homeWins ? awayStats : homeStats
+      const intIdx = defStats.findIndex((s) => s.playerId === interceptor.id)
+      const interceptorRatings = getGranularRatings(interceptor)
+      const interceptBoost = (homeWins ? awayTactical : homeTactical).interceptBoostByPlayer.get(interceptor.id) ?? 0
+      const interceptGain = rng.chance(
+        clampChance(
+          getRoleSimulationMultiplier(interceptor.preferredRole, 'defense') - 0.92 +
+          interceptorRatings.intercepting * 0.002 +
+          interceptorRatings.spoiling * 0.0012 +
+          interceptBoost,
+        ),
+      ) ? 2 : 1
+      defStats[intIdx].intercepts += interceptGain
+    }
+
+    if (rng.chance(0.03 + averageGranularRating(defendingPlayers, 'spoiling') * 0.00035)) {
+      const defender = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx)
+      const defStats = homeWins ? awayStats : homeStats
+      const defIdx = defStats.findIndex((s) => s.playerId === defender.id)
+      defStats[defIdx].onePercenters++
+    }
+
+    if (rng.chance(clampChance(0.01 + primaryRatings.speed * 0.0002 + primaryRatings.agility * 0.0002))) {
+      attackingStats[primaryStatIndex].bounces++
+    }
   }
+
+  const homeQScore = homeGoals * pointsPerGoal + homeBehinds * pointsPerBehind
+  const awayQScore = awayGoals * pointsPerGoal + awayBehinds * pointsPerBehind
+  ctx.homeScores.push({ goals: homeGoals, behinds: homeBehinds, total: homeQScore })
+  ctx.awayScores.push({ goals: awayGoals, behinds: awayBehinds, total: awayQScore })
+  ctx.currentHomeTotal += homeQScore
+  ctx.currentAwayTotal += awayQScore
+  ctx.quartersCompleted++
+}
+
+export function finalizeMatch(ctx: MatchContext, skipUserSubForSide?: 'home' | 'away'): Match {
+  const {
+    rng, input, homeStats, awayStats, homePlayers, awayPlayers,
+    homeScores, awayScores, keyEvents,
+    homeMods, awayMods, homeTactical, awayTactical,
+    homeSubstitute, awaySubstitute, weather,
+    resolvedHomeGameplan, resolvedAwayGameplan,
+    homeTeamFreeRisk, awayTeamFreeRisk,
+    substitutesEnabled, venueId,
+    adjustedHomeRating, adjustedAwayRating,
+    attendanceResult, midMatchAdjustments, midMatchInjuredPlayerIds,
+    effectiveAggressionQuarters,
+  } = ctx
+  const { homeClubId, awayClubId, venue, round, isFinal, finalType } = input
+  const homeVenueFamiliarity = getVenueFamiliarityRatingBonus(homeClubId, venueId)
+  const awayVenueFamiliarity = getVenueFamiliarityRatingBonus(awayClubId, venueId)
 
   const homeTotalScore = homeScores.reduce((s, q) => s + q.total, 0)
   const awayTotalScore = awayScores.reduce((s, q) => s + q.total, 0)
 
   if (substitutesEnabled) {
-    applySubstituteStrategy({
-      rng,
-      teamStats: homeStats,
-      teamPlayers: homePlayers,
-      substitute: homeSubstitute,
-      teamScore: homeTotalScore,
-      opponentScore: awayTotalScore,
-      gameplan: resolvedHomeGameplan,
-    })
-    applySubstituteStrategy({
-      rng,
-      teamStats: awayStats,
-      teamPlayers: awayPlayers,
-      substitute: awaySubstitute,
-      teamScore: awayTotalScore,
-      opponentScore: homeTotalScore,
-      gameplan: resolvedAwayGameplan,
-    })
+    if (skipUserSubForSide !== 'home') {
+      applySubstituteStrategy({
+        rng,
+        teamStats: homeStats,
+        teamPlayers: homePlayers,
+        substitute: homeSubstitute,
+        teamScore: homeTotalScore,
+        opponentScore: awayTotalScore,
+        gameplan: resolvedHomeGameplan,
+      })
+    }
+    if (skipUserSubForSide !== 'away') {
+      applySubstituteStrategy({
+        rng,
+        teamStats: awayStats,
+        teamPlayers: awayPlayers,
+        substitute: awaySubstitute,
+        teamScore: awayTotalScore,
+        opponentScore: homeTotalScore,
+        gameplan: resolvedAwayGameplan,
+      })
+    }
   }
 
   rebalanceTeamStatProfile(rng, homeStats, homePlayers, homeMods, weather)
   rebalanceTeamStatProfile(rng, awayStats, awayPlayers, awayMods, weather)
 
-  // Background disciplinary frees to avoid zero-heavy distributions.
   for (const [teamStats, teamPlayers, teamRisk] of [
     [homeStats, homePlayers, homeTeamFreeRisk],
     [awayStats, awayPlayers, awayTeamFreeRisk],
@@ -1215,12 +1332,19 @@ export function simulateMatch(input: SimulateMatchInput): Match {
     }
   }
 
-  // Per-match fantasy scoring models.
   for (const stat of [...homeStats, ...awayStats]) {
     stat.aflFantasyPoints = computeAFLFantasyPoints(stat)
   }
-  // SuperCoach points pool is fixed at 3300 per match.
   assignSuperCoachPoints(homeStats, awayStats, homeTotalScore, awayTotalScore)
+
+  // Compute effective aggression level from quarter history
+  let effectiveAggressionLevel: 'high' | 'medium' | 'low' = 'medium'
+  if (effectiveAggressionQuarters.length > 0) {
+    const counts = { high: 0, medium: 0, low: 0 }
+    for (const a of effectiveAggressionQuarters) counts[a]++
+    if (counts.high > counts.medium && counts.high > counts.low) effectiveAggressionLevel = 'high'
+    else if (counts.low > counts.medium && counts.low > counts.high) effectiveAggressionLevel = 'low'
+  }
 
   const result: MatchResult = {
     homeScores,
@@ -1230,6 +1354,9 @@ export function simulateMatch(input: SimulateMatchInput): Match {
     homePlayerStats: homeStats,
     awayPlayerStats: awayStats,
     keyEvents,
+    midMatchAdjustments: midMatchAdjustments.length > 0 ? midMatchAdjustments : undefined,
+    midMatchInjuredPlayerIds: midMatchInjuredPlayerIds.size > 0 ? [...midMatchInjuredPlayerIds] : undefined,
+    effectiveAggressionLevel: effectiveAggressionQuarters.length > 0 ? effectiveAggressionLevel : undefined,
     simulationContext: {
       weather: weather.condition,
       groundCondition: weather.groundCondition,
@@ -1257,6 +1384,14 @@ export function simulateMatch(input: SimulateMatchInput): Match {
     isFinal: isFinal ?? false,
     finalType,
   }
+}
+
+export function simulateMatch(input: SimulateMatchInput): Match {
+  const ctx = createMatchContext(input)
+  for (let q = 0; q < ctx.quartersPerMatch; q++) {
+    simulateQuarter(ctx, q)
+  }
+  return finalizeMatch(ctx)
 }
 
 function rebalanceTeamStatProfile(
@@ -1600,14 +1735,16 @@ function pickWeightedPlayer(
   return players[players.length - 1]
 }
 
-function pickScoringPlayer(rng: SeededRNG, players: Player[], clutchCtx?: ClutchContext): Player {
+function pickScoringPlayer(rng: SeededRNG, players: Player[], clutchCtx?: ClutchContext, positionOverrides?: Map<string, 'forward' | 'back'>): Player {
   // Weight toward forwards using position modifier and goalkicking ability
   const weights = players.map((p) => {
     const moraleMult = getMoraleModifier(p.morale)
     const clutchMult = clutchCtx
       ? getClutchModifier(p, clutchCtx.quarter, clutchCtx.margin, clutchCtx.isFinal, clutchCtx.captainPresent)
       : 1.0
-    return getForwardModifier(p) *
+    const override = positionOverrides?.get(p.id)
+    const forwardMod = getForwardModifier(p) * (override === 'forward' ? 1.5 : override === 'back' ? 0.4 : 1)
+    return forwardMod *
       (getGranularRatings(p).goalSense * 0.65 + getGranularRatings(p).marking * 0.2 + getGranularRatings(p).agility * 0.15 + 16) *
       getAvailabilityMultiplier(p) *
       getRoleSimulationMultiplier(p.preferredRole, 'scoring') *

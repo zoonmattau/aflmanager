@@ -46,6 +46,7 @@ import {
   TrendingUp,
   X,
 } from 'lucide-react'
+import { diffDays } from '@/engine/calendar/calendarEngine'
 import { calculatePlayerValue } from '@/engine/contracts/negotiation'
 import { buildYearByYearFromStructure, calculateIncentiveValue } from '@/engine/contracts/contractStructures'
 import { ContractProjectionPanel } from '@/components/contracts/ContractProjectionPanel'
@@ -53,6 +54,8 @@ import { useTableViewManager, type TableViewColumnConfig } from '@/components/ta
 import { TableViewManagerControl } from '@/components/table-view/TableViewManagerControl'
 import { ShortlistAssignMenu, ShortlistManager } from '@/components/shortlists/ShortlistManager'
 import { isAflListedPlayer } from '@/engine/players/contracts'
+import type { BoardApprovalResult } from '@/types/boardApproval'
+import { BoardApprovalPanel } from '@/components/board/BoardApprovalPanel'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -108,6 +111,7 @@ function NegotiationDialog({
   const submitContractOffer = useGameStore((s) => s.submitContractOffer)
   const acceptContractCounterOffer = useGameStore((s) => s.acceptContractCounterOffer)
   const withdrawContractNegotiation = useGameStore((s) => s.withdrawContractNegotiation)
+  const previewBoardApproval = useGameStore((s) => s.previewBoardApproval)
 
   const [selectedPlayerId, setSelectedPlayerId] = useState<string>('')
   const [activeNegId, setActiveNegId] = useState<string | null>(null)
@@ -137,6 +141,7 @@ function NegotiationDialog({
   const [offerLeadershipPromiseClause, setOfferLeadershipPromiseClause] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [contractBoardPreview, setContractBoardPreview] = useState<BoardApprovalResult | null>(null)
 
   const clubPlayers = useMemo(
     () =>
@@ -261,6 +266,16 @@ function NegotiationDialog({
     setError(null)
     setSuccess(null)
 
+    // Board approval preview (show panel on first click, submit on second)
+    if (!contractBoardPreview) {
+      const preview = previewBoardApproval('contract', { aav })
+      if (preview.requiresApproval) {
+        setContractBoardPreview(preview)
+        return
+      }
+    }
+    setContractBoardPreview(null)
+
     const baseClauses = activeNeg?.playerDemand.clauses ?? []
     const clauses: ContractClause[] = [...baseClauses]
     const upsertClause = (clause: ContractClause, enabled: boolean, matcher: (c: ContractClause) => boolean) => {
@@ -364,6 +379,8 @@ function NegotiationDialog({
     structure,
     activeNeg,
     submitContractOffer,
+    previewBoardApproval,
+    contractBoardPreview,
     promisedPosition,
     leadershipGroupRole,
     contenderAmbition,
@@ -391,13 +408,24 @@ function NegotiationDialog({
     if (!activeNegId) return
     setError(null)
 
+    // Board approval preview for accepting counter-offer
+    const counterAav = activeNeg?.playerDemand.aav ?? 0
+    if (!contractBoardPreview) {
+      const preview = previewBoardApproval('contract', { aav: counterAav })
+      if (preview.requiresApproval) {
+        setContractBoardPreview(preview)
+        return
+      }
+    }
+    setContractBoardPreview(null)
+
     const result = acceptContractCounterOffer(activeNegId)
     if (!result.success) {
       setError(result.error ?? 'Failed to accept counter-offer')
       return
     }
     setSuccess('Counter-offer accepted! Player has signed.')
-  }, [activeNegId, acceptContractCounterOffer])
+  }, [activeNegId, activeNeg, acceptContractCounterOffer, previewBoardApproval, contractBoardPreview])
 
   const handleWithdraw = useCallback(() => {
     if (!activeNegId) return
@@ -585,12 +613,23 @@ function NegotiationDialog({
                       })()}
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" onClick={handleAcceptCounter}>Accept Counter</Button>
-                    <Button size="sm" variant="outline" onClick={() => { /* Allow revising below */ }}>
-                      Revise Offer
-                    </Button>
-                  </div>
+                  {contractBoardPreview && (
+                    <div className="space-y-2">
+                      <BoardApprovalPanel result={contractBoardPreview} compact />
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={handleAcceptCounter}>Proceed to Board</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setContractBoardPreview(null)}>Cancel</Button>
+                      </div>
+                    </div>
+                  )}
+                  {!contractBoardPreview && (
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={handleAcceptCounter}>Accept Counter</Button>
+                      <Button size="sm" variant="outline" onClick={() => { /* Allow revising below */ }}>
+                        Revise Offer
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -819,9 +858,24 @@ function NegotiationDialog({
                     </div>
                   )}
 
-                  <Button onClick={handleSubmitOffer} disabled={aav <= 0 || years < 1} className="w-full">
-                    Submit Offer
-                  </Button>
+                  {contractBoardPreview && (
+                    <div className="space-y-2">
+                      <BoardApprovalPanel result={contractBoardPreview} compact />
+                      <div className="flex gap-2">
+                        <Button onClick={handleSubmitOffer} className="flex-1">
+                          Proceed to Board
+                        </Button>
+                        <Button variant="ghost" onClick={() => setContractBoardPreview(null)}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  {!contractBoardPreview && (
+                    <Button onClick={handleSubmitOffer} disabled={aav <= 0 || years < 1} className="w-full">
+                      Submit Offer
+                    </Button>
+                  )}
                 </div>
               )}
 
@@ -1287,6 +1341,7 @@ export function ContractsPage() {
   const clubs = useGameStore((s) => s.clubs)
   const phase = useGameStore((s) => s.phase)
   const newsLog = useGameStore((s) => s.newsLog)
+  const offseasonState = useGameStore((s) => s.offseasonState)
 
   const [offerOpen, setOfferOpen] = useState(false)
   const [delistOpen, setDelistOpen] = useState(false)
@@ -1338,6 +1393,23 @@ export function ContractsPage() {
       default: return phase
     }
   })()
+
+  const freeAgencyCountdown = useMemo(() => {
+    if (!offseasonState?.calendarState) return null
+    const cal = offseasonState.calendarState
+    // Show the "Free Agency Opens" countdown before it starts, then "closes" once open
+    const opensMilestone = cal.milestones.find((m) => m.label === 'Free Agency Opens')
+    const closesMilestone = cal.milestones.find((m) => m.label === 'Free Agency Closes')
+    if (opensMilestone && cal.currentDate < opensMilestone.date) {
+      const days = diffDays(cal.currentDate, opensMilestone.date)
+      return { label: 'Free agency opens', days, urgency: days <= 2 ? 'urgent' : days <= 7 ? 'warning' : 'normal' as const }
+    }
+    if (closesMilestone && cal.currentDate <= closesMilestone.date) {
+      const days = diffDays(cal.currentDate, closesMilestone.date)
+      return { label: 'Free agency closes', days, urgency: days <= 2 ? 'urgent' : days <= 7 ? 'warning' : 'normal' as const }
+    }
+    return null
+  }, [offseasonState])
 
   const tableColumns = useMemo(() => {
     const cols = [
@@ -1522,6 +1594,28 @@ export function ContractsPage() {
           </div>
         </div>
       </div>
+
+      {/* Free Agency Deadline Countdown */}
+      {freeAgencyCountdown && (
+        <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+          freeAgencyCountdown.urgency === 'urgent'
+            ? 'border-red-500/40 bg-red-500/10 text-red-600'
+            : freeAgencyCountdown.urgency === 'warning'
+            ? 'border-amber-500/40 bg-amber-500/10 text-amber-600'
+            : 'border-border bg-muted/30 text-muted-foreground'
+        }`}>
+          <Clock className="h-4 w-4 flex-shrink-0" />
+          <span>
+            {freeAgencyCountdown.label}
+            {' — '}
+            {freeAgencyCountdown.days === 0
+              ? 'today'
+              : freeAgencyCountdown.days === 1
+              ? 'tomorrow'
+              : `in ${freeAgencyCountdown.days} days`}
+          </span>
+        </div>
+      )}
 
       {/* Active Negotiations Panel */}
       <ActiveNegotiationsPanel />

@@ -23,12 +23,7 @@ import { PlayerStarRating } from '@/components/player/PlayerStarRating'
 import { POSITION_LINE } from '@/engine/core/constants'
 import { isPlayerEligibleForPositionLine } from '@/engine/player/positionEligibility'
 import { calculatePlayerValue } from '@/engine/contracts/negotiation'
-import {
-  generatePreseasonFixtures,
-  simulatePreseasonMatch,
-  simulateIntraClubMatch,
-} from '@/engine/season/preseasonMatches'
-import type { PreseasonMatchResult } from '@/engine/season/preseasonMatches'
+import { getAvailableOpponents } from '@/engine/season/preseasonEngine'
 import { SeededRNG } from '@/engine/core/rng'
 import type { OffseasonState } from '@/engine/season/offseasonFlow'
 import type { Player } from '@/types/player'
@@ -57,6 +52,10 @@ import {
   Star,
   MapPin,
   UserPlus,
+  Play,
+  X,
+  Loader2,
+  AlertTriangle,
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -962,84 +961,177 @@ function PreseasonPanel() {
 
 function PracticeMatchesPanel({
   playerClubId,
-  players,
   clubs,
 }: {
   playerClubId: string
-  players: Record<string, Player>
-  clubs: Record<string, { homeGround: string; fullName: string; abbreviation: string; colors: { primary: string } }>
+  clubs: Record<string, { fullName: string; abbreviation: string; name: string; homeGround: string; colors: { primary: string } }>
 }) {
-  const [results, setResults] = useState<PreseasonMatchResult[]>([])
-  const [simSeed] = useState(() => Date.now())
+  const pmState = useGameStore((s) => s.offseasonState?.practiceMatchState)
+  const rngSeed = useGameStore((s) => s.rngSeed)
+  const currentYear = useGameStore((s) => s.currentYear)
+  const players = useGameStore((s) => s.players)
+  const schedulePracticeMatch = useGameStore((s) => s.schedulePracticeMatch)
+  const simulatePracticeMatchAction = useGameStore((s) => s.simulatePracticeMatchAction)
+  const delegatePracticeMatchesToAssistant = useGameStore((s) => s.delegatePracticeMatchesToAssistant)
+  const cancelPracticeMatchFixture = useGameStore((s) => s.cancelPracticeMatchFixture)
 
-  const handleFriendly = () => {
-    const rng = new SeededRNG(simSeed + results.length * 113)
-    const fixtures = generatePreseasonFixtures(clubs as Record<string, import('@/types/club').Club>, playerClubId, 1, simSeed + results.length)
-    if (fixtures.length > 0) {
-      const f = fixtures[0]
-      const result = simulatePreseasonMatch(f.homeClubId, f.awayClubId, f.venue, players, rng)
-      setResults((prev) => [...prev, result])
-    }
+  const [showOpponentSelect, setShowOpponentSelect] = useState(false)
+  const [delegating, setDelegating] = useState(false)
+
+  const totalScheduled = pmState?.scheduled.length ?? 0
+  const totalResults = pmState?.results.length ?? 0
+  const totalMatches = totalScheduled + totalResults
+  const friendlyCount =
+    (pmState?.scheduled.filter((x) => x.type === 'friendly').length ?? 0) +
+    (pmState?.results.filter((x) => x.type === 'friendly').length ?? 0)
+  const intraCount =
+    (pmState?.scheduled.filter((x) => x.type === 'intra-squad').length ?? 0) +
+    (pmState?.results.filter((x) => x.type === 'intra-squad').length ?? 0)
+
+  const canAddFriendly = totalMatches < 5 && friendlyCount < 3
+  const canAddIntra = totalMatches < 5 && intraCount < 2
+
+  // Available opponents (shuffled from seed)
+  const opponents = useMemo(() => {
+    const rng = new SeededRNG(rngSeed + currentYear * 97 + totalMatches)
+    return getAvailableOpponents(clubs as Record<string, import('@/types/club').Club>, playerClubId, rng)
+  }, [clubs, playerClubId, rngSeed, currentYear, totalMatches])
+
+  const handleSelectOpponent = (opponentId: string) => {
+    if (!opponentId) return
+    schedulePracticeMatch('friendly', opponentId)
+    setShowOpponentSelect(false)
   }
 
-  const handleIntraClub = () => {
-    const rng = new SeededRNG(simSeed + results.length * 997)
-    const result = simulateIntraClubMatch(playerClubId, players, clubs as Record<string, import('@/types/club').Club>, rng)
-    setResults((prev) => [...prev, result])
+  const handleDelegate = () => {
+    setDelegating(true)
+    // Use setTimeout to allow UI to update before sync operation
+    setTimeout(() => {
+      delegatePracticeMatchesToAssistant()
+      setDelegating(false)
+    }, 50)
   }
 
   return (
     <div className="space-y-4">
-      <p className="text-muted-foreground">
-        Schedule practice matches to prepare your squad for the season.
+      <p className="text-sm text-muted-foreground">
+        Schedule practice matches to prepare your squad. Results affect player form, fatigue, and may cause injuries.
       </p>
 
-      <div className="flex gap-3">
-        <Button variant="default" onClick={handleFriendly} disabled={results.length >= 4}>
-          <Swords className="mr-1.5 h-4 w-4" />
-          Schedule Friendly
-        </Button>
-        <Button variant="outline" onClick={handleIntraClub} disabled={results.length >= 4}>
+      {/* Action buttons */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <div className="relative">
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => setShowOpponentSelect((v) => !v)}
+            disabled={!canAddFriendly}
+          >
+            <Swords className="mr-1.5 h-4 w-4" />
+            + Schedule Friendly
+          </Button>
+          {showOpponentSelect && (
+            <div className="absolute top-full left-0 mt-1 z-10 min-w-[200px] rounded-md border border-border bg-popover shadow-md p-1">
+              {opponents.map((id) => {
+                const club = clubs[id]
+                return (
+                  <button
+                    key={id}
+                    className="w-full text-left px-3 py-1.5 text-sm rounded hover:bg-accent hover:text-accent-foreground transition-colors"
+                    onClick={() => handleSelectOpponent(id)}
+                  >
+                    {club?.name ?? id}
+                  </button>
+                )
+              })}
+              <button
+                className="w-full text-left px-3 py-1.5 text-sm text-muted-foreground rounded hover:bg-accent hover:text-accent-foreground transition-colors"
+                onClick={() => setShowOpponentSelect(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => schedulePracticeMatch('intra-squad')}
+          disabled={!canAddIntra}
+        >
           <Users className="mr-1.5 h-4 w-4" />
-          Intra-Club Match
+          + Intra-Squad
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleDelegate}
+          disabled={totalScheduled === 0 || delegating}
+        >
+          {delegating ? (
+            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+          ) : (
+            <Play className="mr-1.5 h-4 w-4" />
+          )}
+          Delegate to Coaches
         </Button>
       </div>
 
-      {results.length > 0 && (
+      {/* Counts */}
+      <p className="text-xs text-muted-foreground">
+        Friendly: {friendlyCount}/3 · Intra-squad: {intraCount}/2
+      </p>
+
+      {/* Queued fixtures */}
+      {totalScheduled > 0 && (
         <div className="space-y-2">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-            Results ({results.length})
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            Queued
           </p>
-          {results.map((r, i) => {
-            const homeClub = clubs[r.homeClubId]
-            const awayClub = r.isIntraClub ? null : clubs[r.awayClubId]
+          {pmState!.scheduled.map((fixture) => {
+            const isIntra = fixture.type === 'intra-squad'
+            const homeClub = clubs[fixture.homeClubId]
+            const awayClub = clubs[fixture.awayClubId]
+            const label = isIntra
+              ? `Intra-squad @ ${fixture.venue}`
+              : `vs ${awayClub?.name ?? fixture.awayClubId} @ ${fixture.venue}`
             return (
-              <div key={i} className="flex items-center justify-between rounded border border-border/50 bg-muted/30 p-3">
-                <div className="flex items-center gap-2">
-                  <div
-                    className="h-4 w-4 rounded-full"
-                    style={{ backgroundColor: homeClub?.colors.primary ?? '#666' }}
-                  />
-                  <span className="text-sm font-medium">
-                    {r.isIntraClub ? 'Team A' : (homeClub?.abbreviation ?? r.homeClubId)}
-                  </span>
-                </div>
-                <div className="text-center">
-                  <span className="text-sm font-bold font-mono">
-                    {r.homeScore.goals}.{r.homeScore.behinds} ({r.homeScore.total}) - {r.awayScore.goals}.{r.awayScore.behinds} ({r.awayScore.total})
-                  </span>
-                  <p className="text-[10px] text-muted-foreground">{r.venue}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium">
-                    {r.isIntraClub ? 'Team B' : (awayClub?.abbreviation ?? r.awayClubId)}
-                  </span>
-                  {!r.isIntraClub && (
+              <div
+                key={fixture.id}
+                className="flex items-center justify-between rounded border border-border/50 bg-muted/30 px-3 py-2"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  {!isIntra && homeClub && (
                     <div
-                      className="h-4 w-4 rounded-full"
-                      style={{ backgroundColor: awayClub?.colors.primary ?? '#666' }}
+                      className="h-3 w-3 flex-shrink-0 rounded-full"
+                      style={{ backgroundColor: homeClub.colors.primary }}
                     />
                   )}
+                  <span className="text-sm truncate">{label}</span>
+                  <span className="text-xs text-muted-foreground capitalize flex-shrink-0">
+                    {fixture.type}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs gap-1"
+                    onClick={() => simulatePracticeMatchAction(fixture.id)}
+                  >
+                    <Play className="h-3 w-3" />
+                    Simulate
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                    onClick={() => cancelPracticeMatchFixture(fixture.id)}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
                 </div>
               </div>
             )
@@ -1047,8 +1139,94 @@ function PracticeMatchesPanel({
         </div>
       )}
 
-      {results.length === 0 && (
-        <div className="grid grid-cols-2 gap-3">
+      {/* Results */}
+      {totalResults > 0 && (
+        <div className="space-y-3">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            Results
+          </p>
+          {pmState!.results.map((result) => {
+            const isIntra = result.type === 'intra-squad'
+            const homeClub = clubs[result.homeClubId]
+            const awayClub = clubs[result.awayClubId]
+            const homeWon = result.homeScore.total > result.awayScore.total
+            const homeAbbr = isIntra ? 'Red' : (homeClub?.abbreviation ?? result.homeClubId)
+            const awayAbbr = isIntra ? 'Blue' : (awayClub?.abbreviation ?? result.awayClubId)
+
+            // Top 3 performers overall
+            const topPerformers = [...result.playerStats]
+              .sort((a, b) => b.performanceRating - a.performanceRating)
+              .slice(0, 3)
+
+            return (
+              <div
+                key={result.fixtureId}
+                className="rounded border border-border/50 bg-muted/20 p-3 space-y-2"
+              >
+                {/* Score line */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+                    <span className="text-sm font-medium font-mono">
+                      {homeAbbr} {result.homeScore.goals}.{result.homeScore.behinds} ({result.homeScore.total}){' '}
+                      {homeWon ? 'def' : 'lost to'}{' '}
+                      {awayAbbr} {result.awayScore.goals}.{result.awayScore.behinds} ({result.awayScore.total})
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground capitalize">{result.type}</span>
+                </div>
+
+                {/* Top performers */}
+                {topPerformers.length > 0 && (
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <span className="text-muted-foreground">Top performers:</span>
+                    {topPerformers.map((stat) => {
+                      const p = players[stat.playerId]
+                      const name = p ? `${p.firstName[0]}. ${p.lastName}` : stat.playerId
+                      return (
+                        <span key={stat.playerId} className="flex items-center gap-0.5">
+                          <Star className="h-3 w-3 text-amber-400" />
+                          <span className="font-medium">{name}</span>
+                          <span className="text-muted-foreground">{stat.performanceRating.toFixed(1)}</span>
+                        </span>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* Injuries */}
+                {result.injuredPlayerIds.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 items-center text-xs">
+                    <AlertTriangle className="h-3.5 w-3.5 text-amber-500 flex-shrink-0" />
+                    <span className="text-muted-foreground">Injuries:</span>
+                    {result.injuredPlayerIds.map((pid) => {
+                      const p = players[pid]
+                      const name = p ? `${p.firstName[0]}. ${p.lastName}` : pid
+                      const weeks = p?.injury?.weeksRemaining ?? '?'
+                      return (
+                        <span
+                          key={pid}
+                          className="rounded bg-red-500/15 border border-red-500/30 px-1.5 py-0.5 text-red-400"
+                        >
+                          {name} ({weeks} wk{weeks !== 1 ? 's' : ''})
+                        </span>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* Form impact note */}
+                <p className="text-[10px] text-muted-foreground">
+                  Participants gained form +2 to +6 · fatigue +6 · Non-starters: form −1
+                </p>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {totalMatches === 0 && (
+        <div className="grid grid-cols-2 gap-3 mt-2">
           <div className="rounded-lg border border-border/50 bg-muted/30 p-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wide">Matches Played</p>
             <p className="text-lg font-bold mt-1">0</p>
@@ -1056,8 +1234,8 @@ function PracticeMatchesPanel({
           </div>
           <div className="rounded-lg border border-border/50 bg-muted/30 p-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wide">Max Matches</p>
-            <p className="text-lg font-bold mt-1">4</p>
-            <p className="text-xs text-muted-foreground">Friendlies + intra-club</p>
+            <p className="text-lg font-bold mt-1">5</p>
+            <p className="text-xs text-muted-foreground">3 friendlies + 2 intra-squad</p>
           </div>
         </div>
       )}
@@ -1488,7 +1666,6 @@ function CurrentPhasePanel({
         {currentPhase === 'practice-matches' && (
           <PracticeMatchesPanel
             playerClubId={playerClubId}
-            players={players}
             clubs={clubs}
           />
         )}
