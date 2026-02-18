@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { useGameStore } from '@/stores/gameStore'
 import {
   Dialog,
@@ -38,17 +38,7 @@ function formatDollars(value: number): string {
   return '$' + value.toLocaleString('en-AU', { maximumFractionDigits: 0 })
 }
 
-function formatDelta(value: number, invert?: boolean): JSX.Element {
-  if (value === 0) return <span className="text-muted-foreground">-</span>
-  // invert: true means negative is good (green), positive is bad (red)
-  const isPositive = value > 0
-  const isGood = invert ? !isPositive : isPositive
-  const color = isGood ? 'text-green-500' : 'text-red-500'
-  const prefix = isPositive ? '+' : ''
-  return <span className={color}>{prefix}{typeof value === 'number' && Math.abs(value) >= 1000 ? formatDollars(value).replace('$', (isPositive ? '+$' : '-$')).replace('+-', '+').replace('--', '-') : value.toFixed(1)}</span>
-}
-
-function formatDemandDelta(value: number): JSX.Element {
+function formatDemandDelta(value: number): ReactNode {
   if (value === 0) return <span className="text-muted-foreground">-</span>
   // Demand decreasing = green (good for club), increasing = red
   const isPositive = value > 0
@@ -57,7 +47,7 @@ function formatDemandDelta(value: number): JSX.Element {
   return <span className={color}>{prefix}{formatDollars(Math.abs(value)).replace('$', isPositive ? '+$' : '-$')}</span>
 }
 
-function formatOverallDelta(value: number): JSX.Element {
+function formatOverallDelta(value: number): ReactNode {
   if (Math.abs(value) < 0.05) return <span className="text-muted-foreground">-</span>
   const isPositive = value > 0
   const color = isPositive ? 'text-green-500' : 'text-red-500'

@@ -41,9 +41,9 @@ export function FieldSvg({ idPrefix }: FieldSvgProps) {
         fill="none" stroke="#ffffff7a" strokeWidth="2.5"
       />
 
-      {/* Halfway line */}
+      {/* Centre line (diameter of outer centre circle only) */}
       <line
-        x1="10" y1="350" x2="530" y2="350"
+        x1="250" y1="350" x2="290" y2="350"
         stroke="#ffffff2f" strokeWidth="1.3"
         clipPath={`url(#${clipId})`}
       />
@@ -72,12 +72,12 @@ export function FieldSvg({ idPrefix }: FieldSvgProps) {
           Bottom arc: centre at (270,675), intersects oval at (92,591) and (448,591) */}
       <path
         d="M 92,109 A 197,197 0 0,1 448,109"
-        fill="none" stroke="#ffffff37" strokeWidth="1.5"
+        fill="none" stroke="#ffffff70" strokeWidth="1.9"
         clipPath={`url(#${clipId})`}
       />
       <path
         d="M 92,591 A 197,197 0 0,0 448,591"
-        fill="none" stroke="#ffffff37" strokeWidth="1.5"
+        fill="none" stroke="#ffffff70" strokeWidth="1.9"
         clipPath={`url(#${clipId})`}
       />
 

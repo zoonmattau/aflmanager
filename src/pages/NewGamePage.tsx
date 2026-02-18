@@ -43,10 +43,13 @@ import type { Club } from '@/types/club'
 import type { CustomLeagueTemplate } from '@/types/customLeague'
 import type { LeagueConfig } from '@/types/expansion'
 import type { OffseasonPhase } from '@/engine/season/offseasonFlow'
+import type { StateLeague, StateLeagueId } from '@/types/stateLeague'
 import { AdvancedSection } from '@/pages/wizard/AdvancedSection'
 import { MatchSlotGrid } from '@/pages/wizard/MatchSlotGrid'
 import { BlockbusterEditor } from '@/pages/wizard/BlockbusterEditor'
 import { FinalsFormatEditor } from '@/pages/wizard/FinalsFormatEditor'
+import { AffiliateManagementEditor } from '@/components/stateLeague/AffiliateManagementEditor'
+import { applyStateLeagueAffiliationSettings, initializeStateLeagues } from '@/engine/stateLeague/stateLeagueEngine'
 import { SPECIAL_EVENT_DEFINITIONS } from '@/engine/specialEvents/eventDefinitions'
 import type { SpecialEventId, OriginEligibility, OriginConfig, OriginState, OriginCompetitionFormat, OriginScheduleMode } from '@/types/specialEvents'
 import { ALL_ORIGIN_STATES } from '@/types/specialEvents'
@@ -479,6 +482,27 @@ export function NewGamePage() {
     [clubs, selectedClub],
   )
 
+  const previewStateLeagues = useMemo(() => {
+    const clubRecord: Record<string, { id: string; name: string; abbreviation: string; colors: { primary: string; secondary: string }; homeGround: string }> = {}
+    for (const club of clubs) {
+      clubRecord[club.id] = {
+        id: club.id,
+        name: club.name,
+        abbreviation: club.abbreviation,
+        colors: {
+          primary: club.colors.primary,
+          secondary: club.colors.secondary,
+        },
+        homeGround: club.homeGround,
+      }
+    }
+    const initialized = initializeStateLeagues(clubRecord, 2026, 1, {
+      namingTemplate: settings.leagueNamingTemplate,
+      includePathways: settings.includePathwayLeagues,
+    })
+    return applyStateLeagueAffiliationSettings(initialized, settings.stateLeagueAffiliations) as Record<StateLeagueId, StateLeague>
+  }, [clubs, settings.includePathwayLeagues, settings.leagueNamingTemplate, settings.stateLeagueAffiliations])
+
   const filteredClubs = useMemo(() => {
     if (!clubSearch.trim()) return clubs
     const query = clubSearch.toLowerCase()
@@ -522,7 +546,12 @@ export function NewGamePage() {
         setSelectedClub(null)
         setStartUnemployed(false)
         if (selectedTemplate) {
-          setSettings(buildSettingsFromTemplate(selectedTemplate))
+          const templateSettings = buildSettingsFromTemplate(selectedTemplate)
+          setSettings((prev) => ({
+            ...templateSettings,
+            leagueNamingTemplate: prev.leagueNamingTemplate,
+            includePathwayLeagues: prev.includePathwayLeagues,
+          }))
         }
       }
       setCurrentStep((s) => s + 1)
@@ -537,7 +566,13 @@ export function NewGamePage() {
 
   const handleStartGame = async () => {
     if (!selectedClub && !startUnemployed) return
-    const customOverrideSettings = selectedTemplate ? buildSettingsFromTemplate(selectedTemplate) : settings
+    const customOverrideSettings = selectedTemplate
+      ? {
+        ...buildSettingsFromTemplate(selectedTemplate),
+        leagueNamingTemplate: settings.leagueNamingTemplate,
+        includePathwayLeagues: settings.includePathwayLeagues,
+      }
+      : settings
     const leagueConfigOverride: LeagueConfig | undefined = selectedTemplate
       ? buildLeagueConfigFromTemplate(selectedTemplate)
       : undefined
@@ -787,6 +822,50 @@ export function NewGamePage() {
                   </Card>
                 ))}
               </div>
+
+              <Card className="border-zinc-800 bg-zinc-900/50">
+                <CardHeader>
+                  <CardTitle className="text-white">League Universe Template</CardTitle>
+                  <CardDescription>Run real-life-style or fictional naming across state and pathway leagues.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-zinc-200">Naming Template</Label>
+                    <Select
+                      value={settings.leagueNamingTemplate}
+                      onValueChange={(val) =>
+                        setSettings((prev) => ({
+                          ...prev,
+                          leagueNamingTemplate: val as GameSettings['leagueNamingTemplate'],
+                        }))
+                      }
+                    >
+                      <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-white">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="real-life">Real-life-style</SelectItem>
+                        <SelectItem value="fictional">Fictional naming</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-zinc-200">U16/U18 Pathways</Label>
+                      <p className="text-xs text-zinc-500">Enable underage competitions in the same world simulation.</p>
+                    </div>
+                    <Switch
+                      checked={settings.includePathwayLeagues}
+                      onCheckedChange={(checked) =>
+                        setSettings((prev) => ({
+                          ...prev,
+                          includePathwayLeagues: checked,
+                        }))
+                      }
+                    />
+                  </div>
+                </CardContent>
+              </Card>
 
               {settings.leagueMode === 'fictional' && (
                 <Card className="border-zinc-800 bg-zinc-900/50">
@@ -1413,7 +1492,7 @@ export function NewGamePage() {
                       <div>
                         <Label className="text-zinc-200">Interchange Players</Label>
                         <p className="text-xs text-zinc-500">
-                          Match day squad: {18 + settings.matchRules.interchangePlayers}
+                          Match day squad: {18 + settings.matchRules.interchangePlayers + (settings.matchRules.enableSubstitutes ? 1 : 0)}
                         </p>
                       </div>
                       <span className="w-6 text-right text-sm font-bold tabular-nums text-zinc-200">
@@ -1438,6 +1517,22 @@ export function NewGamePage() {
                       <span>5 (2026 AFL)</span>
                       <span>8 (max)</span>
                     </div>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-zinc-200">Enable Match-Day Substitute</Label>
+                      <p className="text-xs text-zinc-500">Adds one tactical substitute who can be activated in-game</p>
+                    </div>
+                    <Switch
+                      checked={settings.matchRules.enableSubstitutes}
+                      onCheckedChange={(val) =>
+                        setSettings((prev) => ({
+                          ...prev,
+                          matchRules: { ...prev.matchRules, enableSubstitutes: val },
+                        }))
+                      }
+                    />
                   </div>
                 </CardContent>
               </Card>
@@ -1791,6 +1886,23 @@ export function NewGamePage() {
                 </CardContent>
               </Card>
 
+              <AffiliateManagementEditor
+                clubs={clubs.map((club) => ({
+                  id: club.id,
+                  name: club.name,
+                  abbreviation: club.abbreviation,
+                }))}
+                stateLeagues={previewStateLeagues}
+                value={settings.stateLeagueAffiliations}
+                onChange={(next) =>
+                  setSettings((prev) => ({
+                    ...prev,
+                    stateLeagueAffiliations: next,
+                  }))}
+                title="State League Affiliate Management"
+                description="Swap AFL club affiliate leagues before starting your save. Fixture and ladder structures are generated from these affiliations."
+              />
+
               {/* Realism Settings */}
               <Card className="border-zinc-800 bg-zinc-900/50">
                 <CardHeader>
@@ -1966,7 +2078,7 @@ export function NewGamePage() {
                       <div className="flex items-center justify-between">
                         <div>
                           <Label className="text-zinc-200">AFL Competition Evolution</Label>
-                          <p className="text-xs text-zinc-500">AFL House may switch to conferences or divisions</p>
+                          <p className="text-xs text-zinc-500">AFL House may switch competition models and trigger state/pathway restructures</p>
                         </div>
                         <Switch checked={settings.realism.aflHouseCompetitionEvolution} onCheckedChange={(val) => updateRealism('aflHouseCompetitionEvolution', val)} />
                       </div>
@@ -2203,8 +2315,24 @@ export function NewGamePage() {
                   value={
                     settings.leagueMode === 'real'
                       ? 'Real AFL (18 teams)'
-                      : `Fictional (${settings.teamCount} teams)`
+                      : settings.leagueMode === 'custom'
+                        ? 'Custom Template'
+                        : `Fictional (${settings.teamCount} teams)`
                   }
+                />
+                <SummaryRow
+                  label="Naming Template"
+                  value={settings.leagueNamingTemplate === 'real-life' ? 'Real-life-style' : 'Fictional'}
+                />
+                <SummaryRow
+                  label="Pathway Leagues"
+                  value={settings.includePathwayLeagues ? 'U16 + U18 enabled' : 'Disabled'}
+                />
+                <SummaryRow
+                  label="Affiliations"
+                  value={settings.stateLeagueAffiliations.allowCustomAffiliations
+                    ? `${Object.keys(settings.stateLeagueAffiliations.clubAffiliations).length} custom overrides`
+                    : 'Automatic'}
                 />
                 <SummaryRow
                   label="Regular Season"
@@ -2253,7 +2381,7 @@ export function NewGamePage() {
                 />
                 <SummaryRow
                   label="Interchange"
-                  value={`${settings.matchRules.interchangePlayers} (squad of ${18 + settings.matchRules.interchangePlayers})`}
+                  value={`${settings.matchRules.interchangePlayers}${settings.matchRules.enableSubstitutes ? ' + Sub' : ''} (squad of ${18 + settings.matchRules.interchangePlayers + (settings.matchRules.enableSubstitutes ? 1 : 0)})`}
                 />
                 <SummaryRow
                   label="Ladder Points"

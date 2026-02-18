@@ -25,6 +25,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ShortlistAssignMenu, ShortlistManager } from '@/components/shortlists/ShortlistManager'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -713,12 +714,13 @@ function ProspectReportsTab({
                   </TableHead>
                   <TableHead className="px-3 text-center">Sessions</TableHead>
                   <TableHead className="px-3 text-center">Pot.</TableHead>
+                  <TableHead className="px-3 text-center">Shortlist</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filtered.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
                       No prospects match your filters.
                     </TableCell>
                   </TableRow>
@@ -797,10 +799,13 @@ function ProspectReportsTab({
                               ? `${Math.round(report.potentialRange[0])}-${Math.round(report.potentialRange[1])}`
                               : '?'}
                           </TableCell>
+                          <TableCell className="px-3 text-center">
+                            <ShortlistAssignMenu targetType="prospect" targetId={prospect.id} buttonLabel="Assign" buttonVariant="ghost" buttonSize="sm" />
+                          </TableCell>
                         </TableRow>
                         {isExpanded && (
                           <TableRow>
-                            <TableCell colSpan={9} className="p-0 bg-muted/30">
+                            <TableCell colSpan={10} className="p-0 bg-muted/30">
                               <ProspectExpandedRow
                                 prospect={prospect}
                                 report={report ?? null}
@@ -996,6 +1001,7 @@ export function ScoutingPage() {
         <TabsList>
           <TabsTrigger value="scouts">My Scouts</TabsTrigger>
           <TabsTrigger value="prospects">Prospect Reports</TabsTrigger>
+          <TabsTrigger value="shortlists">Shortlists</TabsTrigger>
         </TabsList>
 
         <TabsContent value="scouts">
@@ -1014,6 +1020,10 @@ export function ScoutingPage() {
             prospects={prospects}
             playerClubId={playerClubId}
           />
+        </TabsContent>
+
+        <TabsContent value="shortlists">
+          <ShortlistManager targetTypeFilter="prospect" title="Scouting Watchlists" />
         </TabsContent>
       </Tabs>
     </div>

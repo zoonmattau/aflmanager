@@ -6,6 +6,8 @@ export interface QuarterScore {
 
 export interface MatchPlayerStats {
   playerId: string
+  participated: boolean
+  selectedAsSubstitute?: boolean
   minutesPlayed: number
   aflFantasyPoints: number
   superCoachPoints: number
@@ -63,6 +65,8 @@ export interface MatchResult {
     travelFatigue: { home: number; away: number }
     ratingInputs: { home: number; away: number }
     umpiringRisk?: { home: number; away: number }
+    attendance?: number
+    capacityPct?: number
   }
 }
 

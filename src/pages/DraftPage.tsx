@@ -34,6 +34,9 @@ import {
   getPlayerEligiblePositionTypes,
   isProspectEligibleForPositionType,
 } from '@/engine/player/positionEligibility'
+import { useTableViewManager, type TableViewColumnConfig } from '@/components/table-view/useTableViewManager'
+import { TableViewManagerControl } from '@/components/table-view/TableViewManagerControl'
+import { ShortlistAssignMenu, ShortlistManager } from '@/components/shortlists/ShortlistManager'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -586,8 +589,7 @@ function DraftBoardTab({
   onSelectProspect,
   bestAvailable,
   teamNeeds,
-  shortlist,
-  onToggleShortlist,
+  shortlists,
 }: {
   picks: DraftPick[]
   prospects: DraftProspect[]
@@ -598,8 +600,7 @@ function DraftBoardTab({
   onSelectProspect: (pickIndex: number, prospectId: string) => void
   bestAvailable: DraftProspect[]
   teamNeeds: PlayerPositionType[]
-  shortlist: DraftProspect[]
-  onToggleShortlist: (prospectId: string) => void
+  shortlists: import('@/types/game').Shortlist[]
 }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [activePick, setActivePick] = useState<{
@@ -614,6 +615,25 @@ function DraftBoardTab({
     }
     return map
   }, [prospects])
+
+  const shortlistRows = useMemo(() => {
+    const rows: Array<{ prospect: DraftProspect; shortlistName: string; priority: string }> = []
+    for (const list of shortlists) {
+      for (const entry of list.entries) {
+        if (entry.targetType !== 'prospect') continue
+        const prospect = prospectMap.get(entry.targetId)
+        if (!prospect || draftedIds.has(prospect.id)) continue
+        rows.push({
+          prospect,
+          shortlistName: list.name,
+          priority: entry.priority,
+        })
+      }
+    }
+    return rows
+      .sort((a, b) => rankProspectForUser(b.prospect, playerClubId) - rankProspectForUser(a.prospect, playerClubId))
+      .slice(0, 10)
+  }, [shortlists, prospectMap, draftedIds, playerClubId])
 
   const handleOpenDialog = (pickIndex: number, pickNumber: number) => {
     setActivePick({ index: pickIndex, pickNumber })
@@ -642,9 +662,7 @@ function DraftBoardTab({
                     {p.position.primary} • Proj #{p.projectedPick}
                   </p>
                 </div>
-                <Button size="sm" variant="outline" onClick={() => onToggleShortlist(p.id)}>
-                  {shortlist.some((s) => s.id === p.id) ? 'Unlist' : 'Shortlist'}
-                </Button>
+                <ShortlistAssignMenu targetType="prospect" targetId={p.id} buttonLabel="Shortlist" buttonVariant="outline" buttonSize="sm" />
               </div>
             ))}
           </CardContent>
@@ -670,16 +688,16 @@ function DraftBoardTab({
             <CardTitle className="text-sm">Shortlist</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {shortlist.length === 0 ? (
+            {shortlistRows.length === 0 ? (
               <p className="text-sm text-muted-foreground">No shortlisted prospects yet.</p>
             ) : (
-              shortlist.slice(0, 10).map((p) => (
-                <div key={p.id} className="flex items-center justify-between gap-2 text-sm">
+              shortlistRows.map(({ prospect, shortlistName, priority }) => (
+                <div key={`${shortlistName}-${prospect.id}`} className="flex items-center justify-between gap-2 text-sm">
                   <div className="min-w-0">
-                    <p className="font-medium truncate">{p.firstName} {p.lastName}</p>
-                    <p className="text-xs text-muted-foreground">{p.position.primary} • {p.tier}</p>
+                    <p className="font-medium truncate">{prospect.firstName} {prospect.lastName}</p>
+                    <p className="text-xs text-muted-foreground">{prospect.position.primary} • {shortlistName}</p>
                   </div>
-                  <Button size="sm" variant="ghost" onClick={() => onToggleShortlist(p.id)}>Remove</Button>
+                  <Badge variant={priority === 'critical' ? 'destructive' : priority === 'high' ? 'default' : 'secondary'}>{priority}</Badge>
                 </div>
               ))
             )}
@@ -857,16 +875,42 @@ function ProspectListTab({
   const [posFilter, setPosFilter] = useState<PlayerPositionType | ''>('')
   const [regionFilter, setRegionFilter] = useState<ScoutingRegion | ''>('')
   const [tierFilter, setTierFilter] = useState<DraftProspect['tier'] | ''>('')
-  const [sortField, setSortField] = useState<ProspectSortField>('projectedPick')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const tableColumns = useMemo<TableViewColumnConfig[]>(
+    () => [
+      { id: 'projectedPick', label: 'Rank', defaultWidth: 64, sortable: true },
+      { id: 'name', label: 'Name', defaultWidth: 180, sortable: true },
+      { id: 'position', label: 'Position', defaultWidth: 88, sortable: true },
+      { id: 'age', label: 'Age', defaultWidth: 56, sortable: true },
+      { id: 'height', label: 'Ht', defaultWidth: 64, sortable: true },
+      { id: 'weight', label: 'Wt', defaultWidth: 64, sortable: true },
+      { id: 'region', label: 'Region', defaultWidth: 84, sortable: true },
+      { id: 'tier', label: 'Tier', defaultWidth: 92, sortable: true },
+      { id: 'overall', label: 'Scouted', defaultWidth: 92, sortable: true },
+      { id: 'potential', label: 'Potential', defaultWidth: 96, sortable: false },
+      { id: 'pathway', label: 'Pathway', defaultWidth: 120, sortable: false },
+      { id: 'home', label: 'Home', defaultWidth: 84, sortable: false },
+      { id: 'archetype', label: 'Archetype', defaultWidth: 112, sortable: false },
+      { id: 'role', label: 'Role', defaultWidth: 110, sortable: false },
+      { id: 'fs', label: 'F/S', defaultWidth: 84, sortable: false },
+      { id: 'status', label: '', defaultWidth: 80, sortable: false },
+    ],
+    [],
+  )
+  const tableView = useTableViewManager({
+    tableId: 'draft-prospect-list',
+    columns: tableColumns,
+    defaultSort: { columnId: 'projectedPick', direction: 'asc' },
+  })
+  const sortField = (tableView.snapshot.sort?.columnId ?? 'projectedPick') as ProspectSortField
+  const sortDir = tableView.snapshot.sort?.direction ?? 'asc'
 
   const handleSort = (field: ProspectSortField) => {
-    if (sortField === field) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-    } else {
-      setSortField(field)
-      setSortDir('asc')
+    const current = tableView.snapshot.sort
+    if (current?.columnId === field) {
+      tableView.setSort(field, current.direction === 'asc' ? 'desc' : 'asc')
+      return
     }
+    tableView.setSort(field, 'asc')
   }
 
   const sortIndicator = (field: ProspectSortField) => {
@@ -944,6 +988,11 @@ function ProspectListTab({
     return list
   }, [prospects, search, posFilter, regionFilter, tierFilter, sortField, sortDir, playerClubId])
 
+  const visibleColumnIds = useMemo(() => {
+    const hidden = new Set(tableView.snapshot.hiddenColumnIds)
+    return tableView.snapshot.columnOrder.filter((id) => !hidden.has(id))
+  }, [tableView.snapshot.columnOrder, tableView.snapshot.hiddenColumnIds])
+
   return (
     <div className="space-y-4">
       {/* Filters */}
@@ -1010,6 +1059,8 @@ function ProspectListTab({
             Clear Filters
           </Button>
         )}
+
+        <TableViewManagerControl columns={tableColumns} manager={tableView} />
       </div>
 
       <p className="text-sm text-muted-foreground">
@@ -1023,67 +1074,27 @@ function ProspectListTab({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead
-                    className="w-16 cursor-pointer select-none text-center"
-                    onClick={() => handleSort('projectedPick')}
-                  >
-                    Rank{sortIndicator('projectedPick')}
-                  </TableHead>
-                  <TableHead
-                    className="cursor-pointer select-none"
-                    onClick={() => handleSort('name')}
-                  >
-                    Name{sortIndicator('name')}
-                  </TableHead>
-                  <TableHead
-                    className="cursor-pointer select-none"
-                    onClick={() => handleSort('position')}
-                  >
-                    Position{sortIndicator('position')}
-                  </TableHead>
-                  <TableHead
-                    className="w-14 cursor-pointer select-none text-center"
-                    onClick={() => handleSort('age')}
-                  >
-                    Age{sortIndicator('age')}
-                  </TableHead>
-                  <TableHead
-                    className="w-16 cursor-pointer select-none text-center"
-                    onClick={() => handleSort('height')}
-                  >
-                    Ht{sortIndicator('height')}
-                  </TableHead>
-                  <TableHead
-                    className="w-16 cursor-pointer select-none text-center"
-                    onClick={() => handleSort('weight')}
-                  >
-                    Wt{sortIndicator('weight')}
-                  </TableHead>
-                  <TableHead
-                    className="cursor-pointer select-none"
-                    onClick={() => handleSort('region')}
-                  >
-                    Region{sortIndicator('region')}
-                  </TableHead>
-                  <TableHead
-                    className="cursor-pointer select-none"
-                    onClick={() => handleSort('tier')}
-                  >
-                    Tier{sortIndicator('tier')}
-                  </TableHead>
-                  <TableHead
-                    className="w-24 cursor-pointer select-none text-center"
-                    onClick={() => handleSort('overall')}
-                  >
-                    Scouted{sortIndicator('overall')}
-                  </TableHead>
-                  <TableHead className="text-center">Potential</TableHead>
-                  <TableHead>Pathway</TableHead>
-                  <TableHead>Home</TableHead>
-                  <TableHead>Archetype</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead className="text-center">F/S</TableHead>
-                  <TableHead className="w-20" />
+                  {visibleColumnIds.map((colId) => {
+                    const isSortable = ['projectedPick', 'name', 'position', 'age', 'height', 'weight', 'region', 'tier', 'overall'].includes(colId)
+                    const baseClass =
+                      colId === 'projectedPick' || colId === 'age' || colId === 'height' || colId === 'weight' || colId === 'overall' || colId === 'potential' || colId === 'fs'
+                        ? 'text-center'
+                        : ''
+                    const label = tableColumns.find((c) => c.id === colId)?.label ?? colId
+                    return (
+                      <TableHead
+                        key={colId}
+                        className={`${isSortable ? 'cursor-pointer select-none' : ''} ${baseClass}`}
+                        style={{ width: tableView.snapshot.columnWidths[colId] ?? tableColumns.find((c) => c.id === colId)?.defaultWidth ?? 100 }}
+                        onClick={() => {
+                          if (!isSortable) return
+                          handleSort(colId as ProspectSortField)
+                        }}
+                      >
+                        {label}{isSortable ? sortIndicator(colId as ProspectSortField) : ''}
+                      </TableHead>
+                    )
+                  })}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1094,69 +1105,43 @@ function ProspectListTab({
                       key={prospect.id}
                       className={isDrafted ? 'opacity-40' : ''}
                     >
-                      <TableCell className="text-center font-mono">
-                        {prospect.projectedPick}
-                      </TableCell>
-                      <TableCell className="font-medium">
-                        {prospect.firstName} {prospect.lastName}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant="outline"
-                          title={getProspectEligiblePositionTypes(prospect).join(', ')}
-                        >
-                          {prospect.position.primary}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-center">
-                        {prospect.age}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        {prospect.height}cm
-                      </TableCell>
-                      <TableCell className="text-center">
-                        {prospect.weight}kg
-                      </TableCell>
-                      <TableCell>{prospect.region}</TableCell>
-                      <TableCell>
-                        <TierBadge tier={prospect.tier} />
-                      </TableCell>
-                      <TableCell className="text-center font-mono">
-                        {getScoutedRange(prospect, playerClubId)}
-                      </TableCell>
-                      <TableCell className="text-center font-mono">
-                        {getScoutedPotentialRange(prospect, playerClubId)}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {prospect.pathway}
-                      </TableCell>
-                      <TableCell className="text-sm">{prospect.homeState}</TableCell>
-                      <TableCell className="text-sm">{prospect.archetype}</TableCell>
-                      <TableCell className="text-sm">{prospect.role}</TableCell>
-                      <TableCell className="text-center">
-                        {prospect.linkedClubId
-                          ? (
-                            <Badge variant="outline" className="text-xs">
-                              {clubs[prospect.linkedClubId]?.abbreviation ??
-                                prospect.linkedClubId}
+                      {visibleColumnIds.map((colId) => (
+                        <TableCell key={`${prospect.id}-${colId}`} className={colId === 'projectedPick' || colId === 'age' || colId === 'height' || colId === 'weight' || colId === 'overall' || colId === 'potential' || colId === 'fs' ? 'text-center' : ''}>
+                          {colId === 'projectedPick' && <span className="font-mono">{prospect.projectedPick}</span>}
+                          {colId === 'name' && <span className="font-medium">{prospect.firstName} {prospect.lastName}</span>}
+                          {colId === 'position' && (
+                            <Badge variant="outline" title={getProspectEligiblePositionTypes(prospect).join(', ')}>
+                              {prospect.position.primary}
                             </Badge>
-                          )
-                          : '-'}
-                      </TableCell>
-                      <TableCell>
-                        {isDrafted && (
-                          <Badge variant="secondary" className="text-xs">
-                            DRAFTED
-                          </Badge>
-                        )}
-                      </TableCell>
+                          )}
+                          {colId === 'age' && prospect.age}
+                          {colId === 'height' && `${prospect.height}cm`}
+                          {colId === 'weight' && `${prospect.weight}kg`}
+                          {colId === 'region' && prospect.region}
+                          {colId === 'tier' && <TierBadge tier={prospect.tier} />}
+                          {colId === 'overall' && <span className="font-mono">{getScoutedRange(prospect, playerClubId)}</span>}
+                          {colId === 'potential' && <span className="font-mono">{getScoutedPotentialRange(prospect, playerClubId)}</span>}
+                          {colId === 'pathway' && <span className="text-sm text-muted-foreground">{prospect.pathway}</span>}
+                          {colId === 'home' && <span className="text-sm">{prospect.homeState}</span>}
+                          {colId === 'archetype' && <span className="text-sm">{prospect.archetype}</span>}
+                          {colId === 'role' && <span className="text-sm">{prospect.role}</span>}
+                          {colId === 'fs' && (
+                            prospect.linkedClubId
+                              ? <Badge variant="outline" className="text-xs">{clubs[prospect.linkedClubId]?.abbreviation ?? prospect.linkedClubId}</Badge>
+                              : '-'
+                          )}
+                          {colId === 'status' && isDrafted && (
+                            <Badge variant="secondary" className="text-xs">DRAFTED</Badge>
+                          )}
+                        </TableCell>
+                      ))}
                     </TableRow>
                   )
                 })}
                 {filtered.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={16}
+                      colSpan={visibleColumnIds.length}
                       className="text-center text-muted-foreground py-8"
                     >
                       No prospects match the current filters.
@@ -1293,9 +1278,9 @@ export function DraftPage() {
   const suggestNextDraftPickAction = useGameStore((s) => s.suggestNextDraftPickAction)
   const runDelegatedDraftAction = useGameStore((s) => s.runDelegatedDraftAction)
   const players = useGameStore((s) => s.players)
+  const shortlists = useGameStore((s) => s.shortlists)
   const simulationActive = useGameStore((s) => s.simulation.active)
 
-  const [shortlistIds, setShortlistIds] = useState<string[]>([])
   const [suggestion, setSuggestion] = useState<SuggestNextPickResult | null>(null)
   const [delegatedRecords, setDelegatedRecords] = useState<DelegatedPickRecord[]>([])
   const [showDelegateConfirm, setShowDelegateConfirm] = useState(false)
@@ -1332,12 +1317,6 @@ export function DraftPage() {
     [availableProspects, playerClubId],
   )
 
-  const shortlist = useMemo(() => {
-    const set = new Set(shortlistIds)
-    return availableProspects.filter((p) => set.has(p.id))
-      .sort((a, b) => rankProspectForUser(b, playerClubId) - rankProspectForUser(a, playerClubId))
-  }, [availableProspects, shortlistIds, playerClubId])
-
   const teamNeeds = useMemo(
     () => deriveTeamNeeds(players, playerClubId),
     [players, playerClubId],
@@ -1347,12 +1326,6 @@ export function DraftPage() {
     if (simulationActive) return
     if (!draft || pickIndex !== draft.currentPickIndex) return
     makeUserDraftSelectionAction(prospectId)
-  }
-
-  const handleToggleShortlist = (prospectId: string) => {
-    setShortlistIds((prev) =>
-      prev.includes(prospectId) ? prev.filter((id) => id !== prospectId) : [...prev, prospectId],
-    )
   }
 
   const handleSuggestPick = () => {
@@ -1553,6 +1526,7 @@ export function DraftPage() {
           <TabsTrigger value="board">Draft Board</TabsTrigger>
           <TabsTrigger value="prospects">Prospect List</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
+          <TabsTrigger value="shortlists">Shortlists</TabsTrigger>
         </TabsList>
 
         <TabsContent value="board">
@@ -1566,8 +1540,7 @@ export function DraftPage() {
             onSelectProspect={handleSelectProspect}
             bestAvailable={bestAvailable}
             teamNeeds={teamNeeds}
-            shortlist={shortlist}
-            onToggleShortlist={handleToggleShortlist}
+            shortlists={shortlists}
           />
         </TabsContent>
 
@@ -1582,6 +1555,10 @@ export function DraftPage() {
 
         <TabsContent value="history">
           <DraftHistoryTab clubs={clubs} />
+        </TabsContent>
+
+        <TabsContent value="shortlists">
+          <ShortlistManager targetTypeFilter="prospect" title="Draft Board Shortlists" />
         </TabsContent>
       </Tabs>
     </div>

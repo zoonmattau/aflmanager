@@ -3,6 +3,7 @@ import type { TrainingFocus } from '@/engine/training/trainingEngine'
 import { getPlayerTrainingFocusAttributeMultiplier } from '@/engine/players/trainingFocus'
 import type { Player, PlayerAttributes, PlayerTrainingFocus } from '@/types/player'
 import { MIN_ATTRIBUTE, MAX_ATTRIBUTE } from '@/engine/core/constants'
+import { auditPlayerAttributesInPlace } from '@/engine/player/attributeAudit'
 
 /**
  * Physical attribute keys -- these develop/decline faster in young/old players.
@@ -237,6 +238,7 @@ export function developPlayer(
       const next = clamp(player.attributes[key] + growth, MIN_ATTRIBUTE, cap)
       player.attributes[key] = Math.round(next * 10) / 10
     }
+    auditPlayerAttributesInPlace(player, { stage: 'progression' })
     return
   }
 
@@ -249,6 +251,7 @@ export function developPlayer(
       const next = clamp(player.attributes[key] + drift, MIN_ATTRIBUTE, MAX_ATTRIBUTE)
       player.attributes[key] = Math.round(next * 10) / 10
     }
+    auditPlayerAttributesInPlace(player, { stage: 'progression' })
     return
   }
 
@@ -275,6 +278,7 @@ export function developPlayer(
     const next = clamp(player.attributes[key] - loss, MIN_ATTRIBUTE, MAX_ATTRIBUTE)
     player.attributes[key] = Math.round(next * 10) / 10
   }
+  auditPlayerAttributesInPlace(player, { stage: 'progression' })
 }
 
 /**

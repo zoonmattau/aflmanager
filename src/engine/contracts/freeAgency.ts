@@ -6,6 +6,7 @@ import { calculatePlayerValue } from '@/engine/contracts/negotiation'
 import { MINIMUM_SALARY, SENIOR_LIST_SIZE } from '@/engine/core/constants'
 import { validateContractOffer } from '@/engine/salary/salaryCapEngine'
 import { getClubIdentity, getIdentityFreeAgencyModifiers } from '@/engine/clubs/identity'
+import { isAflListedPlayer } from '@/engine/players/contracts'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -30,7 +31,7 @@ function getClubPlayers(
   players: Record<string, Player>,
   clubId: string,
 ): Player[] {
-  return Object.values(players).filter((p) => p.clubId === clubId)
+  return Object.values(players).filter((p) => p.clubId === clubId && isAflListedPlayer(p))
 }
 
 /**
@@ -101,7 +102,7 @@ export function identifyExpiringContracts(
   players: Record<string, Player>,
 ): Player[] {
   return Object.values(players).filter(
-    (p) => p.contract.yearsRemaining === 1,
+    (p) => isAflListedPlayer(p) && p.contract.yearsRemaining === 1,
   )
 }
 
@@ -125,6 +126,7 @@ export function processEndOfSeasonContracts(
   const freeAgents: FreeAgent[] = []
 
   for (const player of Object.values(players)) {
+    if (!isAflListedPlayer(player)) continue
     // Skip players with no active contract (already delisted / free)
     if (player.contract.yearsRemaining <= 0) continue
 
@@ -313,6 +315,7 @@ export function getListCounts(
 
   for (const p of Object.values(players)) {
     if (p.clubId !== clubId) continue
+    if (!isAflListedPlayer(p)) continue
     if (p.isRookie) {
       rookie += 1
     } else {
@@ -330,9 +333,11 @@ export function getListCounts(
  * there is no minimum roster requirement that would block it.
  */
 export function canDelist(
-  _players: Record<string, Player>,
-  _clubId: string,
+  players: Record<string, Player>,
+  clubId: string,
 ): boolean {
+  void players
+  void clubId
   return true
 }
 

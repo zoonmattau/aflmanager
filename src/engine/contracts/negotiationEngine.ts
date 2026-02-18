@@ -4,24 +4,26 @@ import type { GameSettings, NewsItem } from '@/types/game'
 import type {
   ActiveNegotiation,
   CompletedNegotiation,
+  NegotiationConcessions,
+  NegotiationDemand,
+  NegotiationDemandType,
+  NegotiationFeedback,
+  NegotiationFeedbackItem,
   NegotiationOffer,
   NegotiationRound,
-  NegotiationStatus,
   NegotiationTracker,
-  ContractClause,
   ContractStructure,
 } from '@/types/contract'
 import type { PlayerContract } from '@/types/player'
 import type { SeededRNG } from '@/engine/core/rng'
 import {
-  calculatePlayerValue,
   generateContractDemand,
-  evaluateOffer,
   roundSalary,
 } from '@/engine/contracts/negotiation'
 import { validateContractOffer } from '@/engine/salary/salaryCapEngine'
 import {
   buildYearByYearFromStructure,
+  calculateContractCapHitForYear,
   calculateIncentiveValue,
   generateClausePreferences,
 } from '@/engine/contracts/contractStructures'
@@ -35,6 +37,7 @@ import {
 } from '@/engine/core/constants'
 import { checkForMediaLeak } from '@/engine/contracts/mediaLeaks'
 import { checkContractRefusal } from '@/engine/players/happiness'
+import { getClubState } from '@/engine/venues/venueEngine'
 
 // ---------------------------------------------------------------------------
 // 1. initNegotiationTracker
@@ -45,6 +48,286 @@ export function initNegotiationTracker(): NegotiationTracker {
     active: {},
     completed: [],
     refusedPlayerIds: [],
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers: demand profile + feedback
+// ---------------------------------------------------------------------------
+
+function hasClause(offer: NegotiationOffer, type: import('@/types/contract').ContractClauseType): boolean {
+  return offer.clauses.some((c) => c.type === type)
+}
+
+function demandLabel(type: NegotiationDemandType): string {
+  switch (type) {
+    case 'salary': return 'salary'
+    case 'term': return 'term'
+    case 'role-promise': return 'role promise'
+    case 'leadership-group-role': return 'leadership group role'
+    case 'contender-ambition': return 'contender ambition'
+    case 'home-state-preference': return 'home-state preference'
+    case 'no-trade-clause': return 'no-trade protection'
+    case 'limited-trade-clause': return 'limited-trade protection'
+    case 'performance-incentives': return 'performance incentives'
+    case 'option-control': return 'contract option control'
+    case 'vesting-protection': return 'vesting protections'
+  }
+}
+
+function generateDemandProfile(
+  player: Player,
+  isReSigning: boolean,
+  clubId: string,
+): NegotiationDemand[] {
+  const profile: NegotiationDemand[] = [
+    { type: 'salary', priority: 'high' },
+    { type: 'term', priority: 'high' },
+  ]
+
+  const currentClubState = getClubState(clubId)
+  const isHomeStateClub = Boolean(player.homeState && currentClubState === player.homeState)
+
+  if (player.personality.ambition >= 62) {
+    profile.push({
+      type: 'role-promise',
+      priority: player.personality.ambition >= 78 ? 'high' : 'medium',
+      targetValue: player.position.primary,
+    })
+  }
+
+  if (player.attributes.leadership >= 75 && player.age >= 24) {
+    profile.push({
+      type: 'leadership-group-role',
+      priority: player.attributes.leadership >= 85 ? 'high' : 'medium',
+    })
+  }
+
+  if (
+    player.agentArchetype === 'premiership-chaser' ||
+    (player.personality.ambition >= 70 && !isReSigning)
+  ) {
+    profile.push({ type: 'contender-ambition', priority: 'medium' })
+  }
+
+  if (
+    player.homeState &&
+    !isHomeStateClub &&
+    (player.agentArchetype === 'homebody' || player.personality.loyalty >= 65)
+  ) {
+    profile.push({
+      type: 'home-state-preference',
+      priority: player.agentArchetype === 'homebody' ? 'high' : 'medium',
+      targetValue: player.homeState,
+    })
+  }
+
+  if (player.age >= 28 && (isReSigning || player.personality.professionalism >= 70)) {
+    profile.push({ type: 'no-trade-clause', priority: 'medium' })
+  }
+
+  if (player.personality.loyalty >= 55 && player.age >= 24) {
+    profile.push({ type: 'limited-trade-clause', priority: 'medium' })
+  }
+
+  if (player.personality.ambition >= 66) {
+    profile.push({ type: 'performance-incentives', priority: 'low' })
+  }
+
+  if (player.age <= 28 && player.personality.ambition >= 70) {
+    profile.push({ type: 'option-control', priority: 'medium' })
+  }
+
+  if (player.age >= 26 && player.personality.professionalism >= 64) {
+    profile.push({ type: 'vesting-protection', priority: 'low' })
+  }
+
+  const deduped = new Map<NegotiationDemandType, NegotiationDemand>()
+  for (const demand of profile) {
+    if (!deduped.has(demand.type)) deduped.set(demand.type, demand)
+  }
+  return Array.from(deduped.values())
+}
+
+function evaluateDemandSatisfied(
+  demand: NegotiationDemand,
+  offer: NegotiationOffer,
+  negotiation: ActiveNegotiation,
+  player: Player,
+  club: Club | undefined,
+): boolean {
+  const concessions: NegotiationConcessions = offer.concessions ?? {}
+
+  switch (demand.type) {
+    case 'salary':
+      return offer.aav >= negotiation.playerDemand.aav * 0.97
+    case 'term':
+      return Math.abs(offer.years - negotiation.playerDemand.years) <= 0
+    case 'role-promise': {
+      const promised = concessions.promisedPosition
+      if (!promised) return false
+      return promised === player.position.primary || player.position.secondary.includes(promised)
+    }
+    case 'leadership-group-role':
+      return concessions.leadershipGroupRole === true
+    case 'contender-ambition':
+      return concessions.contenderAmbition === true || club?.aiPersonality.competitiveWindow === 'win-now'
+    case 'home-state-preference': {
+      const clubState = getClubState(negotiation.clubId)
+      const homeStateMatch = Boolean(player.homeState && player.homeState === clubState)
+      return homeStateMatch || concessions.homeStateSupport === true
+    }
+    case 'no-trade-clause':
+      return hasClause(offer, 'no-trade') || concessions.noTradeClause === true
+    case 'limited-trade-clause':
+      return hasClause(offer, 'limited-trade') || hasClause(offer, 'no-trade')
+    case 'performance-incentives':
+      return offer.incentiveTotal >= Math.max(25_000, negotiation.playerDemand.incentiveTotal * 0.5)
+    case 'option-control':
+      return hasClause(offer, 'player-option') || hasClause(offer, 'team-option')
+    case 'vesting-protection':
+      return hasClause(offer, 'vesting')
+  }
+}
+
+function buildFeedback(
+  negotiation: ActiveNegotiation,
+  offer: NegotiationOffer,
+  player: Player,
+  club: Club | undefined,
+): NegotiationFeedback {
+  const demandProfile = negotiation.demandProfile?.length
+    ? negotiation.demandProfile
+    : [{ type: 'salary', priority: 'high' }, { type: 'term', priority: 'high' }] satisfies NegotiationDemand[]
+
+  const items: NegotiationFeedbackItem[] = demandProfile.map((demand) => {
+    const satisfiedByOffer = evaluateDemandSatisfied(demand, offer, negotiation, player, club)
+    switch (demand.type) {
+      case 'salary':
+        return {
+          type: demand.type,
+          priority: demand.priority,
+          satisfiedByOffer,
+          message: satisfiedByOffer
+            ? `Salary is in range at $${offer.aav.toLocaleString()} per year.`
+            : `Salary is below target. Current ask is about $${negotiation.playerDemand.aav.toLocaleString()} per year.`,
+          actionHint: `Lift AAV toward $${negotiation.playerDemand.aav.toLocaleString()}.`,
+        }
+      case 'term':
+        return {
+          type: demand.type,
+          priority: demand.priority,
+          satisfiedByOffer,
+          message: satisfiedByOffer
+            ? `Term length matches preferred ${negotiation.playerDemand.years}-year deal.`
+            : `Term mismatch. Player is focused on a ${negotiation.playerDemand.years}-year contract.`,
+          actionHint: `Set contract length to ${negotiation.playerDemand.years} years.`,
+        }
+      case 'role-promise':
+        return {
+          type: demand.type,
+          priority: demand.priority,
+          satisfiedByOffer,
+          message: satisfiedByOffer
+            ? `Role/position commitment has been acknowledged.`
+            : `Player wants a clear role promise at ${demand.targetValue ?? player.position.primary}.`,
+          actionHint: `Add a position promise (ideally ${demand.targetValue ?? player.position.primary}).`,
+        }
+      case 'leadership-group-role':
+        return {
+          type: demand.type,
+          priority: demand.priority,
+          satisfiedByOffer,
+          message: satisfiedByOffer
+            ? `Leadership pathway commitment included.`
+            : 'Player wants a leadership group pathway included in the deal.',
+          actionHint: 'Offer a leadership group role concession.',
+        }
+      case 'contender-ambition':
+        return {
+          type: demand.type,
+          priority: demand.priority,
+          satisfiedByOffer,
+          message: satisfiedByOffer
+            ? 'Club ambition looks aligned with contender goals.'
+            : 'Player needs confidence in contender ambitions before signing.',
+          actionHint: 'Add a contender ambition commitment.',
+        }
+      case 'home-state-preference':
+        return {
+          type: demand.type,
+          priority: demand.priority,
+          satisfiedByOffer,
+          message: satisfiedByOffer
+            ? 'Home-state preference has been addressed.'
+            : `Player prefers a home-state arrangement${demand.targetValue ? ` (${demand.targetValue})` : ''}.`,
+          actionHint: 'Address home-state preference or add home-state support concessions.',
+        }
+      case 'no-trade-clause':
+        return {
+          type: demand.type,
+          priority: demand.priority,
+          satisfiedByOffer,
+          message: satisfiedByOffer
+            ? 'No-trade protection is included.'
+            : 'Player is asking for no-trade protection.',
+          actionHint: 'Include a no-trade clause.',
+        }
+      case 'limited-trade-clause':
+        return {
+          type: demand.type,
+          priority: demand.priority,
+          satisfiedByOffer,
+          message: satisfiedByOffer
+            ? 'Trade destination protections are included.'
+            : 'Player wants limited trade destination control.',
+          actionHint: 'Include a limited-trade or no-trade clause.',
+        }
+      case 'performance-incentives':
+        return {
+          type: demand.type,
+          priority: demand.priority,
+          satisfiedByOffer,
+          message: satisfiedByOffer
+            ? 'Performance/milestone incentives are competitive.'
+            : 'Player expects stronger performance/milestone bonus coverage.',
+          actionHint: 'Increase bonus terms (games/goals/awards/finals/performance).',
+        }
+      case 'option-control':
+        return {
+          type: demand.type,
+          priority: demand.priority,
+          satisfiedByOffer,
+          message: satisfiedByOffer
+            ? 'Option-year control is represented in the contract.'
+            : 'Player is seeking option-year flexibility/protection.',
+          actionHint: 'Add a player or team option year.',
+        }
+      case 'vesting-protection':
+        return {
+          type: demand.type,
+          priority: demand.priority,
+          satisfiedByOffer,
+          message: satisfiedByOffer
+            ? 'Vesting protection term is present.'
+            : 'Player wants a vesting condition tied to milestones.',
+          actionHint: 'Add a vesting clause (games, goals, awards, or team finals).',
+        }
+    }
+  })
+
+  const unmet = items.filter((item) => !item.satisfiedByOffer)
+  const requiredForSignature = unmet.map((item) => item.type)
+
+  const summary = unmet.length === 0
+    ? `${player.firstName} ${player.lastName} is ready to sign this offer.`
+    : `${player.firstName} ${player.lastName} needs ${unmet.map((item) => demandLabel(item.type)).join(', ')} before signing.`
+
+  return {
+    summary,
+    signableNow: unmet.length === 0,
+    requiredForSignature,
+    items,
   }
 }
 
@@ -117,7 +400,7 @@ export function getPlayerNegotiationEligibility(
 export function generateNegotiationDemand(
   player: Player,
   clubId: string,
-  isReSigning: boolean,
+  _isReSigning: boolean,
   rng: SeededRNG,
   ladderPosition: number,
   options?: { playerLoyaltyEnabled?: boolean },
@@ -201,6 +484,7 @@ export function startNegotiation(
   const playerDemand = generateNegotiationDemand(
     player, clubId, isReSigning, rng, ladderPosition, options,
   )
+  const demandProfile = generateDemandProfile(player, isReSigning, clubId)
 
   // Determine initial mood based on loyalty and re-signing status
   let playerMood: ActiveNegotiation['playerMood'] = 'neutral'
@@ -220,6 +504,8 @@ export function startNegotiation(
     clubId,
     status: 'pending',
     playerDemand,
+    demandProfile,
+    latestFeedback: null,
     rounds: [],
     maxRounds: MAX_NEGOTIATION_ROUNDS,
     cooldownRemaining: 0,
@@ -229,6 +515,12 @@ export function startNegotiation(
     playerMood,
     mediaLeaked: false,
   }
+
+  const initialOffer: NegotiationOffer = {
+    ...playerDemand,
+    concessions: {},
+  }
+  negotiation.latestFeedback = buildFeedback(negotiation, initialOffer, player, undefined)
 
   return { success: true, negotiation }
 }
@@ -245,7 +537,7 @@ export interface SubmitOfferResult {
 export function submitOffer(
   negotiation: ActiveNegotiation,
   offer: NegotiationOffer,
-  currentRound: number,
+  _currentRound: number,
   currentDate: string,
   players: Record<string, Player>,
   clubId: string,
@@ -260,11 +552,24 @@ export function submitOffer(
   if (settings.salaryCap) {
     const allPlayers = Object.values(players)
     const player = players[negotiation.playerId]
-    const currentSalary = player?.contract.yearByYear[0] ?? 0
+    const currentSalary = player
+      ? calculateContractCapHitForYear({
+          yearSalary: player.contract.yearByYear[0] ?? player.contract.aav,
+          contractYear: 1,
+          clauses: player.contract.clauses,
+          incentiveTotal: player.contract.incentiveTotal,
+        })
+      : 0
+    const proposedCapHit = calculateContractCapHitForYear({
+      yearSalary: offer.yearByYear[0] ?? offer.aav,
+      contractYear: 1,
+      clauses: offer.clauses,
+      incentiveTotal: offer.incentiveTotal,
+    })
     const capResult = validateContractOffer(
       allPlayers,
       clubId,
-      offer.aav,
+      proposedCapHit,
       negotiation.isReSigning ? currentSalary : 0,
       settings.salaryCapAmount,
       settings.realism.softCapSpending,
@@ -304,14 +609,32 @@ export function submitOffer(
 function evaluateClubOffer(
   negotiation: ActiveNegotiation,
   player: Player,
+  clubs: Record<string, Club>,
   rng: SeededRNG,
   options?: { playerLoyaltyEnabled?: boolean },
-): { result: 'accept' | 'reject' | 'counter'; counterOffer?: NegotiationOffer } {
+): { result: 'accept' | 'reject' | 'counter'; counterOffer?: NegotiationOffer; feedback: NegotiationFeedback } {
   const latestRound = negotiation.rounds[negotiation.rounds.length - 1]
-  if (!latestRound) return { result: 'reject' }
+  if (!latestRound) {
+    return {
+      result: 'reject',
+      feedback: {
+        summary: 'No offer to evaluate.',
+        signableNow: false,
+        requiredForSignature: ['salary', 'term'],
+        items: [],
+      },
+    }
+  }
 
   const offer = latestRound.offer
   const demand = negotiation.playerDemand
+  const club = clubs[negotiation.clubId]
+  const feedback = buildFeedback(negotiation, offer, player, club)
+  const unmetByPriority = {
+    high: feedback.items.filter((i) => !i.satisfiedByOffer && i.priority === 'high').length,
+    medium: feedback.items.filter((i) => !i.satisfiedByOffer && i.priority === 'medium').length,
+    low: feedback.items.filter((i) => !i.satisfiedByOffer && i.priority === 'low').length,
+  }
 
   // AAV ratio
   const aavRatio = offer.aav / demand.aav
@@ -348,6 +671,15 @@ function evaluateClubOffer(
     acceptanceProbability -= 0.05
   }
 
+  // Explicit demand fulfillment impact
+  acceptanceProbability += feedback.items.filter((i) => i.satisfiedByOffer && i.type !== 'salary' && i.type !== 'term').length * 0.03
+  acceptanceProbability -= unmetByPriority.high * 0.12
+  acceptanceProbability -= unmetByPriority.medium * 0.07
+  acceptanceProbability -= unmetByPriority.low * 0.04
+  if (unmetByPriority.high > 0) {
+    acceptanceProbability = Math.min(acceptanceProbability, 0.25)
+  }
+
   // Loyalty bonus for re-signing
   const loyaltyEnabled = options?.playerLoyaltyEnabled !== false
   if (negotiation.isReSigning && loyaltyEnabled) {
@@ -371,13 +703,16 @@ function evaluateClubOffer(
   acceptanceProbability = Math.max(0.02, Math.min(0.99, acceptanceProbability))
 
   // Roll
-  if (rng.chance(acceptanceProbability)) {
-    return { result: 'accept' }
+  if (feedback.signableNow && rng.chance(acceptanceProbability)) {
+    return { result: 'accept', feedback }
   }
 
   // Check for flat rejection (very low probability or max rounds approaching)
-  if (acceptanceProbability < 0.10 && negotiation.rounds.length >= negotiation.maxRounds - 1) {
-    return { result: 'reject' }
+  if (
+    (acceptanceProbability < 0.10 || unmetByPriority.high >= 2) &&
+    negotiation.rounds.length >= negotiation.maxRounds - 1
+  ) {
+    return { result: 'reject', feedback }
   }
 
   // Counter-offer: converge demand toward the club's offer
@@ -406,6 +741,20 @@ function evaluateClubOffer(
     structure: demand.structure,
     clauses: demand.clauses,
     incentiveTotal: demand.incentiveTotal,
+    concessions: {},
+  }
+
+  if (
+    (negotiation.demandProfile ?? []).some((d) => d.type === 'no-trade-clause') &&
+    !counterOffer.clauses.some((c) => c.type === 'no-trade')
+  ) {
+    counterOffer.clauses = [...counterOffer.clauses, { type: 'no-trade' }]
+  }
+  if (
+    (negotiation.demandProfile ?? []).some((d) => d.type === 'limited-trade-clause') &&
+    !counterOffer.clauses.some((c) => c.type === 'limited-trade' || c.type === 'no-trade')
+  ) {
+    counterOffer.clauses = [...counterOffer.clauses, { type: 'limited-trade', vetoClubIds: [] }]
   }
 
   // Update the player's internal demand (convergence)
@@ -415,7 +764,7 @@ function evaluateClubOffer(
     yearByYear: newYearByYear,
   }
 
-  return { result: 'counter', counterOffer }
+  return { result: 'counter', counterOffer, feedback }
 }
 
 // ---------------------------------------------------------------------------
@@ -461,9 +810,11 @@ export function tickNegotiations(
       const evaluation = evaluateClubOffer(
         negotiation,
         player,
+        clubs,
         rng,
         { playerLoyaltyEnabled: settings.realism.playerLoyalty },
       )
+      negotiation.latestFeedback = evaluation.feedback
 
       switch (evaluation.result) {
         case 'accept': {

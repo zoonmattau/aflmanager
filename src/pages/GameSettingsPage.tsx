@@ -7,6 +7,7 @@ import type { OriginConfig, OriginCompetitionFormat, OriginScheduleMode, OriginS
 import { ALL_ORIGIN_STATES } from '@/types/specialEvents'
 import { createDefaultSettings, DEFAULT_ORIGIN_CONFIG } from '@/engine/core/defaultSettings'
 import { SPECIAL_EVENT_DEFINITIONS } from '@/engine/specialEvents/eventDefinitions'
+import { AffiliateManagementEditor } from '@/components/stateLeague/AffiliateManagementEditor'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -88,7 +89,6 @@ const MATCH_DAY_OPTIONS: MatchDay[] = [
   'Sunday-Twilight',
   'Monday',
 ]
-
 const REALISM_LABELS: Record<keyof RealismSettings, string> = {
   playerLoyalty: 'Player Loyalty',
   tradeRequests: 'Trade Requests',
@@ -181,6 +181,7 @@ export function GameSettingsPage() {
   const settings = useGameStore((s) => s.settings)
   const clubs = useGameStore((s) => s.clubs)
   const leagueConfig = useGameStore((s) => s.leagueConfig)
+  const stateLeagues = useGameStore((s) => s.stateLeagues)
   const updateGameSettings = useGameStore((s) => s.updateGameSettings)
   const updateClub = useGameStore((s) => s.updateClub)
   const [draft, setDraft] = useState<GameSettings>(settings)
@@ -217,7 +218,6 @@ export function GameSettingsPage() {
     () => clubOptions.map((c) => ({ id: c.id, name: c.name })),
     [clubOptions],
   )
-
   const handleTeamChange = useCallback(
     (clubId: string, updates: Partial<TeamEditorData>) => {
       const existing = clubs[clubId]
@@ -537,6 +537,16 @@ export function GameSettingsPage() {
               </div>
               <Slider value={[draft.matchRules.interchangePlayers]} min={0} max={8} step={1} onValueChange={([v]) => setDraft((p) => ({ ...p, matchRules: { ...p.matchRules, interchangePlayers: v } }))} />
             </div>
+            <div className="flex items-center justify-between rounded border px-3 py-2">
+              <div>
+                <Label>Enable Match-Day Substitute</Label>
+                <p className="text-[11px] text-muted-foreground">Adds one tactical substitute selection per club</p>
+              </div>
+              <Switch
+                checked={draft.matchRules.enableSubstitutes}
+                onCheckedChange={(v) => setDraft((p) => ({ ...p, matchRules: { ...p.matchRules, enableSubstitutes: v } }))}
+              />
+            </div>
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>Possessions Multiplier</Label>
@@ -584,6 +594,102 @@ export function GameSettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader><CardTitle className="text-base">Signing Notifications</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Marquee Star Threshold</Label>
+                <span className="text-xs text-muted-foreground">{draft.notifications.signings.starThreshold.toFixed(1)}★</span>
+              </div>
+              <Slider
+                value={[draft.notifications.signings.starThreshold * 10]}
+                min={5}
+                max={50}
+                step={5}
+                onValueChange={([v]) =>
+                  setDraft((p) => ({
+                    ...p,
+                    notifications: {
+                      ...p.notifications,
+                      signings: {
+                        ...p.notifications.signings,
+                        starThreshold: v / 10,
+                      },
+                    },
+                  }))
+                }
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Non-interacted signings below this star rating are suppressed.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <Label>In-App Alerts</Label>
+              <Switch
+                checked={draft.notifications.signings.inApp}
+                onCheckedChange={(v) =>
+                  setDraft((p) => ({
+                    ...p,
+                    notifications: {
+                      ...p.notifications,
+                      signings: { ...p.notifications.signings, inApp: v },
+                    },
+                  }))
+                }
+              />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <Label>Email Alerts</Label>
+              <Switch
+                checked={draft.notifications.signings.email}
+                onCheckedChange={(v) =>
+                  setDraft((p) => ({
+                    ...p,
+                    notifications: {
+                      ...p.notifications,
+                      signings: { ...p.notifications.signings, email: v },
+                    },
+                  }))
+                }
+              />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <Label>Daily Digest (vs real-time)</Label>
+              <Switch
+                checked={draft.notifications.signings.dailyDigest}
+                onCheckedChange={(v) =>
+                  setDraft((p) => ({
+                    ...p,
+                    notifications: {
+                      ...p.notifications,
+                      signings: { ...p.notifications.signings, dailyDigest: v },
+                    },
+                  }))
+                }
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="xl:col-span-2">
+          <AffiliateManagementEditor
+            clubs={clubOptions.map((club) => ({
+              id: club.id,
+              name: club.name,
+              abbreviation: club.abbreviation,
+            }))}
+            stateLeagues={stateLeagues}
+            value={draft.stateLeagueAffiliations}
+            onChange={(next) => setDraft((prev) => ({ ...prev, stateLeagueAffiliations: next }))}
+            title="State League Affiliations"
+            description="Edit or swap AFL club affiliate leagues. Saving applies changes to league club placement, fixtures, and ladders."
+          />
+        </div>
 
         <Card className="xl:col-span-2">
           <CardHeader>

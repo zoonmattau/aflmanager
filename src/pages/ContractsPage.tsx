@@ -1,7 +1,7 @@
 import { useMemo, useState, useCallback } from 'react'
 import { useGameStore } from '@/stores/gameStore'
-import type { Player } from '@/types/player'
-import type { NegotiationOffer, ContractStructure, ActiveNegotiation } from '@/types/contract'
+import type { Player, PlayerPositionType } from '@/types/player'
+import type { NegotiationOffer, ContractStructure, ActiveNegotiation, ContractClause } from '@/types/contract'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -41,16 +41,18 @@ import {
   Calendar,
   CheckCircle2,
   XCircle,
-  AlertTriangle,
   Clock,
   MessageSquare,
   TrendingUp,
   X,
 } from 'lucide-react'
 import { calculatePlayerValue } from '@/engine/contracts/negotiation'
-import { validateContractOffer } from '@/engine/salary/salaryCapEngine'
-import { buildYearByYearFromStructure, calculateIncentiveValue, calculateCapHitWithIncentives } from '@/engine/contracts/contractStructures'
+import { buildYearByYearFromStructure, calculateIncentiveValue } from '@/engine/contracts/contractStructures'
 import { ContractProjectionPanel } from '@/components/contracts/ContractProjectionPanel'
+import { useTableViewManager, type TableViewColumnConfig } from '@/components/table-view/useTableViewManager'
+import { TableViewManagerControl } from '@/components/table-view/TableViewManagerControl'
+import { ShortlistAssignMenu, ShortlistManager } from '@/components/shortlists/ShortlistManager'
+import { isAflListedPlayer } from '@/engine/players/contracts'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -99,9 +101,8 @@ function NegotiationDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const playerClubId = useGameStore((s) => s.playerClubId)
+  const phase = useGameStore((s) => s.phase)
   const players = useGameStore((s) => s.players)
-  const clubs = useGameStore((s) => s.clubs)
-  const settings = useGameStore((s) => s.settings)
   const negotiations = useGameStore((s) => s.negotiations)
   const startContractNegotiation = useGameStore((s) => s.startContractNegotiation)
   const submitContractOffer = useGameStore((s) => s.submitContractOffer)
@@ -113,13 +114,34 @@ function NegotiationDialog({
   const [years, setYears] = useState(3)
   const [aavInput, setAavInput] = useState('')
   const [structure, setStructure] = useState<ContractStructure>('escalating')
+  const [promisedPosition, setPromisedPosition] = useState<PlayerPositionType | ''>('')
+  const [leadershipGroupRole, setLeadershipGroupRole] = useState(false)
+  const [contenderAmbition, setContenderAmbition] = useState(false)
+  const [homeStateSupport, setHomeStateSupport] = useState(false)
+  const [offerNoTradeClause, setOfferNoTradeClause] = useState(false)
+  const [offerLimitedTradeClause, setOfferLimitedTradeClause] = useState(false)
+  const [limitedTradeVetoIdsInput, setLimitedTradeVetoIdsInput] = useState('')
+  const [offerPlayerOption, setOfferPlayerOption] = useState(false)
+  const [offerTeamOption, setOfferTeamOption] = useState(false)
+  const [optionYear, setOptionYear] = useState(2)
+  const [offerVestingClause, setOfferVestingClause] = useState(false)
+  const [vestingYear, setVestingYear] = useState(2)
+  const [vestingType, setVestingType] = useState<'games-played' | 'awards' | 'goals' | 'team-finals'>('games-played')
+  const [vestingThreshold, setVestingThreshold] = useState(15)
+  const [vestingAmountInput, setVestingAmountInput] = useState('')
+  const [gamesBonusInput, setGamesBonusInput] = useState('')
+  const [goalsBonusInput, setGoalsBonusInput] = useState('')
+  const [awardsBonusInput, setAwardsBonusInput] = useState('')
+  const [finalsBonusInput, setFinalsBonusInput] = useState('')
+  const [offerRolePromiseClause, setOfferRolePromiseClause] = useState(false)
+  const [offerLeadershipPromiseClause, setOfferLeadershipPromiseClause] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
   const clubPlayers = useMemo(
     () =>
       Object.values(players)
-        .filter((p) => p.clubId === playerClubId)
+        .filter((p) => p.clubId === playerClubId && isAflListedPlayer(p))
         .sort((a, b) => a.lastName.localeCompare(b.lastName)),
     [players, playerClubId],
   )
@@ -127,6 +149,16 @@ function NegotiationDialog({
   const expiringPlayers = useMemo(
     () => clubPlayers.filter((p) => p.contract.yearsRemaining <= 2),
     [clubPlayers],
+  )
+
+  const offseasonFreeAgents = useMemo(
+    () => {
+      if (phase !== 'offseason') return []
+      return Object.values(players)
+        .filter((p) => p.clubId !== playerClubId && p.clubId !== 'retired' && p.contract.yearsRemaining <= 0)
+        .sort((a, b) => b.contract.aav - a.contract.aav)
+    },
+    [phase, players, playerClubId],
   )
 
   const selectedPlayer = selectedPlayerId ? players[selectedPlayerId] : null
@@ -148,6 +180,27 @@ function NegotiationDialog({
     setYears(3)
     setAavInput('')
     setStructure('escalating')
+    setPromisedPosition('')
+    setLeadershipGroupRole(false)
+    setContenderAmbition(false)
+    setHomeStateSupport(false)
+    setOfferNoTradeClause(false)
+    setOfferLimitedTradeClause(false)
+    setLimitedTradeVetoIdsInput('')
+    setOfferPlayerOption(false)
+    setOfferTeamOption(false)
+    setOptionYear(2)
+    setOfferVestingClause(false)
+    setVestingYear(2)
+    setVestingType('games-played')
+    setVestingThreshold(15)
+    setVestingAmountInput('')
+    setGamesBonusInput('')
+    setGoalsBonusInput('')
+    setAwardsBonusInput('')
+    setFinalsBonusInput('')
+    setOfferRolePromiseClause(false)
+    setOfferLeadershipPromiseClause(false)
     setError(null)
     setSuccess(null)
   }, [])
@@ -179,6 +232,27 @@ function NegotiationDialog({
       setAavInput(neg.playerDemand.aav.toString())
       setYears(neg.playerDemand.years)
       setStructure(neg.playerDemand.structure)
+      setPromisedPosition('')
+      setLeadershipGroupRole(false)
+      setContenderAmbition(false)
+      setHomeStateSupport(false)
+      setOfferNoTradeClause(false)
+      setOfferLimitedTradeClause(false)
+      setLimitedTradeVetoIdsInput('')
+      setOfferPlayerOption(false)
+      setOfferTeamOption(false)
+      setOptionYear(2)
+      setOfferVestingClause(false)
+      setVestingYear(2)
+      setVestingType('games-played')
+      setVestingThreshold(15)
+      setVestingAmountInput('')
+      setGamesBonusInput('')
+      setGoalsBonusInput('')
+      setAwardsBonusInput('')
+      setFinalsBonusInput('')
+      setOfferRolePromiseClause(false)
+      setOfferLeadershipPromiseClause(false)
     }
   }, [selectedPlayerId, startContractNegotiation])
 
@@ -187,13 +261,81 @@ function NegotiationDialog({
     setError(null)
     setSuccess(null)
 
+    const baseClauses = activeNeg?.playerDemand.clauses ?? []
+    const clauses: ContractClause[] = [...baseClauses]
+    const upsertClause = (clause: ContractClause, enabled: boolean, matcher: (c: ContractClause) => boolean) => {
+      const idx = clauses.findIndex(matcher)
+      if (enabled) {
+        if (idx >= 0) clauses[idx] = clause
+        else clauses.push(clause)
+        return
+      }
+      if (idx >= 0) clauses.splice(idx, 1)
+    }
+
+    upsertClause({ type: 'no-trade' }, offerNoTradeClause, (c) => c.type === 'no-trade')
+    upsertClause(
+      { type: 'limited-trade', vetoClubIds: limitedTradeVetoIdsInput.split(',').map((x) => x.trim()).filter(Boolean) },
+      offerLimitedTradeClause,
+      (c) => c.type === 'limited-trade',
+    )
+    upsertClause({ type: 'player-option', optionYear }, offerPlayerOption, (c) => c.type === 'player-option')
+    upsertClause({ type: 'team-option', optionYear }, offerTeamOption, (c) => c.type === 'team-option')
+    upsertClause(
+      {
+        type: 'vesting',
+        appliesToYear: vestingYear,
+        bonusAmount: parseDollarInput(vestingAmountInput),
+        vestingCondition: { type: vestingType, threshold: Math.max(1, vestingThreshold) },
+      },
+      offerVestingClause,
+      (c) => c.type === 'vesting',
+    )
+    upsertClause(
+      { type: 'role-promise', promisedPosition: promisedPosition || undefined },
+      offerRolePromiseClause,
+      (c) => c.type === 'role-promise',
+    )
+    upsertClause(
+      { type: 'leadership-promise', leadershipLevel: 'group' },
+      offerLeadershipPromiseClause,
+      (c) => c.type === 'leadership-promise',
+    )
+    upsertClause(
+      { type: 'games-bonus', bonusAmount: parseDollarInput(gamesBonusInput), bonusThreshold: { stat: 'gamesPlayed', value: 18 } },
+      parseDollarInput(gamesBonusInput) > 0,
+      (c) => c.type === 'games-bonus',
+    )
+    upsertClause(
+      { type: 'goals-bonus', bonusAmount: parseDollarInput(goalsBonusInput), bonusThreshold: { stat: 'goals', value: 35 } },
+      parseDollarInput(goalsBonusInput) > 0,
+      (c) => c.type === 'goals-bonus',
+    )
+    upsertClause(
+      { type: 'awards-bonus', bonusAmount: parseDollarInput(awardsBonusInput), bonusThreshold: { stat: 'awards', value: 1 } },
+      parseDollarInput(awardsBonusInput) > 0,
+      (c) => c.type === 'awards-bonus',
+    )
+    upsertClause(
+      { type: 'finals-bonus', bonusAmount: parseDollarInput(finalsBonusInput), bonusThreshold: { stat: 'teamFinals', value: 1 } },
+      parseDollarInput(finalsBonusInput) > 0,
+      (c) => c.type === 'finals-bonus',
+    )
+
     const offer: NegotiationOffer = {
       years,
       aav,
       yearByYear,
       structure,
-      clauses: activeNeg?.playerDemand.clauses ?? [],
-      incentiveTotal: calculateIncentiveValue(activeNeg?.playerDemand.clauses ?? []),
+      clauses,
+      incentiveTotal: calculateIncentiveValue(clauses),
+      concessions: {
+        promisedPosition: promisedPosition || undefined,
+        leadershipGroupRole,
+        contenderAmbition,
+        homeStateSupport,
+        noTradeClause: offerNoTradeClause,
+      },
     }
 
     const result = submitContractOffer(activeNegId, offer)
@@ -214,7 +356,36 @@ function NegotiationDialog({
         setError('Player has rejected the offer and walked away.')
       }
     }
-  }, [activeNegId, aav, years, yearByYear, structure, activeNeg, submitContractOffer])
+  }, [
+    activeNegId,
+    aav,
+    years,
+    yearByYear,
+    structure,
+    activeNeg,
+    submitContractOffer,
+    promisedPosition,
+    leadershipGroupRole,
+    contenderAmbition,
+    homeStateSupport,
+    offerNoTradeClause,
+    offerLimitedTradeClause,
+    limitedTradeVetoIdsInput,
+    offerPlayerOption,
+    offerTeamOption,
+    optionYear,
+    offerVestingClause,
+    vestingYear,
+    vestingType,
+    vestingThreshold,
+    vestingAmountInput,
+    gamesBonusInput,
+    goalsBonusInput,
+    awardsBonusInput,
+    finalsBonusInput,
+    offerRolePromiseClause,
+    offerLeadershipPromiseClause,
+  ])
 
   const handleAcceptCounter = useCallback(() => {
     if (!activeNegId) return
@@ -233,11 +404,6 @@ function NegotiationDialog({
     withdrawContractNegotiation(activeNegId)
     resetForm()
   }, [activeNegId, withdrawContractNegotiation, resetForm])
-
-  // Refresh negotiation state from store
-  const currentNeg = activeNegId
-    ? useGameStore.getState().negotiations?.active[activeNegId] ?? null
-    : null
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -281,6 +447,16 @@ function NegotiationDialog({
                         ))}
                       </SelectGroup>
                     )}
+                    {offseasonFreeAgents.length > 0 && (
+                      <SelectGroup>
+                        <SelectLabel>Free Agents</SelectLabel>
+                        {offseasonFreeAgents.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.firstName} {p.lastName} ({p.position.primary}, {p.age}yo) - Free agent
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -308,6 +484,9 @@ function NegotiationDialog({
                   <Button onClick={handleStartNegotiation} className="w-full">
                     Start Negotiation
                   </Button>
+                  <div className="flex justify-end">
+                    <ShortlistAssignMenu targetType="player" targetId={selectedPlayer.id} buttonLabel="Add to Shortlist" buttonVariant="outline" buttonSize="sm" />
+                  </div>
                 </>
               )}
             </>
@@ -352,6 +531,28 @@ function NegotiationDialog({
                   </Badge>
                 )}
               </div>
+
+              {activeNeg.latestFeedback && (
+                <div className="rounded-md border border-sky-500/30 bg-sky-500/10 p-3 space-y-2">
+                  <p className="text-sm font-semibold text-sky-700 dark:text-sky-300">Player Feedback</p>
+                  <p className="text-xs text-muted-foreground">{activeNeg.latestFeedback.summary}</p>
+                  <div className="space-y-1">
+                    {activeNeg.latestFeedback.items.map((item, idx) => (
+                      <div key={`${item.type}-${idx}`} className="text-xs flex items-start gap-2">
+                        <Badge variant="outline" className={item.satisfiedByOffer ? 'text-green-600 border-green-500/40' : 'text-amber-600 border-amber-500/40'}>
+                          {item.satisfiedByOffer ? 'Met' : 'Need'}
+                        </Badge>
+                        <div className="min-w-0">
+                          <p className="font-medium">{item.message}</p>
+                          {!item.satisfiedByOffer && (
+                            <p className="text-muted-foreground">{item.actionHint}</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Status display */}
               {activeNeg.status === 'player-considering' && activeNeg.cooldownRemaining > 0 && (
@@ -441,6 +642,162 @@ function NegotiationDialog({
                         <SelectItem value="front-loaded">Front-Loaded</SelectItem>
                         <SelectItem value="back-loaded">Back-Loaded</SelectItem>
                         <SelectItem value="escalating">Escalating</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Concessions</Label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                      <label className="flex items-center gap-2 rounded-md border p-2">
+                        <input
+                          type="checkbox"
+                          checked={leadershipGroupRole}
+                          onChange={(e) => setLeadershipGroupRole(e.target.checked)}
+                        />
+                        Leadership group role
+                      </label>
+                      <label className="flex items-center gap-2 rounded-md border p-2">
+                        <input
+                          type="checkbox"
+                          checked={contenderAmbition}
+                          onChange={(e) => setContenderAmbition(e.target.checked)}
+                        />
+                        Contender ambitions
+                      </label>
+                      <label className="flex items-center gap-2 rounded-md border p-2">
+                        <input
+                          type="checkbox"
+                          checked={homeStateSupport}
+                          onChange={(e) => setHomeStateSupport(e.target.checked)}
+                        />
+                        Home-state support
+                      </label>
+                      <label className="flex items-center gap-2 rounded-md border p-2">
+                        <input
+                          type="checkbox"
+                          checked={offerNoTradeClause}
+                          onChange={(e) => setOfferNoTradeClause(e.target.checked)}
+                        />
+                        Include no-trade clause
+                      </label>
+                      <label className="flex items-center gap-2 rounded-md border p-2">
+                        <input
+                          type="checkbox"
+                          checked={offerLimitedTradeClause}
+                          onChange={(e) => setOfferLimitedTradeClause(e.target.checked)}
+                        />
+                        Include limited no-trade
+                      </label>
+                      <label className="flex items-center gap-2 rounded-md border p-2">
+                        <input
+                          type="checkbox"
+                          checked={offerPlayerOption}
+                          onChange={(e) => setOfferPlayerOption(e.target.checked)}
+                        />
+                        Player option year
+                      </label>
+                      <label className="flex items-center gap-2 rounded-md border p-2">
+                        <input
+                          type="checkbox"
+                          checked={offerTeamOption}
+                          onChange={(e) => setOfferTeamOption(e.target.checked)}
+                        />
+                        Team option year
+                      </label>
+                      <label className="flex items-center gap-2 rounded-md border p-2">
+                        <input
+                          type="checkbox"
+                          checked={offerVestingClause}
+                          onChange={(e) => setOfferVestingClause(e.target.checked)}
+                        />
+                        Vesting year clause
+                      </label>
+                      <label className="flex items-center gap-2 rounded-md border p-2">
+                        <input
+                          type="checkbox"
+                          checked={offerRolePromiseClause}
+                          onChange={(e) => setOfferRolePromiseClause(e.target.checked)}
+                        />
+                        Role promise clause
+                      </label>
+                      <label className="flex items-center gap-2 rounded-md border p-2">
+                        <input
+                          type="checkbox"
+                          checked={offerLeadershipPromiseClause}
+                          onChange={(e) => setOfferLeadershipPromiseClause(e.target.checked)}
+                        />
+                        Leadership promise clause
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Option Year</Label>
+                      <Input value={String(optionYear)} onChange={(e) => setOptionYear(Math.max(1, Math.min(6, Number(e.target.value) || 1)))} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Limited NT Veto Club IDs (comma)</Label>
+                      <Input value={limitedTradeVetoIdsInput} onChange={(e) => setLimitedTradeVetoIdsInput(e.target.value)} placeholder="e.g. richmond,hawthorn" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Vesting Year</Label>
+                      <Input value={String(vestingYear)} onChange={(e) => setVestingYear(Math.max(1, Math.min(6, Number(e.target.value) || 1)))} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Vesting Amount</Label>
+                      <Input value={vestingAmountInput} onChange={(e) => setVestingAmountInput(e.target.value)} placeholder="100000" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Vesting Threshold</Label>
+                      <Input value={String(vestingThreshold)} onChange={(e) => setVestingThreshold(Math.max(1, Number(e.target.value) || 1))} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Vesting Type</Label>
+                      <Select value={vestingType} onValueChange={(v) => setVestingType(v as 'games-played' | 'awards' | 'goals' | 'team-finals')}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="games-played">Games Played</SelectItem>
+                          <SelectItem value="awards">Awards</SelectItem>
+                          <SelectItem value="goals">Goals</SelectItem>
+                          <SelectItem value="team-finals">Team Finals</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Games Bonus</Label>
+                      <Input value={gamesBonusInput} onChange={(e) => setGamesBonusInput(e.target.value)} placeholder="30000" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Goals Bonus</Label>
+                      <Input value={goalsBonusInput} onChange={(e) => setGoalsBonusInput(e.target.value)} placeholder="30000" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Awards Bonus</Label>
+                      <Input value={awardsBonusInput} onChange={(e) => setAwardsBonusInput(e.target.value)} placeholder="40000" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Team Finals Bonus</Label>
+                      <Input value={finalsBonusInput} onChange={(e) => setFinalsBonusInput(e.target.value)} placeholder="40000" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Role / Position Promise</Label>
+                    <Select
+                      value={promisedPosition || '__none'}
+                      onValueChange={(v) => setPromisedPosition(v === '__none' ? '' : (v as PlayerPositionType))}
+                    >
+                      <SelectTrigger><SelectValue placeholder="No position promise" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none">No promise</SelectItem>
+                        {(['BP', 'FB', 'HBF', 'CHB', 'W', 'IM', 'OM', 'RK', 'HFF', 'CHF', 'FP', 'FF'] as PlayerPositionType[]).map((pos) => (
+                          <SelectItem key={pos} value={pos}>{pos}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -548,7 +905,7 @@ function DelistDialog({
   const clubPlayers = useMemo(
     () =>
       Object.values(players)
-        .filter((p) => p.clubId === playerClubId)
+        .filter((p) => p.clubId === playerClubId && isAflListedPlayer(p))
         .sort((a, b) => a.lastName.localeCompare(b.lastName)),
     [players, playerClubId],
   )
@@ -728,7 +1085,7 @@ function RookieUpgradeDialog({
   const rookies = useMemo(
     () =>
       Object.values(players)
-        .filter((p) => p.clubId === playerClubId && p.isRookie)
+        .filter((p) => p.clubId === playerClubId && isAflListedPlayer(p) && p.isRookie)
         .sort((a, b) => a.lastName.localeCompare(b.lastName)),
     [players, playerClubId],
   )
@@ -941,7 +1298,7 @@ export function ContractsPage() {
   const clubPlayers = useMemo(
     () =>
       Object.values(players)
-        .filter((p) => p.clubId === playerClubId)
+        .filter((p) => p.clubId === playerClubId && isAflListedPlayer(p))
         .sort((a, b) => a.lastName.localeCompare(b.lastName)),
     [players, playerClubId],
   )
@@ -981,6 +1338,162 @@ export function ContractsPage() {
       default: return phase
     }
   })()
+
+  const tableColumns = useMemo(() => {
+    const cols = [
+      {
+        id: 'player',
+        label: 'Player',
+        defaultWidth: 180,
+        sortable: true,
+        sortValue: (player: Player) => `${player.lastName},${player.firstName}`.toLowerCase(),
+        render: (player: Player) => <span className="font-medium">{player.firstName} {player.lastName}</span>,
+      },
+      {
+        id: 'pos',
+        label: 'Pos',
+        defaultWidth: 72,
+        sortable: true,
+        sortValue: (player: Player) => player.position.primary,
+        render: (player: Player) => <Badge variant="outline">{player.position.primary}</Badge>,
+      },
+      {
+        id: 'age',
+        label: 'Age',
+        defaultWidth: 60,
+        sortable: true,
+        sortValue: (player: Player) => player.age,
+        render: (player: Player) => player.age,
+      },
+      {
+        id: 'aav',
+        label: 'AAV',
+        defaultWidth: 96,
+        sortable: true,
+        sortValue: (player: Player) => player.contract.aav,
+        render: (player: Player) => <span className="font-mono text-xs">{formatDollars(player.contract.aav)}</span>,
+      },
+      {
+        id: 'years',
+        label: 'Years Left',
+        defaultWidth: 84,
+        sortable: true,
+        sortValue: (player: Player) => player.contract.yearsRemaining,
+        render: (player: Player) => (
+          <span className={player.contract.yearsRemaining <= 1 ? 'text-red-500 font-semibold' : ''}>
+            {player.contract.yearsRemaining}
+          </span>
+        ),
+      },
+      {
+        id: 'estValue',
+        label: 'Est. Value',
+        defaultWidth: 96,
+        sortable: true,
+        sortValue: (player: Player) => calculatePlayerValue(player),
+        render: (player: Player) => <span className="font-mono text-xs">{formatDollars(calculatePlayerValue(player))}</span>,
+      },
+      {
+        id: 'list',
+        label: 'List',
+        defaultWidth: 90,
+        sortable: true,
+        sortValue: (player: Player) => (player.isRookie ? 1 : 0),
+        render: (player: Player) => (
+          <Badge variant={player.isRookie ? 'secondary' : 'default'}>
+            {player.isRookie ? 'Rookie' : 'Senior'}
+          </Badge>
+        ),
+      },
+      {
+        id: 'status',
+        label: 'Status',
+        defaultWidth: 120,
+        sortable: true,
+        sortValue: (player: Player) => {
+          if (player.contract.yearsRemaining === 0) return 3
+          const mv = calculatePlayerValue(player)
+          if (player.contract.aav > mv * 1.15) return 2
+          if (player.contract.aav < mv * 0.8) return 0
+          return 1
+        },
+        render: (player: Player) => {
+          const mv = calculatePlayerValue(player)
+          const overpaid = player.contract.aav > mv * 1.15
+          const underpaid = player.contract.aav < mv * 0.8
+          return (
+            player.contract.yearsRemaining === 0 ? (
+              <Badge variant="destructive">Out of Contract</Badge>
+            ) : overpaid ? (
+              <Badge variant="outline" className="text-orange-500 border-orange-500/50">Overpaid</Badge>
+            ) : underpaid ? (
+              <Badge variant="outline" className="text-green-500 border-green-500/50">Underpaid</Badge>
+            ) : (
+              <Badge variant="outline" className="text-muted-foreground">Fair</Badge>
+            )
+          )
+        },
+      },
+      {
+        id: 'action',
+        label: '',
+        defaultWidth: 130,
+        sortable: false,
+        render: (player: Player) => (
+          <div className="flex items-center justify-center gap-1">
+            <button
+              type="button"
+              className="inline-flex items-center justify-center rounded-md p-1 text-muted-foreground hover:text-primary hover:bg-accent transition-colors"
+              title="Contract projection"
+              onClick={() => setProjectionPlayerId(player.id)}
+            >
+              <TrendingUp className="h-4 w-4" />
+            </button>
+            <ShortlistAssignMenu targetType="player" targetId={player.id} buttonLabel="List" buttonVariant="ghost" buttonSize="sm" />
+          </div>
+        ),
+      },
+    ]
+    return cols
+  }, [])
+
+  const tableViewColumns = useMemo<TableViewColumnConfig[]>(
+    () => tableColumns.map((col) => ({
+      id: col.id,
+      label: col.label || col.id,
+      defaultWidth: col.defaultWidth,
+      minWidth: 40,
+      maxWidth: 300,
+      sortable: col.sortable,
+    })),
+    [tableColumns],
+  )
+  const tableView = useTableViewManager({
+    tableId: 'contracts-overview',
+    columns: tableViewColumns,
+    defaultSort: { columnId: 'aav', direction: 'desc' },
+  })
+  const visibleColumns = useMemo(() => {
+    const hidden = new Set(tableView.snapshot.hiddenColumnIds)
+    const byId = new Map(tableColumns.map((col) => [col.id, col] as const))
+    return tableView.snapshot.columnOrder
+      .filter((id) => !hidden.has(id))
+      .map((id) => byId.get(id))
+      .filter((col): col is (typeof tableColumns)[number] => Boolean(col))
+  }, [tableView.snapshot.columnOrder, tableView.snapshot.hiddenColumnIds, tableColumns])
+  const sortedPlayers = useMemo(() => {
+    const sort = tableView.snapshot.sort
+    if (!sort) return clubPlayers
+    const col = tableColumns.find((c) => c.id === sort.columnId && c.sortable && c.sortValue)
+    if (!col?.sortValue) return clubPlayers
+    const sorted = [...clubPlayers].sort((a, b) => {
+      const va = col.sortValue!(a)
+      const vb = col.sortValue!(b)
+      if (va === vb) return 0
+      return va > vb ? 1 : -1
+    })
+    return sort.direction === 'desc' ? sorted.reverse() : sorted
+  }, [clubPlayers, tableColumns, tableView.snapshot.sort])
 
   return (
     <div className="space-y-6">
@@ -1070,99 +1583,62 @@ export function ContractsPage() {
       {/* Contract Overview Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Squad Contracts</CardTitle>
+          <div className="flex items-center justify-between gap-3">
+            <CardTitle>Squad Contracts</CardTitle>
+            <TableViewManagerControl columns={tableViewColumns} manager={tableView} />
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="px-3">Player</TableHead>
-                  <TableHead className="px-3">Pos</TableHead>
-                  <TableHead className="px-3 text-center">Age</TableHead>
-                  <TableHead className="px-3 text-right">AAV</TableHead>
-                  <TableHead className="px-3 text-center">Years Left</TableHead>
-                  <TableHead className="px-3 text-right">Est. Value</TableHead>
-                  <TableHead className="px-3 text-center">List</TableHead>
-                  <TableHead className="px-3 text-center">Status</TableHead>
-                  <TableHead className="px-3 w-10" />
+                  {visibleColumns.map((col) => (
+                    <TableHead
+                      key={col.id}
+                      className="px-3"
+                      style={{ width: tableView.snapshot.columnWidths[col.id] ?? col.defaultWidth }}
+                      onClick={() => {
+                        if (!col.sortable) return
+                        const current = tableView.snapshot.sort
+                        if (!current || current.columnId !== col.id) {
+                          tableView.setSort(col.id, 'desc')
+                          return
+                        }
+                        tableView.setSort(col.id, current.direction === 'desc' ? 'asc' : 'desc')
+                      }}
+                    >
+                      {col.label || ''}
+                    </TableHead>
+                  ))}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {clubPlayers.map((player) => {
-                  const mv = calculatePlayerValue(player)
-                  const overpaid = player.contract.aav > mv * 1.15
-                  const underpaid = player.contract.aav < mv * 0.8
-                  return (
-                    <TableRow key={player.id} className="text-sm">
-                      <TableCell className="px-3 font-medium">
-                        {player.firstName} {player.lastName}
+                {sortedPlayers.map((player) => (
+                  <TableRow key={player.id} className="text-sm">
+                    {visibleColumns.map((col) => (
+                      <TableCell
+                        key={`${player.id}-${col.id}`}
+                        className={
+                          col.id === 'aav' || col.id === 'estValue' ? 'text-right'
+                            : col.id === 'age' || col.id === 'years' || col.id === 'list' || col.id === 'status' || col.id === 'action'
+                              ? 'text-center'
+                              : 'text-left'
+                        }
+                        style={{ width: tableView.snapshot.columnWidths[col.id] ?? col.defaultWidth }}
+                      >
+                        {col.render(player)}
                       </TableCell>
-                      <TableCell className="px-3">
-                        <Badge variant="outline">{player.position.primary}</Badge>
-                      </TableCell>
-                      <TableCell className="px-3 text-center">
-                        {player.age}
-                      </TableCell>
-                      <TableCell className="px-3 text-right font-mono text-xs">
-                        {formatDollars(player.contract.aav)}
-                      </TableCell>
-                      <TableCell className="px-3 text-center">
-                        <span
-                          className={
-                            player.contract.yearsRemaining <= 1
-                              ? 'text-red-500 font-semibold'
-                              : ''
-                          }
-                        >
-                          {player.contract.yearsRemaining}
-                        </span>
-                      </TableCell>
-                      <TableCell className="px-3 text-right font-mono text-xs">
-                        {formatDollars(mv)}
-                      </TableCell>
-                      <TableCell className="px-3 text-center">
-                        <Badge
-                          variant={player.isRookie ? 'secondary' : 'default'}
-                        >
-                          {player.isRookie ? 'Rookie' : 'Senior'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="px-3 text-center">
-                        {player.contract.yearsRemaining === 0 ? (
-                          <Badge variant="destructive">Out of Contract</Badge>
-                        ) : overpaid ? (
-                          <Badge variant="outline" className="text-orange-500 border-orange-500/50">
-                            Overpaid
-                          </Badge>
-                        ) : underpaid ? (
-                          <Badge variant="outline" className="text-green-500 border-green-500/50">
-                            Underpaid
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-muted-foreground">
-                            Fair
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="px-1 text-center">
-                        <button
-                          type="button"
-                          className="inline-flex items-center justify-center rounded-md p-1 text-muted-foreground hover:text-primary hover:bg-accent transition-colors"
-                          title="Contract projection"
-                          onClick={() => setProjectionPlayerId(player.id)}
-                        >
-                          <TrendingUp className="h-4 w-4" />
-                        </button>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
+                    ))}
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
           </div>
         </CardContent>
       </Card>
+
+      <ShortlistManager targetTypeFilter="player" title="Contract Targets Shortlists" />
 
       {/* Recent Activity Feed */}
       {recentContractNews.length > 0 && (
@@ -1181,6 +1657,11 @@ export function ContractsPage() {
                   <div className="min-w-0">
                     <p className="text-sm font-medium">{news.headline}</p>
                     <p className="text-xs text-muted-foreground">{news.body}</p>
+                    {news.media?.reporterName && news.media?.outletName && (
+                      <p className="text-[11px] text-muted-foreground/80">
+                        Reported by {news.media.reporterName} ({news.media.outletName})
+                      </p>
+                    )}
                     <p className="text-xs text-muted-foreground/70 mt-0.5">
                       {news.date}
                     </p>

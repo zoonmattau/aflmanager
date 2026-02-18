@@ -111,13 +111,6 @@ function positionLabel(pos: PlayerPositionType): string {
   return labels[pos] ?? pos
 }
 
-function posCategory(pos: PlayerPositionType): 'DEF' | 'MID' | 'FWD' | 'RUC' {
-  if (['FB', 'CHB', 'BP', 'HBF'].includes(pos)) return 'DEF'
-  if (['IM', 'OM', 'W'].includes(pos)) return 'MID'
-  if (pos === 'RK') return 'RUC'
-  return 'FWD'
-}
-
 interface ScoredPlayer {
   player: Player
   overall: number
@@ -138,13 +131,6 @@ function scoreAllPlayers(players: Record<string, Player>): ScoredPlayer[] {
     const compositeScore = overall * ageFactor * formFactor * fitnessFactor * injuryPenalty
     return { player: p, overall, stars, compositeScore }
   })
-}
-
-function ordinal(n: number): string {
-  if (n === 1) return '1st'
-  if (n === 2) return '2nd'
-  if (n === 3) return '3rd'
-  return `${n}th`
 }
 
 // ---------------------------------------------------------------------------
@@ -200,7 +186,7 @@ function generateTop50WriteUp(
     : 'Yet to debut at senior level.'
 
   if (rank <= 5) {
-    return `${name} enters ${club.currentYear ?? 'the season'} as one of the game's premier talents. ` +
+    return `${name} enters the season as one of the game's premier talents. ` +
       `The ${club.name} ${pos.toLowerCase()} rated ${sp.overall} overall (${sp.stars}★). ` +
       `${skillPhrase} ${agePhrase} ${statsPhrase}${injuryNote}${contractNote}`
   }
@@ -306,9 +292,9 @@ function buildProjectedAA(
 function buildStorylines(
   scored: ScoredPlayer[],
   clubs: Record<string, Club>,
-  ladder: LadderEntry[],
-  history: GameHistory,
-  currentYear: number,
+  _ladder: LadderEntry[],
+  _history: GameHistory,
+  _currentYear: number,
 ): Storyline[] {
   const stories: Storyline[] = []
   const clubIds = Object.keys(clubs)

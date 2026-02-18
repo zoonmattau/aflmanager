@@ -40,6 +40,11 @@ const CATEGORY_CONFIG: Record<NewsCategory, { icon: React.ElementType; color: st
 
 const ALL_CATEGORIES: NewsCategory[] = ['match', 'trade', 'injury', 'discipline', 'draft', 'contract', 'milestone', 'general']
 
+function formatByline(item: NewsItem): string | null {
+  if (!item.media?.reporterName || !item.media?.outletName) return null
+  return `Reported by ${item.media.reporterName} (${item.media.outletName})`
+}
+
 // ---------------------------------------------------------------------------
 // News row
 // ---------------------------------------------------------------------------
@@ -48,18 +53,20 @@ function NewsRow({
   item,
   expanded,
   onToggle,
+  onRead,
 }: {
   item: NewsItem
   expanded: boolean
   onToggle: () => void
+  onRead: (newsId: string) => void
 }) {
-  const markNewsRead = useGameStore((s) => s.markNewsRead)
   const config = CATEGORY_CONFIG[item.category]
   const Icon = config.icon
   const isUnread = !item.read
+  const byline = formatByline(item)
 
   const handleClick = () => {
-    if (isUnread) markNewsRead(item.id)
+    if (isUnread) onRead(item.id)
     onToggle()
   }
 
@@ -97,13 +104,21 @@ function NewsRow({
 
       {/* Preview / expanded body */}
       {!expanded && (
-        <p className="ml-[calc(0.625rem+0.75rem+1.75rem+0.75rem)] truncate text-xs text-muted-foreground">
-          {item.body}
-        </p>
+        <div className="ml-[calc(0.625rem+0.75rem+1.75rem+0.75rem)]">
+          <p className="truncate text-xs text-muted-foreground">
+            {item.body}
+          </p>
+          {byline && (
+            <p className="truncate text-[10px] text-muted-foreground/80">
+              {byline}
+            </p>
+          )}
+        </div>
       )}
       {expanded && (
         <div className="ml-[calc(0.625rem+0.75rem+1.75rem+0.75rem)] mt-1 space-y-2">
           <p className="text-sm text-foreground">{item.body}</p>
+          {byline && <p className="text-xs text-muted-foreground">{byline}</p>}
           <Badge variant="outline" className={cn('text-[10px]', config.color)}>
             {config.label}
           </Badge>
@@ -120,7 +135,11 @@ function NewsRow({
 export function InboxPage() {
   const navigate = useNavigate()
   const newsLog = useGameStore((s) => s.newsLog)
+  const emailLog = useGameStore((s) => s.emailLog)
   const markAllNewsRead = useGameStore((s) => s.markAllNewsRead)
+  const markNewsRead = useGameStore((s) => s.markNewsRead)
+  const markEmailRead = useGameStore((s) => s.markEmailRead)
+  const markAllEmailRead = useGameStore((s) => s.markAllEmailRead)
   const tradeInbox = useGameStore((s) => s.tradeInbox)
   const respondToTradeOffer = useGameStore((s) => s.respondToTradeOffer)
   const tribunalInbox = useGameStore((s) => s.tribunalInbox)
@@ -130,13 +149,14 @@ export function InboxPage() {
   const players = useGameStore((s) => s.players)
   const playerClubId = useGameStore((s) => s.playerClubId)
   const [filter, setFilter] = useState<'all' | NewsCategory>('all')
+  const [channel, setChannel] = useState<'alerts' | 'email'>('alerts')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [tradeError, setTradeError] = useState<string | null>(null)
   const [tribunalError, setTribunalError] = useState<string | null>(null)
 
   const sorted = useMemo(
-    () => [...newsLog].reverse(),
-    [newsLog],
+    () => [...(channel === 'alerts' ? newsLog : emailLog)].reverse(),
+    [newsLog, emailLog, channel],
   )
 
   const filtered = useMemo(
@@ -144,16 +164,19 @@ export function InboxPage() {
     [sorted, filter],
   )
 
-  const totalUnread = useMemo(() => newsLog.filter((n) => !n.read).length, [newsLog])
+  const unreadAlerts = useMemo(() => newsLog.filter((n) => !n.read).length, [newsLog])
+  const unreadEmail = useMemo(() => emailLog.filter((n) => !n.read).length, [emailLog])
+  const totalUnread = unreadAlerts + unreadEmail
 
   const unreadByCategory = useMemo(() => {
     const counts: Record<string, number> = {}
     for (const cat of ALL_CATEGORIES) counts[cat] = 0
-    for (const item of newsLog) {
+    const source = channel === 'alerts' ? newsLog : emailLog
+    for (const item of source) {
       if (!item.read) counts[item.category] = (counts[item.category] ?? 0) + 1
     }
     return counts
-  }, [newsLog])
+  }, [newsLog, emailLog, channel])
 
   const pendingTradeOffers = useMemo(
     () => tradeInbox.filter((i) => i.offer.status === 'pending-user').slice(0, 4),
@@ -205,12 +228,33 @@ export function InboxPage() {
           </p>
         </div>
         {totalUnread > 0 && (
-          <Button variant="outline" size="sm" onClick={markAllNewsRead}>
+          <Button variant="outline" size="sm" onClick={channel === 'alerts' ? markAllNewsRead : markAllEmailRead}>
             <CheckCheck className="mr-2 h-4 w-4" />
-            Mark All Read
+            Mark {channel === 'alerts' ? 'Alerts' : 'Email'} Read
           </Button>
         )}
       </div>
+
+      <Tabs value={channel} onValueChange={(v) => setChannel(v as typeof channel)}>
+        <TabsList>
+          <TabsTrigger value="alerts" className="gap-1.5">
+            In-App
+            {unreadAlerts > 0 && (
+              <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-semibold text-white">
+                {unreadAlerts}
+              </span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="email" className="gap-1.5">
+            Email
+            {unreadEmail > 0 && (
+              <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-semibold text-white">
+                {unreadEmail}
+              </span>
+            )}
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {/* Category filter */}
       <Tabs value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
@@ -352,6 +396,7 @@ export function InboxPage() {
                 item={item}
                 expanded={expandedId === item.id}
                 onToggle={() => setExpandedId(expandedId === item.id ? null : item.id)}
+                onRead={channel === 'alerts' ? markNewsRead : markEmailRead}
               />
             ))}
           </div>

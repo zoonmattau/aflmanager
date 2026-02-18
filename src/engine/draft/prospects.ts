@@ -22,6 +22,7 @@ import waflClubsJson from '@/data/waflClubs.json'
 import tflClubsJson from '@/data/tflClubs.json'
 import ntflClubsJson from '@/data/ntflClubs.json'
 import clubsJson from '@/data/clubs.json'
+import { auditAndNormalizeAttributes } from '@/engine/player/attributeAudit'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -231,6 +232,123 @@ const POSITION_BIAS_KEYS: Record<PlayerPositionType, (keyof PlayerAttributes)[]>
   FF: ['goalkicking', 'scoringInstinct', 'insideForward', 'markingContested', 'snap'],
 }
 
+const ARCHETYPE_BIAS_KEYS: Record<DraftArchetype, (keyof PlayerAttributes)[]> = {
+  'intercept-defender': ['intercept', 'markingOverhead', 'zonalAwareness', 'positioning', 'spoiling', 'anticipation'],
+  'lockdown-defender': ['oneOnOne', 'spoiling', 'hardness', 'tackling', 'positioning', 'markingContested'],
+  'rebound-defender': ['kickingEfficiency', 'fieldKicking', 'kickingDistance', 'rebounding', 'speed', 'composure'],
+  'inside-bull': ['contested', 'clearance', 'groundBallGet', 'tackling', 'hardness', 'stoppage'],
+  'outside-runner': ['speed', 'acceleration', 'endurance', 'kickingEfficiency', 'fieldKicking', 'creativity'],
+  'two-way-wing': ['endurance', 'workRate', 'positioning', 'kickingEfficiency', 'rebounding', 'pressure'],
+  'mobile-ruck': ['hitouts', 'followUp', 'ruckCreative', 'groundBallGet', 'endurance', 'stoppage'],
+  'tap-ruck': ['hitouts', 'ruckCreative', 'centreBounce', 'boundaryThrowIn', 'stoppage', 'strength'],
+  'lead-up-forward': ['markingLeading', 'leadingPatterns', 'goalkicking', 'insideForward', 'scoringInstinct', 'agility'],
+  'power-forward': ['markingContested', 'markingOverhead', 'strength', 'goalkicking', 'setShot', 'insideForward'],
+  'small-pressure-forward': ['pressure', 'speed', 'acceleration', 'groundBallGet', 'snap', 'scoringInstinct'],
+  swingman: ['markingContested', 'markingOverhead', 'intercept', 'positioning', 'oneOnOne', 'leadingPatterns'],
+}
+
+const ROLE_BIAS_KEYS: Record<DraftRole, (keyof PlayerAttributes)[]> = {
+  shutdown: ['oneOnOne', 'spoiling', 'hardness', 'positioning', 'zonalAwareness', 'consistency'],
+  'ball-winner': ['contested', 'clearance', 'groundBallGet', 'tackling', 'stoppage', 'centreBounce'],
+  'line-breaker': ['speed', 'acceleration', 'kickingEfficiency', 'fieldKicking', 'rebounding', 'creativity'],
+  'aerial-threat': ['markingOverhead', 'markingContested', 'leap', 'strength', 'leadingPatterns', 'scoringInstinct'],
+  'ground-pressure': ['pressure', 'tackling', 'speed', 'acceleration', 'groundBallGet', 'hardness'],
+  'contested-mark': ['markingContested', 'markingOverhead', 'strength', 'setShot', 'goalkicking', 'insideForward'],
+  'ruck-craft': ['hitouts', 'ruckCreative', 'followUp', 'centreBounce', 'boundaryThrowIn', 'stoppage'],
+  utility: ['workRate', 'teamPlayer', 'positioning', 'composure', 'consistency', 'anticipation'],
+}
+
+type AttributeBounds = { min: number; max: number }
+
+const POSITION_ATTRIBUTE_BOUNDS: Record<PlayerPositionType, Partial<Record<keyof PlayerAttributes, AttributeBounds>>> = {
+  BP: {
+    setShot: { min: 40, max: 80 },
+    goalkicking: { min: 38, max: 78 },
+    hitouts: { min: 10, max: 38 },
+    ruckCreative: { min: 10, max: 36 },
+    followUp: { min: 12, max: 44 },
+  },
+  FB: {
+    setShot: { min: 40, max: 78 },
+    goalkicking: { min: 36, max: 76 },
+    hitouts: { min: 10, max: 44 },
+    ruckCreative: { min: 10, max: 40 },
+    followUp: { min: 12, max: 46 },
+  },
+  HBF: {
+    setShot: { min: 42, max: 80 },
+    hitouts: { min: 10, max: 36 },
+    ruckCreative: { min: 10, max: 34 },
+    followUp: { min: 12, max: 44 },
+  },
+  CHB: {
+    setShot: { min: 42, max: 82 },
+    goalkicking: { min: 40, max: 80 },
+    hitouts: { min: 10, max: 52 },
+    ruckCreative: { min: 10, max: 44 },
+    followUp: { min: 12, max: 54 },
+  },
+  W: {
+    hitouts: { min: 10, max: 32 },
+    ruckCreative: { min: 10, max: 30 },
+    followUp: { min: 12, max: 38 },
+    markingContested: { min: 36, max: 82 },
+  },
+  IM: {
+    hitouts: { min: 10, max: 36 },
+    ruckCreative: { min: 10, max: 34 },
+    followUp: { min: 12, max: 48 },
+  },
+  OM: {
+    hitouts: { min: 10, max: 30 },
+    ruckCreative: { min: 10, max: 28 },
+    followUp: { min: 12, max: 40 },
+  },
+  RK: {
+    kickingEfficiency: { min: 42, max: 78 },
+    kickingDistance: { min: 40, max: 74 },
+    setShot: { min: 36, max: 74 },
+    dropPunt: { min: 40, max: 76 },
+    snap: { min: 32, max: 68 },
+    fieldKicking: { min: 40, max: 74 },
+    goalkicking: { min: 34, max: 72 },
+    hitouts: { min: 64, max: 96 },
+    ruckCreative: { min: 56, max: 94 },
+    followUp: { min: 48, max: 90 },
+    centreBounce: { min: 42, max: 90 },
+    boundaryThrowIn: { min: 46, max: 92 },
+    stoppage: { min: 48, max: 92 },
+  },
+  HFF: {
+    hitouts: { min: 10, max: 34 },
+    ruckCreative: { min: 10, max: 32 },
+    followUp: { min: 12, max: 38 },
+  },
+  CHF: {
+    hitouts: { min: 10, max: 58 },
+    ruckCreative: { min: 10, max: 52 },
+    followUp: { min: 12, max: 64 },
+  },
+  FP: {
+    hitouts: { min: 10, max: 24 },
+    ruckCreative: { min: 10, max: 22 },
+    followUp: { min: 12, max: 30 },
+  },
+  FF: {
+    hitouts: { min: 10, max: 48 },
+    ruckCreative: { min: 10, max: 42 },
+    followUp: { min: 12, max: 56 },
+  },
+}
+
+const TIER_ATTRIBUTE_TARGET: Record<ProspectTier, { mean: number; spread: number; min: number; max: number }> = {
+  elite: { mean: 74, spread: 4.5, min: 52, max: 95 },
+  'first-round': { mean: 70, spread: 5.0, min: 46, max: 90 },
+  'second-round': { mean: 66, spread: 5.5, min: 42, max: 86 },
+  late: { mean: 62, spread: 6.0, min: 36, max: 82 },
+  'rookie-list': { mean: 58, spread: 6.5, min: 32, max: 78 },
+}
+
 const SECONDARY_POSITION_MAP: Record<PlayerPositionType, PlayerPositionType[]> = {
   BP: ['FB', 'HBF'],
   FB: ['BP', 'CHB'],
@@ -410,24 +528,135 @@ function resolveClassProfile(year: number, rng: SeededRNG): { profile: DraftClas
   return { profile, tuning }
 }
 
+function centeredNoise(rng: SeededRNG, amplitude: number): number {
+  const tri = (rng.next() + rng.next() + rng.next()) / 3
+  return (tri - 0.5) * 2 * amplitude
+}
+
+function resolveAttributeBounds(
+  tier: ProspectTier,
+  primaryPosition: PlayerPositionType,
+  attr: keyof PlayerAttributes,
+): AttributeBounds {
+  const tierTarget = TIER_ATTRIBUTE_TARGET[tier]
+  const posBounds = POSITION_ATTRIBUTE_BOUNDS[primaryPosition]?.[attr]
+  if (!posBounds) return { min: tierTarget.min, max: tierTarget.max }
+
+  const min = Math.max(tierTarget.min, posBounds.min)
+  const max = Math.min(tierTarget.max, posBounds.max)
+  return { min, max: Math.max(min, max) }
+}
+
+function applyTopEndRarity(
+  value: number,
+  biasStrength: number,
+  rng: SeededRNG,
+): number {
+  let adjusted = value
+  if (adjusted > 88) adjusted = 88 + (adjusted - 88) * 0.45
+  if (adjusted > 93) adjusted = 93 + (adjusted - 93) * 0.28
+
+  const allow96Plus = rng.chance(0.02 + biasStrength * 0.08)
+  if (!allow96Plus && adjusted > 95) {
+    adjusted = 95 - rng.nextFloat(0.2, 1.4)
+  }
+
+  const rounded = Math.round(adjusted)
+  const allow99 = rng.chance(0.0008 + biasStrength * 0.0014)
+  if (rounded >= 99 && !allow99) return 98
+  return rounded
+}
+
+function getOverall(attrs: PlayerAttributes): number {
+  let total = 0
+  for (const key of ALL_ATTRIBUTE_KEYS) total += attrs[key]
+  return total / ALL_ATTRIBUTE_KEYS.length
+}
+
+function normalizeAttributesToTarget(
+  attrs: Record<keyof PlayerAttributes, number>,
+  targetOverall: number,
+  biasByAttr: Record<keyof PlayerAttributes, number>,
+  boundsByAttr: Record<keyof PlayerAttributes, AttributeBounds>,
+): void {
+  for (let pass = 0; pass < 8; pass++) {
+    const currentOverall = getOverall(attrs as PlayerAttributes)
+    const delta = targetOverall - currentOverall
+    if (Math.abs(delta) <= 0.12) break
+
+    const increasing = delta > 0
+    let totalWeight = 0
+    const weights = {} as Record<keyof PlayerAttributes, number>
+
+    for (const key of ALL_ATTRIBUTE_KEYS) {
+      const bounds = boundsByAttr[key]
+      const room = increasing ? bounds.max - attrs[key] : attrs[key] - bounds.min
+      if (room <= 0) {
+        weights[key] = 0
+        continue
+      }
+
+      const bias = biasByAttr[key]
+      const identityWeight = increasing ? (0.9 + bias * 1.8) : (1.0 + (1 - bias) * 0.7)
+      const weight = identityWeight * (1 + room / 16)
+      weights[key] = weight
+      totalWeight += weight
+    }
+
+    if (totalWeight <= 0.001) break
+    for (const key of ALL_ATTRIBUTE_KEYS) {
+      const weight = weights[key]
+      if (weight <= 0) continue
+      const step = (delta * weight) / totalWeight * 1.5
+      const bounds = boundsByAttr[key]
+      attrs[key] = clamp(Math.round(attrs[key] + step), bounds.min, bounds.max)
+    }
+  }
+}
+
 function generateAttributes(
   tier: ProspectTier,
   primaryPosition: PlayerPositionType,
+  archetype: DraftArchetype,
+  role: DraftRole,
   rng: SeededRNG,
   classAttributeShift: number,
   stateLeagueShift: number,
 ): PlayerAttributes {
-  const config = TIER_CONFIG[tier]
-  const biasKeys = new Set(POSITION_BIAS_KEYS[primaryPosition])
+  const tierTarget = TIER_ATTRIBUTE_TARGET[tier]
+  const positionBias = new Set(POSITION_BIAS_KEYS[primaryPosition])
+  const archetypeBias = new Set(ARCHETYPE_BIAS_KEYS[archetype])
+  const roleBias = new Set(ROLE_BIAS_KEYS[role])
+
+  const targetOverall = clamp(
+    tierTarget.mean + classAttributeShift * 0.55 + stateLeagueShift * 0.2 + centeredNoise(rng, tierTarget.spread),
+    34,
+    90,
+  )
+
   const attrs = {} as Record<keyof PlayerAttributes, number>
+  const boundsByAttr = {} as Record<keyof PlayerAttributes, AttributeBounds>
+  const biasByAttr = {} as Record<keyof PlayerAttributes, number>
 
   for (const key of ALL_ATTRIBUTE_KEYS) {
-    if (biasKeys.has(key)) {
-      attrs[key] = clamp(rng.nextInt(config.baseMin, config.biasMax) + classAttributeShift + stateLeagueShift, 20, 99)
-    } else {
-      attrs[key] = clamp(rng.nextInt(config.baseMin, config.baseMax) + classAttributeShift + stateLeagueShift, 15, 95)
-    }
+    const bounds = resolveAttributeBounds(tier, primaryPosition, key)
+    boundsByAttr[key] = bounds
+
+    const posBoost = positionBias.has(key) ? 0.65 : 0
+    const archetypeBoost = archetypeBias.has(key) ? 0.95 : 0
+    const roleBoost = roleBias.has(key) ? 0.55 : 0
+    const biasStrength = Math.min(1.9, posBoost + archetypeBoost + roleBoost)
+    biasByAttr[key] = Math.min(1, biasStrength / 1.9)
+
+    const base = targetOverall + centeredNoise(rng, 9.5)
+    const biasShift = biasStrength * 6.5 - (biasStrength === 0 ? 2.6 : 0.8)
+    const classShift = classAttributeShift * 0.35 + stateLeagueShift * 0.16
+    const raw = base + biasShift + classShift
+    const bounded = clamp(raw, bounds.min, bounds.max)
+    attrs[key] = clamp(applyTopEndRarity(bounded, biasByAttr[key], rng), bounds.min, bounds.max)
   }
+
+  normalizeAttributesToTarget(attrs, targetOverall, biasByAttr, boundsByAttr)
 
   return attrs as PlayerAttributes
 }
@@ -703,8 +932,20 @@ function generateProspect(
 
   const pathway = determinePathway(region, rng)
   const stateLeagueShift = getStateLeagueShift(homeState, pathway)
-  const trueAttributes = generateAttributes(tier, primaryPosition, rng, tuning.attributeShift, stateLeagueShift)
+  const generatedAttributes = generateAttributes(
+    tier,
+    primaryPosition,
+    archetype,
+    role,
+    rng,
+    tuning.attributeShift,
+    stateLeagueShift,
+  )
   const hiddenAttributes = generateHiddenAttributes(tier, rng, tuning.potentialShift)
+  const { attributes: trueAttributes } = auditAndNormalizeAttributes(primaryPosition, generatedAttributes, {
+    stage: 'draft',
+    hiddenAttributes,
+  })
   const personality = generatePersonality(rng)
 
   const config = TIER_CONFIG[tier]

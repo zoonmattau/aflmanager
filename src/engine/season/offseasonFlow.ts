@@ -6,6 +6,7 @@ import type { DraftProspect, DraftPick as DraftEnginePick } from '@/types/draft'
 import type { StaffMember } from '@/types/staff'
 import type { SeededRNG } from '@/engine/core/rng'
 import type { GameHistory } from '@/types/history'
+import { createDefaultRecordsBook } from '@/engine/history/recordsBook'
 import type {
   PlayerDevelopmentReport,
   PlayerDevelopmentDelta,
@@ -1267,9 +1268,12 @@ export function processAIDraft(
     seasons: [],
     draftHistory: [],
     developmentReports: [],
+    playerSeasonStats: [],
     awards: [],
     milestones: [],
     retirementLegacies: [],
+    originHistory: [],
+    recordsBook: createDefaultRecordsBook(),
   }
 
   // Track which prospects have been drafted

@@ -4,7 +4,7 @@ import type { GameSettings, MatchTimeSlot, BlockbusterMatch } from '@/types/game
 import { SeededRNG } from '@/engine/core/rng'
 import { REGULAR_SEASON_ROUNDS } from '@/engine/core/constants'
 import { BLOCKBUSTER_AUTO_ROUNDS, DEFAULT_RIVALRY_PAIRS } from '@/engine/core/defaultSettings'
-import { getClubState } from '@/engine/venues/venueEngine'
+import { getClubState, getTravelFatigue } from '@/engine/venues/venueEngine'
 import { validateFixture } from './fixtureValidator'
 
 // ---------------------------------------------------------------------------
@@ -1105,11 +1105,16 @@ function getFixtureSlotScore(
   const normalizedTravelWeight = Math.max(0, Math.min(100, travelWeighting)) / 100
   const homeState = getClubState(homeId)
   const awayState = getClubState(awayId)
-  const interstate = homeState !== awayState
-  if (interstate) {
-    const interstateBoost = normalizedTravelWeight * 4
-    if (bucket === 'night') score += interstateBoost
-    if (bucket === 'early') score -= interstateBoost
+  const travelDistance = getTravelFatigue(awayState, homeState)
+  if (travelDistance > 0) {
+    const travelPressure = normalizedTravelWeight * travelDistance
+    if (bucket === 'night') score += travelPressure * 1.4
+    else if (bucket === 'twilight') score += travelPressure * 0.8
+    else score -= travelPressure * 1.2
+
+    // Long-haul away trips are less realistic on short-rest Thursday slots.
+    if (slot.day === 'Thursday' && travelDistance >= 3) score -= travelPressure * 0.9
+    if ((slot.day === 'Sunday-Early' || slot.day === 'Sunday-Twilight') && travelDistance >= 3) score += travelPressure * 0.35
   }
 
   if (BIG_CLUB_IDS.has(homeId) && isPrime) score += 2

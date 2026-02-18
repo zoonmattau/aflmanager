@@ -24,22 +24,20 @@ export interface SlotPosition {
 export const FIELD_SLOTS: SlotPosition[] = [
   // Back line
   { slot: 'FB',  label: 'FB',  top: 7.9,  left: 50.0 },
-  { slot: 'LBP', label: 'LBP', top: 10.7, left: 32.4 },
-  { slot: 'RBP', label: 'RBP', top: 10.7, left: 67.6 },
+  { slot: 'LBP', label: 'LBP', top: 13.5, left: 31.5 },
+  { slot: 'RBP', label: 'RBP', top: 13.5, left: 68.5 },
 
   // Half-back line
   { slot: 'CHB', label: 'CHB', top: 25.7, left: 50.0 },
   { slot: 'LHB', label: 'LHB', top: 25.7, left: 23.1 },
   { slot: 'RHB', label: 'RHB', top: 25.7, left: 76.9 },
 
-  // Followers
-  { slot: 'RK',  label: 'RK',  top: 42.9, left: 50.0 },
-  { slot: 'RR',  label: 'RR',  top: 44.3, left: 38.9 },
-  { slot: 'ROV', label: 'ROV', top: 44.3, left: 61.1 },
-
-  // Centre line
+  // Centre square roles (wider 2x2 square around centre-circle origin)
+  { slot: 'RK',  label: 'RK',  top: 40.5, left: 38.5 },
+  { slot: 'RR',  label: 'RR',  top: 40.5, left: 61.5 },
+  { slot: 'ROV', label: 'ROV', top: 59.5, left: 38.5 },
   { slot: 'LW', label: 'LW', top: 50.0, left: 15.7 },
-  { slot: 'C',  label: 'C',  top: 50.0, left: 50.0 },
+  { slot: 'C',  label: 'C',  top: 59.5, left: 61.5 },
   { slot: 'RW', label: 'RW', top: 50.0, left: 84.3 },
 
   // Half-forward line
@@ -49,8 +47,8 @@ export const FIELD_SLOTS: SlotPosition[] = [
 
   // Forward line
   { slot: 'FF',  label: 'FF',  top: 92.1, left: 50.0 },
-  { slot: 'LFP', label: 'LFP', top: 89.3, left: 32.4 },
-  { slot: 'RFP', label: 'RFP', top: 89.3, left: 67.6 },
+  { slot: 'LFP', label: 'LFP', top: 86.5, left: 31.5 },
+  { slot: 'RFP', label: 'RFP', top: 86.5, left: 68.5 },
 ]
 
 // ---------------------------------------------------------------------------

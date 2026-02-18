@@ -8,7 +8,12 @@ import {
   roundSalary,
 } from '@/engine/contracts/negotiation'
 import { validateContractOffer } from '@/engine/salary/salaryCapEngine'
-import { buildYearByYearFromStructure } from '@/engine/contracts/contractStructures'
+import {
+  buildYearByYearFromStructure,
+  calculateContractCapHitForYear,
+  calculateIncentiveValue,
+  generateClausePreferences,
+} from '@/engine/contracts/contractStructures'
 import { MINIMUM_SALARY } from '@/engine/core/constants'
 import { resolveListConstraints, canAddToSeniorList } from '@/engine/rules/listRules'
 
@@ -65,7 +70,7 @@ export function processAIReSignings(
   clubs: Record<string, Club>,
   rng: SeededRNG,
   playerClubId: string,
-  currentRound: number,
+  _currentRound: number,
   currentDate: string,
   settings: GameSettings,
 ): {
@@ -139,9 +144,20 @@ export function processAIReSignings(
       // Cap check
       if (settings.salaryCap) {
         const allPlayers = Object.values(players)
-        const currentSalary = player.contract.yearByYear[0] ?? 0
+        const currentSalary = calculateContractCapHitForYear({
+          yearSalary: player.contract.yearByYear[0] ?? player.contract.aav,
+          contractYear: 1,
+          clauses: player.contract.clauses,
+          incentiveTotal: player.contract.incentiveTotal,
+        })
+        const proposedCapHit = calculateContractCapHitForYear({
+          yearSalary: offerAav,
+          contractYear: 1,
+          clauses: [],
+          incentiveTotal: 0,
+        })
         const capResult = validateContractOffer(
-          allPlayers, club.id, offerAav, currentSalary,
+          allPlayers, club.id, proposedCapHit, currentSalary,
           settings.salaryCapAmount, settings.realism.softCapSpending,
         )
         if (!capResult.allowed) continue
@@ -165,12 +181,17 @@ export function processAIReSignings(
       )
 
       if (result.accepted) {
+        const clauses = generateClausePreferences(player, club.id, 8, rng)
+        const incentiveTotal = calculateIncentiveValue(clauses)
         // Apply the contract
         player.contract = {
           yearsRemaining: contractYears,
           aav: offerAav,
           yearByYear,
           isRestricted: false,
+          clauses,
+          incentiveTotal,
+          structure: 'escalating',
         }
 
         signings.push({ playerId: player.id, clubId: club.id })
@@ -250,8 +271,14 @@ export function processAIFreeAgentBidding(
       // Cap check
       if (settings.salaryCap) {
         const allPlayers = Object.values(updatedPlayers)
+        const proposedCapHit = calculateContractCapHitForYear({
+          yearSalary: marketValue,
+          contractYear: 1,
+          clauses: [],
+          incentiveTotal: 0,
+        })
         const capResult = validateContractOffer(
-          allPlayers, club.id, marketValue, 0,
+          allPlayers, club.id, proposedCapHit, 0,
           settings.salaryCapAmount, settings.realism.softCapSpending,
         )
         if (!capResult.allowed) continue
@@ -288,8 +315,14 @@ export function processAIFreeAgentBidding(
       // Verify bid fits cap
       if (settings.salaryCap) {
         const allPlayers = Object.values(updatedPlayers)
+        const proposedCapHit = calculateContractCapHitForYear({
+          yearSalary: bidAmount,
+          contractYear: 1,
+          clauses: [],
+          incentiveTotal: 0,
+        })
         const bidCapResult = validateContractOffer(
-          allPlayers, club.id, bidAmount, 0,
+          allPlayers, club.id, proposedCapHit, 0,
           settings.salaryCapAmount, settings.realism.softCapSpending,
         )
         if (!bidCapResult.allowed) continue
@@ -323,6 +356,7 @@ export function processAIFreeAgentBidding(
     )
 
     // Update player
+    const faClauses = generateClausePreferences(freeAgent, winningBid.clubId, 9, rng)
     updatedPlayers[freeAgent.id] = {
       ...updatedPlayers[freeAgent.id],
       clubId: winningBid.clubId,
@@ -331,6 +365,9 @@ export function processAIFreeAgentBidding(
         aav: winningBid.bidValue,
         yearByYear,
         isRestricted: false,
+        clauses: faClauses,
+        incentiveTotal: calculateIncentiveValue(faClauses),
+        structure: 'escalating',
       },
     }
 

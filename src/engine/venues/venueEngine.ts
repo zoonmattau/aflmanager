@@ -1,6 +1,7 @@
 import type { SeededRNG } from '@/engine/core/rng'
 import type { Club } from '@/types/club'
-import type { Season } from '@/types/season'
+import type { LadderEntry, Season } from '@/types/season'
+import type { Match } from '@/types/match'
 import type {
   ClubVenueConfig,
   SoldHomeGame,
@@ -334,7 +335,130 @@ export function applyVenueAllocationsToFixture(
 }
 
 // ---------------------------------------------------------------------------
-// calculateMatchAttendance
+// Attendance context & result types
+// ---------------------------------------------------------------------------
+
+export interface AttendanceContext {
+  venueId: string
+  homeClubId: string
+  awayClubId: string
+  clubs: Record<string, Club>
+  ladder: LadderEntry[]
+  isFinal: boolean
+  finalType?: 'QF' | 'EF' | 'PF' | 'SF' | 'GF'
+  isBlockbuster: boolean
+  isRivalry: boolean
+  homeStarCount: number
+  awayStarCount: number
+  rng: SeededRNG
+}
+
+export interface AttendanceResult {
+  attendance: number
+  capacityPct: number
+  factors: {
+    base: number
+    clubPopularity: number
+    ladderBonus: number
+    rivalryBonus: number
+    finalsBonus: number
+    blockbusterBonus: number
+    starPower: number
+    randomVariance: number
+  }
+}
+
+// ---------------------------------------------------------------------------
+// calculateMatchAttendanceFull — context-aware attendance calculation
+// ---------------------------------------------------------------------------
+
+export function calculateMatchAttendanceFull(ctx: AttendanceContext): AttendanceResult {
+  const venue = VENUES[ctx.venueId]
+  if (!venue) {
+    return {
+      attendance: 20000,
+      capacityPct: 0,
+      factors: { base: 0, clubPopularity: 0, ladderBonus: 0, rivalryBonus: 0, finalsBonus: 0, blockbusterBonus: 0, starPower: 0, randomVariance: 0 },
+    }
+  }
+
+  // 1. Base fill rate by venue capacity tier
+  let base: number
+  if (venue.capacity >= 80000) base = 0.80
+  else if (venue.capacity >= 50000) base = 0.75
+  else if (venue.capacity >= 30000) base = 0.65
+  else base = 0.55
+
+  // 2. Club popularity — home weighted 2×
+  const homeClub = ctx.clubs[ctx.homeClubId]
+  const awayClub = ctx.clubs[ctx.awayClubId]
+  const tierValue = (tier: string | undefined): number =>
+    tier === 'large' ? 2 : tier === 'medium' ? 1 : 0
+  const popScore = (tierValue(homeClub?.tier) * 2 + tierValue(awayClub?.tier)) / 3
+  const clubPopularity = popScore >= 1.6 ? 0.12 : popScore >= 1.0 ? 0.08 : popScore >= 0.6 ? 0.04 : 0
+
+  // 3. Ladder position bonus
+  let ladderBonus = 0
+  for (const clubId of [ctx.homeClubId, ctx.awayClubId]) {
+    const rank = ctx.ladder.findIndex((e) => e.clubId === clubId) + 1
+    if (rank >= 1 && rank <= 4) ladderBonus += 0.04
+    else if (rank >= 5 && rank <= 8) ladderBonus += 0.02
+  }
+  ladderBonus = Math.min(0.08, ladderBonus)
+
+  // 4. Rivalry bonus
+  const rivalryBonus = ctx.isRivalry ? 0.10 : 0
+
+  // 5. Finals bonus
+  let finalsBonus = 0
+  if (ctx.isFinal) {
+    switch (ctx.finalType) {
+      case 'GF': finalsBonus = 0.18; break
+      case 'PF': finalsBonus = 0.12; break
+      case 'SF': finalsBonus = 0.08; break
+      case 'QF': case 'EF': finalsBonus = 0.06; break
+      default: finalsBonus = 0.06; break
+    }
+  }
+
+  // 6. Blockbuster bonus
+  const blockbusterBonus = ctx.isBlockbuster ? 0.08 : 0
+
+  // 7. Star power — players with overall >= 80
+  const totalStars = ctx.homeStarCount + ctx.awayStarCount
+  const starPower = Math.min(0.05, totalStars * 0.005)
+
+  // 8. Random variance ±5%
+  const randomVariance = ctx.rng.nextFloat(-0.05, 0.05)
+
+  // Combine
+  let fillRate = base + clubPopularity + ladderBonus + rivalryBonus + finalsBonus + blockbusterBonus + starPower + randomVariance
+
+  // 9. Clamp 35%–100%
+  fillRate = Math.max(0.35, Math.min(1.0, fillRate))
+
+  const rawAttendance = Math.round((venue.capacity * fillRate) / 100) * 100
+  const attendance = Math.min(venue.capacity, Math.max(0, rawAttendance))
+  const capacityPct = Math.round((attendance / venue.capacity) * 100)
+
+  return {
+    attendance,
+    capacityPct,
+    factors: {
+      base,
+      clubPopularity,
+      ladderBonus,
+      rivalryBonus,
+      finalsBonus,
+      blockbusterBonus,
+      starPower,
+      randomVariance,
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// calculateMatchAttendance — backward-compatible wrapper
 // ---------------------------------------------------------------------------
 
 export function calculateMatchAttendance(
@@ -343,20 +467,20 @@ export function calculateMatchAttendance(
   _awayClubId: string,
   rng: SeededRNG,
 ): number {
-  const venue = VENUES[venueId]
-  if (!venue) return 20000
-
-  // Base fill rate by capacity tier
-  let fillRate: number
-  if (venue.capacity >= 50000) fillRate = 0.85
-  else if (venue.capacity >= 30000) fillRate = 0.70
-  else fillRate = 0.55
-
-  // Random variance ±10%
-  fillRate += rng.nextFloat(-0.10, 0.10)
-  fillRate = Math.max(0.30, Math.min(0.98, fillRate))
-
-  return Math.min(venue.capacity, Math.round(venue.capacity * fillRate))
+  const result = calculateMatchAttendanceFull({
+    venueId,
+    homeClubId: _homeClubId,
+    awayClubId: _awayClubId,
+    clubs: {},
+    ladder: [],
+    isFinal: false,
+    isBlockbuster: false,
+    isRivalry: false,
+    homeStarCount: 0,
+    awayStarCount: 0,
+    rng,
+  })
+  return result.attendance
 }
 
 // ---------------------------------------------------------------------------
@@ -380,28 +504,48 @@ export function calculateMatchDayRevenue(
 export function getVenueHGA(
   venueId: string,
   homeClubId: string,
+  awayClubId?: string,
 ): number {
   const config = CLUB_DEFAULT_VENUES[homeClubId]
-  if (!config) return 2
-
   const venue = VENUES[venueId]
-  if (!venue) return 2
+  if (!config || !venue) return 2
 
-  if (venue.isNeutral) return venue.hgaBonus // 0-2 for neutral venues
-
-  if (venueId === config.primary) {
+  let baseHga = 2
+  if (venue.isNeutral) {
+    baseHga = venue.hgaBonus
+  } else if (venueId === config.primary) {
     // Count how many tenants share this venue
     const tenants = Object.values(CLUB_DEFAULT_VENUES).filter(
       (c) => c.primary === venueId,
     ).length
-    if (tenants >= 4) return 3
-    if (tenants >= 2) return 4
-    return 5 // sole tenant
+    if (tenants >= 4) baseHga = 3
+    else if (tenants >= 2) baseHga = 4
+    else baseHga = 5 // sole tenant
+  } else if (venueId === config.secondary) {
+    baseHga = 2
+  } else {
+    baseHga = 1 // non-home venue
   }
 
-  if (venueId === config.secondary) return 2
+  if (!awayClubId) {
+    return baseHga
+  }
 
-  return 1 // non-home venue
+  const homeFamiliarity = getVenueFamiliarityScore(homeClubId, venueId)
+  const awayFamiliarity = getVenueFamiliarityScore(awayClubId, venueId)
+  const familiarityEdge = (homeFamiliarity - awayFamiliarity) * 2.2
+
+  const homeTravel = getTravelFatigue(getClubState(homeClubId), venue.state)
+  const awayTravel = getTravelFatigue(getClubState(awayClubId), venue.state)
+  const travelEdge = Math.max(0, awayTravel - homeTravel) * 0.45
+
+  const crowdScalar = venue.capacity >= 55_000 ? 1.08 : venue.capacity <= 20_000 ? 0.9 : 1
+  const scaled = (baseHga + familiarityEdge + travelEdge) * crowdScalar
+
+  if (venue.isNeutral) {
+    return Math.max(0, Math.min(2.5, Math.round(scaled * 10) / 10))
+  }
+  return Math.max(0.5, Math.min(7, Math.round(scaled * 10) / 10))
 }
 
 // ---------------------------------------------------------------------------
@@ -413,6 +557,66 @@ export function getTravelFatigue(
   venueState: string,
 ): number {
   return STATE_DISTANCE[clubState]?.[venueState] ?? 0
+}
+
+export function getVenueFamiliarityScore(clubId: string, venueId: string): number {
+  const config = CLUB_DEFAULT_VENUES[clubId]
+  const venue = VENUES[venueId]
+  if (!config || !venue) return 0
+  if (config.primary === venueId) return 1
+  if (config.secondary === venueId) return 0.6
+  return venue.state === getClubState(clubId) ? 0.3 : 0
+}
+
+export function getVenueFamiliarityRatingBonus(clubId: string, venueId: string | undefined): number {
+  if (!venueId) return 0
+  const familiarity = getVenueFamiliarityScore(clubId, venueId)
+  return Math.round(familiarity * 26) / 10 // up to +2.6
+}
+
+function getClubTravelFromMatch(match: Match, clubId: string): number {
+  const travel = match.result?.simulationContext?.travelFatigue
+  if (!travel) return 0
+  if (match.homeClubId === clubId) return travel.home
+  if (match.awayClubId === clubId) return travel.away
+  return 0
+}
+
+export function getCompoundingTravelLoad(
+  clubId: string,
+  baseTravelFatigue: number,
+  recentMatches: Match[],
+): number {
+  const recent = recentMatches
+    .filter((m) => m.result && (m.homeClubId === clubId || m.awayClubId === clubId))
+    .sort((a, b) => b.round - a.round)
+    .slice(0, 4)
+    .map((m) => getClubTravelFromMatch(m, clubId))
+
+  if (recent.length === 0) {
+    return Math.max(0, Math.round(baseTravelFatigue * 10) / 10)
+  }
+
+  const weights = [0.8, 0.55, 0.35, 0.2]
+  let weighted = 0
+  for (let i = 0; i < recent.length; i++) {
+    weighted += recent[i] * (weights[i] ?? 0.15)
+  }
+
+  const heavyTripCount = recent.filter((v) => v >= 4).length
+  const hadInterstateLastWeek = recent[0] > 0
+  const hadLongHaulLastWeek = recent[0] >= 4
+  const consecutiveInterstate = baseTravelFatigue > 0 && hadInterstateLastWeek ? 1 : 0
+  const backToBackLongHaul = baseTravelFatigue >= 4 && hadLongHaulLastWeek ? 1 : 0
+
+  const compounded =
+    baseTravelFatigue +
+    weighted * 0.45 +
+    heavyTripCount * 0.35 +
+    consecutiveInterstate * 0.6 +
+    backToBackLongHaul * 0.9
+
+  return Math.max(0, Math.min(10, Math.round(compounded * 10) / 10))
 }
 
 // ---------------------------------------------------------------------------

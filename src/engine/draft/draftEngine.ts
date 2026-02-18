@@ -13,6 +13,8 @@ import {
 import { deriveAgentArchetype } from '@/engine/player/agentPersonality'
 import { getTacticalDraftPreferences } from '@/engine/core/tacticalIdentity'
 import { getClubIdentity, getIdentityDraftModifiers } from '@/engine/clubs/identity'
+import { auditAndNormalizeAttributes } from '@/engine/player/attributeAudit'
+import { syncPlayerPositionRatings } from '@/engine/player/playerRating'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -405,6 +407,23 @@ function emptyStats(): Player['careerStats'] {
     bounces: 0,
     clangers: 0,
     goalAssists: 0,
+  }
+}
+
+function generateProspectJumperPreference(rng?: SeededRNG): Player['jumperPreference'] {
+  if (!rng) return undefined
+  const roll = rng.nextFloat(0, 1)
+  if (roll >= 0.5) return undefined
+
+  const level: 'want' | 'demand' = roll < 0.14 ? 'demand' : 'want'
+  const preferredCount = level === 'demand' ? rng.nextInt(1, 2) : rng.nextInt(1, 3)
+  const preferred = new Set<number>()
+  while (preferred.size < preferredCount) {
+    preferred.add(rng.nextInt(1, 50))
+  }
+  return {
+    level,
+    preferredNumbers: Array.from(preferred).sort((a, b) => a - b),
   }
 }
 
@@ -802,7 +821,15 @@ export function convertProspectToPlayer(
   rng?: SeededRNG,
 ): Player {
   const preferredRole = mapDraftProspectToPreferredRole(prospect)
-  return {
+  const { attributes } = auditAndNormalizeAttributes(
+    prospect.position.primary,
+    prospect.trueAttributes,
+    {
+      stage: 'generation',
+      hiddenAttributes: prospect.hiddenAttributes,
+    },
+  )
+  const draftedPlayer: Player = {
     id: prospect.id,
     firstName: prospect.firstName,
     lastName: prospect.lastName,
@@ -810,6 +837,8 @@ export function convertProspectToPlayer(
     dateOfBirth: `${draftYear - prospect.age}-01-01`,
     clubId,
     jerseyNumber: 0, // To be assigned by the club
+    jumperHistory: [],
+    jumperPreference: generateProspectJumperPreference(rng),
     height: prospect.height,
     weight: prospect.weight,
     position: {
@@ -824,7 +853,7 @@ export function convertProspectToPlayer(
     },
     preferredRole,
     archetype: prospect.archetype,
-    attributes: { ...prospect.trueAttributes },
+    attributes,
     hiddenAttributes: { ...prospect.hiddenAttributes },
     personality: { ...prospect.personality },
     agentArchetype: rng ? deriveAgentArchetype(prospect.personality, rng) : undefined,
@@ -850,6 +879,8 @@ export function convertProspectToPlayer(
     trainingFocus: null,
     upskillPlans: [],
   }
+  syncPlayerPositionRatings(draftedPlayer)
+  return draftedPlayer
 }
 
 // ---------------------------------------------------------------------------

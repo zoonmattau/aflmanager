@@ -2,6 +2,8 @@ import type { Player, PlayerAttributes } from '@/types/player'
 import type { SeededRNG } from '@/engine/core/rng'
 import { MINIMUM_SALARY } from '@/engine/core/constants'
 import { getArchetypeContractModifiers } from '@/engine/player/agentPersonality'
+import { isAflListedPlayer } from '@/engine/players/contracts'
+import { calculateContractCapHitForYear } from '@/engine/contracts/contractStructures'
 
 // ---------------------------------------------------------------------------
 // Exported interfaces
@@ -385,8 +387,13 @@ export function evaluateOffer(
 export function calculateClubSalaryTotal(players: Player[], clubId: string): number {
   let total = 0
   for (const player of players) {
-    if (player.clubId === clubId && player.contract.yearByYear.length > 0) {
-      total += player.contract.yearByYear[0]
+    if (player.clubId === clubId && isAflListedPlayer(player) && player.contract.yearByYear.length > 0) {
+      total += calculateContractCapHitForYear({
+        yearSalary: player.contract.yearByYear[0],
+        contractYear: 1,
+        clauses: player.contract.clauses,
+        incentiveTotal: player.contract.incentiveTotal,
+      })
     }
   }
   return total
@@ -464,7 +471,12 @@ export function projectCapSpace(
     for (const player of clubPlayers) {
       const schedule = player.contract.yearByYear
       if (futureIndex < schedule.length) {
-        totalSalary += schedule[futureIndex]
+        totalSalary += calculateContractCapHitForYear({
+          yearSalary: schedule[futureIndex],
+          contractYear: futureIndex + 1,
+          clauses: player.contract.clauses,
+          incentiveTotal: player.contract.incentiveTotal,
+        })
       }
       // If the contract doesn't extend to this year, the player is off the
       // books and contributes $0.

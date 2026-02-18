@@ -15,7 +15,7 @@ interface OffseasonCalendarOverlayProps {
 export function OffseasonCalendarOverlay({
   date,
   milestones,
-  currentPhase,
+  currentPhase: _currentPhase,
 }: OffseasonCalendarOverlayProps) {
   const dayMilestones = milestones.filter((m) => m.date === date)
 

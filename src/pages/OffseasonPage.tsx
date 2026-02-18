@@ -30,7 +30,7 @@ import {
 } from '@/engine/season/preseasonMatches'
 import type { PreseasonMatchResult } from '@/engine/season/preseasonMatches'
 import { SeededRNG } from '@/engine/core/rng'
-import type { OffseasonPhase, OffseasonState } from '@/engine/season/offseasonFlow'
+import type { OffseasonState } from '@/engine/season/offseasonFlow'
 import type { Player } from '@/types/player'
 import type { NewsItem } from '@/types/game'
 import { buildOffseasonSummary } from '@/engine/history/summaryEngine'
@@ -43,12 +43,10 @@ import { PhaseTimeline, PHASE_ICONS } from '@/components/offseason/PhaseTimeline
 import { AlertTriangle as AlertTriangleIcon } from 'lucide-react'
 import {
   CheckCircle2,
-  Circle,
   ChevronRight,
   Trophy,
   UserMinus,
   ArrowLeftRight,
-  FileText,
   Users,
   Dumbbell,
   Swords,
@@ -56,7 +54,6 @@ import {
   Newspaper,
   Clock,
   ExternalLink,
-  XCircle,
   Star,
   MapPin,
   UserPlus,
@@ -167,6 +164,11 @@ function NewsFeed({ newsLog }: { newsLog: NewsItem[] }) {
                 {item.body && (
                   <p className="text-[11px] text-muted-foreground leading-snug line-clamp-2">
                     {item.body}
+                  </p>
+                )}
+                {item.media?.reporterName && item.media?.outletName && (
+                  <p className="text-[10px] text-muted-foreground/80 leading-snug">
+                    Reported by {item.media.reporterName} ({item.media.outletName})
                   </p>
                 )}
               </div>
@@ -455,7 +457,7 @@ function DelistingsPanel({
                         #{p.jerseyNumber}
                       </span>
                     </p>
-                    <PlayerStarRating stars={stars} className="scale-[0.85] origin-left" />
+                    <PlayerStarRating stars={stars} player={p} overall={ovr} className="scale-[0.85] origin-left" />
                     <span className={`text-xs font-semibold tabular-nums ${tierColor(tier)}`}>
                       {ovr}
                     </span>
@@ -628,7 +630,7 @@ function UnsignedPoolPanel({
                       <p className="font-medium text-sm truncate">
                         {p.firstName} {p.lastName}
                       </p>
-                      <PlayerStarRating stars={stars} className="scale-[0.85] origin-left" />
+                      <PlayerStarRating stars={stars} player={p} overall={ovr} className="scale-[0.85] origin-left" />
                       <span className={`text-xs font-semibold tabular-nums ${tierColor(tier)}`}>
                         {ovr}
                       </span>

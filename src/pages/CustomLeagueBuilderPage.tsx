@@ -1,14 +1,16 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useAppStore } from '@/stores/appStore'
 import type {
   CustomLeagueTemplate,
   CustomLeagueTeam,
   CustomCompetitionModel,
+  CustomLeagueStructure,
   LadderTieBreaker,
 } from '@/types/customLeague'
 import type { FinalsSettings } from '@/types/game'
 import { createDefaultSettings } from '@/engine/core/defaultSettings'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -30,6 +32,138 @@ const TIE_BREAKER_OPTIONS: LadderTieBreaker[] = [
   'pointsAgainst',
   'clubId',
 ]
+
+interface StructureGroup {
+  id: string
+  label: string
+  conferenceLabel?: string
+}
+
+interface StructureValidation {
+  minTeamsPerGroup: number
+  maxTeamsPerGroup: number
+  errors: string[]
+}
+
+function getStructureGroups(structure: CustomLeagueStructure): StructureGroup[] {
+  if (structure.model === 'single-table') return []
+  if (structure.model === 'conferences') {
+    return Array.from({ length: Math.max(1, structure.conferenceCount) }, (_, i) => ({
+      id: `conf-${i + 1}`,
+      label: `Conference ${i + 1}`,
+    }))
+  }
+  const groups: StructureGroup[] = []
+  const conferenceCount = Math.max(1, structure.conferenceCount)
+  const divisionsPerConference = Math.max(1, structure.divisionsPerConference)
+  for (let c = 1; c <= conferenceCount; c += 1) {
+    for (let d = 1; d <= divisionsPerConference; d += 1) {
+      groups.push({
+        id: `conf-${c}-div-${d}`,
+        label: `Division ${d}`,
+        conferenceLabel: `Conference ${c}`,
+      })
+    }
+  }
+  return groups
+}
+
+function normalizeGroupAssignments(
+  teams: CustomLeagueTeam[],
+  structure: CustomLeagueStructure,
+  existingAssignments?: Record<string, string>,
+): Record<string, string> | undefined {
+  const groups = getStructureGroups(structure)
+  if (groups.length === 0) return undefined
+
+  const groupIds = groups.map((g) => g.id)
+  const validGroupIds = new Set(groupIds)
+  const assignments: Record<string, string> = {}
+  const membersByGroup: Record<string, string[]> = {}
+  for (const gid of groupIds) membersByGroup[gid] = []
+
+  for (const team of teams) {
+    const maybeGroup = existingAssignments?.[team.id]
+    if (maybeGroup && validGroupIds.has(maybeGroup)) {
+      assignments[team.id] = maybeGroup
+      membersByGroup[maybeGroup].push(team.id)
+    }
+  }
+
+  for (const team of teams) {
+    if (assignments[team.id]) continue
+    const target = groupIds.reduce((best, id) => {
+      if (membersByGroup[id].length < membersByGroup[best].length) return id
+      return best
+    }, groupIds[0])
+    assignments[team.id] = target
+    membersByGroup[target].push(team.id)
+  }
+
+  const minTeams = Math.floor(teams.length / groupIds.length)
+  const maxTeams = Math.ceil(teams.length / groupIds.length)
+  while (true) {
+    const over = groupIds.find((id) => membersByGroup[id].length > maxTeams)
+    const under = groupIds.find((id) => membersByGroup[id].length < minTeams)
+    if (!over || !under) break
+    const moved = membersByGroup[over].pop()
+    if (!moved) break
+    assignments[moved] = under
+    membersByGroup[under].push(moved)
+  }
+
+  while (true) {
+    const over = groupIds.find((id) => membersByGroup[id].length > maxTeams)
+    if (!over) break
+    const target = groupIds.find((id) => membersByGroup[id].length < maxTeams && id !== over)
+    if (!target) break
+    const moved = membersByGroup[over].pop()
+    if (!moved) break
+    assignments[moved] = target
+    membersByGroup[target].push(moved)
+  }
+
+  return assignments
+}
+
+function validateStructureAssignments(
+  teams: CustomLeagueTeam[],
+  structure: CustomLeagueStructure,
+  assignments?: Record<string, string>,
+): StructureValidation {
+  const groups = getStructureGroups(structure)
+  if (groups.length === 0) {
+    return { minTeamsPerGroup: teams.length, maxTeamsPerGroup: teams.length, errors: [] }
+  }
+
+  const minTeamsPerGroup = Math.floor(teams.length / groups.length)
+  const maxTeamsPerGroup = Math.ceil(teams.length / groups.length)
+  const errors: string[] = []
+  const groupCounts: Record<string, number> = {}
+  const validGroupIds = new Set(groups.map((g) => g.id))
+
+  for (const g of groups) groupCounts[g.id] = 0
+
+  for (const team of teams) {
+    const groupId = assignments?.[team.id]
+    if (!groupId || !validGroupIds.has(groupId)) {
+      errors.push(`${team.fullName} is not assigned to a valid group.`)
+      continue
+    }
+    groupCounts[groupId] += 1
+  }
+
+  for (const group of groups) {
+    const size = groupCounts[group.id]
+    if (size < minTeamsPerGroup || size > maxTeamsPerGroup) {
+      errors.push(
+        `${group.conferenceLabel ? `${group.conferenceLabel} - ` : ''}${group.label} has ${size} teams (allowed ${minTeamsPerGroup}-${maxTeamsPerGroup}).`,
+      )
+    }
+  }
+
+  return { minTeamsPerGroup, maxTeamsPerGroup, errors }
+}
 
 function createDefaultTeam(index: number): CustomLeagueTeam {
   const id = `custom-team-${crypto.randomUUID().slice(0, 8)}`
@@ -155,13 +289,21 @@ function createEmptyTemplate(): CustomLeagueTemplate {
 }
 
 function normalizeTemplate(template: CustomLeagueTemplate): CustomLeagueTemplate {
+  const normalizedStructure: CustomLeagueStructure = {
+    ...template.structure,
+    tierCount: Math.max(1, template.structure.tierCount ?? 1),
+    promotionRelegationSpots: Math.max(0, template.structure.promotionRelegationSpots ?? 1),
+    conferenceCount: Math.max(1, template.structure.conferenceCount ?? 1),
+    divisionsPerConference: Math.max(1, template.structure.divisionsPerConference ?? 1),
+  }
+  normalizedStructure.groupAssignments = normalizeGroupAssignments(
+    template.teams,
+    normalizedStructure,
+    template.structure.groupAssignments,
+  )
   return {
     ...template,
-    structure: {
-      ...template.structure,
-      tierCount: Math.max(1, template.structure.tierCount ?? 1),
-      promotionRelegationSpots: Math.max(0, template.structure.promotionRelegationSpots ?? 1),
-    },
+    structure: normalizedStructure,
   }
 }
 
@@ -181,6 +323,7 @@ export function CustomLeagueBuilderPage() {
   const deleteTemplate = useAppStore((s) => s.deleteCustomLeagueTemplate)
   const [active, setActive] = useState<CustomLeagueTemplate>(() => normalizeTemplate(templates[0] ?? createEmptyTemplate()))
   const [finalsSettings, setFinalsSettings] = useState<FinalsSettings>(() => toFinalsSettings(normalizeTemplate(templates[0] ?? createEmptyTemplate())))
+  const [draggingTeamId, setDraggingTeamId] = useState<string | null>(null)
 
   const teamOptions = useMemo(
     () => active.teams.map((t) => ({ id: t.id, label: t.fullName })),
@@ -191,48 +334,29 @@ export function CustomLeagueBuilderPage() {
     [active.teams],
   )
 
-  const handleEditorTeamChange = useCallback(
-    (teamId: string, updates: Partial<TeamEditorData>) => {
-      const teamUpdates = editorDataToCustomTeamUpdates(updates)
-      updateTeam(teamId, teamUpdates)
-
-      // Bidirectional rivalry sync within the template
-      if (updates.rivalryClubIds) {
-        const existingTeam = active.teams.find((t) => t.id === teamId)
-        const oldRivals = existingTeam?.rivalryClubIds ?? []
-        const newRivals = updates.rivalryClubIds
-        for (const rid of newRivals) {
-          if (!oldRivals.includes(rid)) {
-            const rival = active.teams.find((t) => t.id === rid)
-            if (rival) {
-              const rivalIds = rival.rivalryClubIds ?? []
-              if (!rivalIds.includes(teamId)) {
-                updateTeam(rid, { rivalryClubIds: [...rivalIds, teamId] })
-              }
-            }
-          }
-        }
-        for (const rid of oldRivals) {
-          if (!newRivals.includes(rid)) {
-            const rival = active.teams.find((t) => t.id === rid)
-            if (rival) {
-              const rivalIds = rival.rivalryClubIds ?? []
-              updateTeam(rid, { rivalryClubIds: rivalIds.filter((id) => id !== teamId) })
-            }
-          }
-        }
-      }
-    },
-    [active.teams, updateTeam],
+  const structureGroups = useMemo(
+    () => getStructureGroups(active.structure),
+    [active.structure],
   )
-
-  const selectTemplate = (templateId: string) => {
-    const found = templates.find((t) => t.id === templateId)
-    if (!found) return
-    const normalized = normalizeTemplate(found)
-    setActive(normalized)
-    setFinalsSettings(toFinalsSettings(normalized))
-  }
+  const structureAssignments = useMemo(
+    () => active.structure.groupAssignments ?? normalizeGroupAssignments(active.teams, active.structure, undefined),
+    [active.teams, active.structure],
+  )
+  const groupedTeams = useMemo(() => {
+    const grouped: Record<string, CustomLeagueTeam[]> = {}
+    for (const group of structureGroups) grouped[group.id] = []
+    if (!structureAssignments) return grouped
+    for (const team of active.teams) {
+      const groupId = structureAssignments[team.id]
+      if (groupId && grouped[groupId]) grouped[groupId].push(team)
+    }
+    return grouped
+  }, [active.teams, structureGroups, structureAssignments])
+  const structureValidation = useMemo(
+    () => validateStructureAssignments(active.teams, active.structure, structureAssignments),
+    [active.teams, active.structure, structureAssignments],
+  )
+  const isStructureValid = structureValidation.errors.length === 0
 
   const updateActive = (updater: (prev: CustomLeagueTemplate) => CustomLeagueTemplate) => {
     setActive((prev) => updater({
@@ -242,31 +366,140 @@ export function CustomLeagueBuilderPage() {
   }
 
   const updateTeam = (teamId: string, updates: Partial<CustomLeagueTeam>) => {
-    updateActive((prev) => ({
-      ...prev,
-      teams: prev.teams.map((team) => (team.id === teamId ? { ...team, ...updates } : team)),
-    }))
+    updateActive((prev) => {
+      const teams = prev.teams.map((team) => (team.id === teamId ? { ...team, ...updates } : team))
+      return {
+        ...prev,
+        teams,
+        structure: {
+          ...prev.structure,
+          groupAssignments: normalizeGroupAssignments(teams, prev.structure, prev.structure.groupAssignments),
+        },
+      }
+    })
+  }
+
+  const updateStructure = (updater: (structure: CustomLeagueStructure) => CustomLeagueStructure) => {
+    updateActive((prev) => {
+      const nextStructure = updater(prev.structure)
+      return {
+        ...prev,
+        structure: {
+          ...nextStructure,
+          groupAssignments: normalizeGroupAssignments(
+            prev.teams,
+            nextStructure,
+            nextStructure.groupAssignments ?? prev.structure.groupAssignments,
+          ),
+        },
+      }
+    })
+  }
+
+  const moveTeamToGroup = (teamId: string, targetGroupId: string) => {
+    updateActive((prev) => {
+      const groups = getStructureGroups(prev.structure)
+      if (!groups.some((g) => g.id === targetGroupId)) return prev
+      const nextAssignments = {
+        ...(normalizeGroupAssignments(prev.teams, prev.structure, prev.structure.groupAssignments) ?? {}),
+        [teamId]: targetGroupId,
+      }
+      return {
+        ...prev,
+        structure: {
+          ...prev.structure,
+          groupAssignments: nextAssignments,
+        },
+      }
+    })
+  }
+
+  const handleEditorTeamChange = (teamId: string, updates: Partial<TeamEditorData>) => {
+    const teamUpdates = editorDataToCustomTeamUpdates(updates)
+    updateTeam(teamId, teamUpdates)
+
+    // Bidirectional rivalry sync within the template
+    if (updates.rivalryClubIds) {
+      const existingTeam = active.teams.find((t) => t.id === teamId)
+      const oldRivals = existingTeam?.rivalryClubIds ?? []
+      const newRivals = updates.rivalryClubIds
+      for (const rid of newRivals) {
+        if (!oldRivals.includes(rid)) {
+          const rival = active.teams.find((t) => t.id === rid)
+          if (rival) {
+            const rivalIds = rival.rivalryClubIds ?? []
+            if (!rivalIds.includes(teamId)) {
+              updateTeam(rid, { rivalryClubIds: [...rivalIds, teamId] })
+            }
+          }
+        }
+      }
+      for (const rid of oldRivals) {
+        if (!newRivals.includes(rid)) {
+          const rival = active.teams.find((t) => t.id === rid)
+          if (rival) {
+            const rivalIds = rival.rivalryClubIds ?? []
+            updateTeam(rid, { rivalryClubIds: rivalIds.filter((id) => id !== teamId) })
+          }
+        }
+      }
+    }
+  }
+
+  const selectTemplate = (templateId: string) => {
+    const found = templates.find((t) => t.id === templateId)
+    if (!found) return
+    const normalized = normalizeTemplate(found)
+    setActive(normalized)
+    setFinalsSettings(toFinalsSettings(normalized))
   }
 
   const handleAddTeam = () => {
     updateActive((prev) => {
       const idx = prev.teams.length
+      const teams = [...prev.teams, createDefaultTeam(idx)]
       return {
         ...prev,
-        teams: [...prev.teams, createDefaultTeam(idx)],
+        teams,
+        structure: {
+          ...prev.structure,
+          groupAssignments: normalizeGroupAssignments(teams, prev.structure, prev.structure.groupAssignments),
+        },
       }
     })
   }
 
   const handleRemoveTeam = (teamId: string) => {
-    updateActive((prev) => ({
-      ...prev,
-      teams: prev.teams.filter((t) => t.id !== teamId),
-      rivalries: prev.rivalries.filter(([a, b]) => a !== teamId && b !== teamId),
-    }))
+    updateActive((prev) => {
+      const teams = prev.teams.filter((t) => t.id !== teamId)
+      const filteredAssignments = Object.fromEntries(
+        Object.entries(prev.structure.groupAssignments ?? {}).filter(([id]) => id !== teamId),
+      )
+      return {
+        ...prev,
+        teams,
+        rivalries: prev.rivalries.filter(([a, b]) => a !== teamId && b !== teamId),
+        structure: {
+          ...prev.structure,
+          groupAssignments: normalizeGroupAssignments(teams, prev.structure, filteredAssignments),
+        },
+      }
+    })
   }
 
   const handleSave = async () => {
+    if (!isStructureValid) return
+    const groupCount =
+      active.structure.model === 'single-table'
+        ? 1
+        : active.structure.model === 'conferences'
+          ? Math.max(1, active.structure.conferenceCount)
+          : Math.max(1, active.structure.conferenceCount) * Math.max(1, active.structure.divisionsPerConference)
+    const normalizedAssignments = normalizeGroupAssignments(
+      active.teams,
+      active.structure,
+      active.structure.groupAssignments,
+    )
     const normalized: CustomLeagueTemplate = {
       ...active,
       rivalries: deriveRivalriesFromTeams(active.teams),
@@ -277,10 +510,8 @@ export function CustomLeagueBuilderPage() {
       },
       structure: {
         ...active.structure,
-        teamsPerDivision:
-          active.structure.model === 'single-table'
-            ? active.teams.length
-            : active.structure.teamsPerDivision,
+        teamsPerDivision: Math.ceil(active.teams.length / groupCount),
+        groupAssignments: normalizedAssignments,
       },
     }
     await saveTemplate(normalized)
@@ -306,7 +537,7 @@ export function CustomLeagueBuilderPage() {
               <Plus className="mr-1 h-4 w-4" />
               New Template
             </Button>
-            <Button onClick={handleSave}>
+            <Button onClick={handleSave} disabled={!isStructureValid}>
               <Save className="mr-1 h-4 w-4" />
               Save Template
             </Button>
@@ -368,10 +599,7 @@ export function CustomLeagueBuilderPage() {
                   <Select
                     value={active.structure.model}
                     onValueChange={(value) =>
-                      updateActive((prev) => ({
-                        ...prev,
-                        structure: { ...prev.structure, model: value as CustomCompetitionModel },
-                      }))
+                      updateStructure((prev) => ({ ...prev, model: value as CustomCompetitionModel }))
                     }
                   >
                     <SelectTrigger><SelectValue /></SelectTrigger>
@@ -388,9 +616,9 @@ export function CustomLeagueBuilderPage() {
                     type="number"
                     value={active.structure.conferenceCount}
                     onChange={(e) =>
-                      updateActive((prev) => ({
+                      updateStructure((prev) => ({
                         ...prev,
-                        structure: { ...prev.structure, conferenceCount: Math.max(1, Number(e.target.value) || 1) },
+                        conferenceCount: Math.max(1, Number(e.target.value) || 1),
                       }))
                     }
                   />
@@ -401,9 +629,9 @@ export function CustomLeagueBuilderPage() {
                     type="number"
                     value={active.structure.divisionsPerConference}
                     onChange={(e) =>
-                      updateActive((prev) => ({
+                      updateStructure((prev) => ({
                         ...prev,
-                        structure: { ...prev.structure, divisionsPerConference: Math.max(1, Number(e.target.value) || 1) },
+                        divisionsPerConference: Math.max(1, Number(e.target.value) || 1),
                       }))
                     }
                   />
@@ -449,6 +677,82 @@ export function CustomLeagueBuilderPage() {
                         }))
                       }
                     />
+                  </div>
+                )}
+                {active.structure.model !== 'single-table' && (
+                  <div className="space-y-3 md:col-span-3">
+                    <div className="flex items-center justify-between">
+                      <Label>Team Group Assignment</Label>
+                      <Badge variant={isStructureValid ? 'secondary' : 'destructive'}>
+                        {isStructureValid ? 'Valid' : 'Invalid'}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Drag teams between groups. Each group must contain {structureValidation.minTeamsPerGroup}
+                      {structureValidation.minTeamsPerGroup !== structureValidation.maxTeamsPerGroup
+                        ? `-${structureValidation.maxTeamsPerGroup}`
+                        : ''} teams.
+                    </p>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {structureGroups.map((group) => (
+                        <div
+                          key={group.id}
+                          className="rounded border bg-card/40 p-3"
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={(e) => {
+                            e.preventDefault()
+                            const teamId = e.dataTransfer.getData('text/team-id')
+                            if (teamId) moveTeamToGroup(teamId, group.id)
+                            setDraggingTeamId(null)
+                          }}
+                        >
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <div>
+                              {group.conferenceLabel && (
+                                <p className="text-xs text-muted-foreground">{group.conferenceLabel}</p>
+                              )}
+                              <p className="text-sm font-medium">{group.label}</p>
+                            </div>
+                            <Badge variant="outline">
+                              {(groupedTeams[group.id] ?? []).length}
+                            </Badge>
+                          </div>
+                          <div className="space-y-2">
+                            {(groupedTeams[group.id] ?? []).map((team) => (
+                              <button
+                                key={team.id}
+                                type="button"
+                                draggable
+                                onDragStart={(e) => {
+                                  e.dataTransfer.setData('text/team-id', team.id)
+                                  setDraggingTeamId(team.id)
+                                }}
+                                onDragEnd={() => setDraggingTeamId(null)}
+                                className="w-full rounded border bg-background px-2 py-1 text-left text-xs"
+                              >
+                                <span className="font-medium">{team.fullName}</span>
+                                <span className="ml-2 text-muted-foreground">{team.abbreviation}</span>
+                                {draggingTeamId === team.id && (
+                                  <span className="ml-2 text-muted-foreground">(moving)</span>
+                                )}
+                              </button>
+                            ))}
+                            {(groupedTeams[group.id] ?? []).length === 0 && (
+                              <div className="rounded border border-dashed px-2 py-3 text-center text-xs text-muted-foreground">
+                                Drop team here
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {!isStructureValid && (
+                      <div className="space-y-1 rounded border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+                        {structureValidation.errors.map((error) => (
+                          <p key={error}>{error}</p>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </CardContent>

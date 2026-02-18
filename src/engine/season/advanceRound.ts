@@ -2,11 +2,17 @@ import { simulateMatch } from '@/engine/match/simulateMatch'
 import type { MatchRulesSettings, RealismSettings, WeeklyMatchupTactics } from '@/types/game'
 import type { Match } from '@/types/match'
 import type { MatchPlayerStats } from '@/types/match'
-import type { Round } from '@/types/season'
+import type { LadderEntry, Round } from '@/types/season'
 import type { Player } from '@/types/player'
 import type { Club } from '@/types/club'
 import type { SeasonVenueState } from '@/types/venue'
-import { getVenueHGA, getTravelFatigue, getClubState } from '@/engine/venues/venueEngine'
+import {
+  getVenueHGA,
+  getTravelFatigue,
+  getClubState,
+  getCompoundingTravelLoad,
+  resolveVenueId,
+} from '@/engine/venues/venueEngine'
 import { VENUES } from '@/data/venues'
 
 interface SimRoundInput {
@@ -22,6 +28,10 @@ interface SimRoundInput {
   realism?: RealismSettings
   injuryFrequency?: 'low' | 'medium' | 'high'
   venueState?: SeasonVenueState | null
+  ladder?: LadderEntry[]
+  lineupsByClub?: Record<string, Record<string, string>>
+  substitutesByClub?: Record<string, string | null | undefined>
+  matchResults?: Match[]
 }
 
 export interface SimRoundResult {
@@ -39,8 +49,10 @@ export function simulateRound(input: SimRoundInput): SimRoundResult {
   const matches: Match[] = round.fixtures.map((fixture, i) => {
     // Resolve venue-specific HGA and travel fatigue
     let venueHGA: number | undefined
-    let travelFatigue: { home: number; away: number } | undefined
-    let resolvedVenueId = fixture.venueId
+    let resolvedVenueId = fixture.venueId ?? resolveVenueId(fixture.venue) ?? undefined
+
+    let baseHomeTravel = 0
+    let baseAwayTravel = 0
 
     if (input.venueState) {
       const assignment = input.venueState.assignments.find(
@@ -48,18 +60,31 @@ export function simulateRound(input: SimRoundInput): SimRoundResult {
       )
       if (assignment) {
         resolvedVenueId = assignment.venueId
-        venueHGA = getVenueHGA(assignment.venueId, fixture.homeClubId)
         const venueObj = VENUES[assignment.venueId]
         if (venueObj) {
           const homeState = getClubState(fixture.homeClubId)
           const awayState = getClubState(fixture.awayClubId)
-          travelFatigue = {
-            home: getTravelFatigue(homeState, venueObj.state),
-            away: getTravelFatigue(awayState, venueObj.state),
-          }
+          baseHomeTravel = getTravelFatigue(homeState, venueObj.state)
+          baseAwayTravel = getTravelFatigue(awayState, venueObj.state)
         }
       }
     }
+    if (resolvedVenueId && VENUES[resolvedVenueId]) {
+      const venueObj = VENUES[resolvedVenueId]
+      const homeState = getClubState(fixture.homeClubId)
+      const awayState = getClubState(fixture.awayClubId)
+      baseHomeTravel = getTravelFatigue(homeState, venueObj.state)
+      baseAwayTravel = getTravelFatigue(awayState, venueObj.state)
+    }
+    if (resolvedVenueId) {
+      venueHGA = getVenueHGA(resolvedVenueId, fixture.homeClubId, fixture.awayClubId)
+    }
+    const travelFatigue = {
+      home: getCompoundingTravelLoad(fixture.homeClubId, baseHomeTravel, input.matchResults ?? []),
+      away: getCompoundingTravelLoad(fixture.awayClubId, baseAwayTravel, input.matchResults ?? []),
+    }
+
+    const isRivalry = !!(clubs[fixture.homeClubId]?.rivalryClubIds?.includes(fixture.awayClubId))
 
     return simulateMatch({
       homeClubId: fixture.homeClubId,
@@ -79,6 +104,13 @@ export function simulateRound(input: SimRoundInput): SimRoundResult {
       matchDay: fixture.matchDay,
       venueHGA,
       travelFatigue,
+      ladder: input.ladder,
+      isBlockbuster: fixture.isBlockbuster ?? false,
+      isRivalry,
+      homeLineupPlayerIds: Object.values(input.lineupsByClub?.[fixture.homeClubId] ?? {}),
+      awayLineupPlayerIds: Object.values(input.lineupsByClub?.[fixture.awayClubId] ?? {}),
+      homeSubstituteId: input.substitutesByClub?.[fixture.homeClubId] ?? null,
+      awaySubstituteId: input.substitutesByClub?.[fixture.awayClubId] ?? null,
     })
   })
 
@@ -111,6 +143,16 @@ export function applyPostRoundEffects(
     const matchStats = matchPlayerStats[player.id]
 
     if (matchStats) {
+      const tookField = matchStats.participated || matchStats.minutesPlayed > 0
+      if (!tookField) {
+        // Named as substitute but unused: count selection, not match workload.
+        player.fatigue = Math.max(0, player.fatigue - 2)
+        player.fitness = Math.min(100, player.fitness + 1)
+        const formDelta = Math.floor(Math.random() * 5) - 2
+        player.form = Math.max(20, Math.min(95, player.form + formDelta))
+        continue
+      }
+
       // Match fatigue load model:
       // - Minutes drive base load
       // - Contested/tackle/hitout workload adds extra load

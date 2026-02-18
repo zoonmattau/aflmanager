@@ -55,6 +55,9 @@ import { calculateLuxuryTax } from '@/engine/contracts/negotiation'
 import { getPlayerStarRating } from '@/engine/player/playerRating'
 import { PlayerStarRating } from '@/components/player/PlayerStarRating'
 import { isPlayerEligibleForPositionType } from '@/engine/player/positionEligibility'
+import { useTableViewManager, type TableViewColumnConfig } from '@/components/table-view/useTableViewManager'
+import { TableViewManagerControl } from '@/components/table-view/TableViewManagerControl'
+import { isAflListedPlayer } from '@/engine/players/contracts'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -115,7 +118,7 @@ function NameCell({ playerId, name, player }: { playerId: string; name: string; 
       >
         {name}
       </button>
-      <PlayerStarRating stars={getPlayerStarRating(player)} className="scale-[0.8] origin-left" />
+      <PlayerStarRating stars={getPlayerStarRating(player)} player={player} className="scale-[0.8] origin-left" />
     </div>
   )
 }
@@ -153,7 +156,7 @@ export function SalaryCapPage() {
   // -- Derived data ----------------------------------------------------------
 
   const clubPlayers = useMemo(
-    () => Object.values(players).filter((p) => p.clubId === playerClubId),
+    () => Object.values(players).filter((p) => p.clubId === playerClubId && isAflListedPlayer(p)),
     [players, playerClubId],
   )
 
@@ -386,9 +389,6 @@ export function SalaryCapPage() {
 
   // -- Table state -----------------------------------------------------------
 
-  const [sorting, setSorting] = useState<SortingState>([
-    { id: 'total', desc: true },
-  ])
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
   const [globalFilter, setGlobalFilter] = useState('')
 
@@ -411,16 +411,78 @@ export function SalaryCapPage() {
     return manualFilters
   }, [columnFilters, activeFilter])
 
+  const matrixTableViewColumns = useMemo<TableViewColumnConfig[]>(() => {
+    const next: TableViewColumnConfig[] = []
+    for (const column of matrixColumns) {
+      const col = column as { id?: string; accessorKey?: string; header?: unknown; size?: number }
+      const id = col.id ?? col.accessorKey
+      if (!id || id === 'yearsRemaining') continue
+      next.push({
+        id,
+        label: typeof col.header === 'string' ? col.header : id,
+        defaultWidth: col.size ?? 100,
+        minWidth: 44,
+        maxWidth: 320,
+        sortable: id !== 'yearsRemaining',
+      })
+    }
+    return next
+  }, [matrixColumns])
+
+  const matrixTableView = useTableViewManager({
+    tableId: 'contract-matrix',
+    columns: matrixTableViewColumns,
+    defaultSort: { columnId: 'total', direction: 'desc' },
+  })
+
+  const matrixSorting: SortingState = useMemo(
+    () =>
+      matrixTableView.snapshot.sort
+        ? [{ id: matrixTableView.snapshot.sort.columnId, desc: matrixTableView.snapshot.sort.direction === 'desc' }]
+        : [],
+    [matrixTableView.snapshot.sort],
+  )
+
+  const matrixColumnVisibility = useMemo(() => {
+    const hidden = new Set(matrixTableView.snapshot.hiddenColumnIds)
+    const visibility: Record<string, boolean> = {}
+    for (const col of matrixTableViewColumns) {
+      visibility[col.id] = !hidden.has(col.id)
+    }
+    visibility.yearsRemaining = false
+    return visibility
+  }, [matrixTableView.snapshot.hiddenColumnIds, matrixTableViewColumns])
+
   const table = useReactTable({
     data: clubPlayers,
     columns: matrixColumns,
-    state: { sorting, columnFilters: effectiveColumnFilters, globalFilter },
-    onSortingChange: setSorting,
+    state: {
+      sorting: matrixSorting,
+      columnFilters: effectiveColumnFilters,
+      globalFilter,
+      columnVisibility: matrixColumnVisibility,
+      columnOrder: matrixTableView.snapshot.columnOrder,
+      columnSizing: matrixTableView.snapshot.columnWidths,
+    },
+    onSortingChange: (updater) => {
+      const next = typeof updater === 'function' ? updater(matrixSorting) : updater
+      const first = next[0]
+      matrixTableView.setSort(first?.id ?? null, first?.desc ? 'desc' : 'asc')
+    },
+    onColumnSizingChange: (updater) => {
+      const next = typeof updater === 'function'
+        ? updater(matrixTableView.snapshot.columnWidths)
+        : updater
+      for (const [id, width] of Object.entries(next)) {
+        matrixTableView.setColumnWidth(id, Number(width))
+      }
+    },
     onColumnFiltersChange: setColumnFilters,
     onGlobalFilterChange: setGlobalFilter,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    enableColumnResizing: true,
     columnResizeMode: 'onChange',
   })
 
@@ -801,6 +863,8 @@ export function SalaryCapPage() {
                 <SelectItem value="rookie">Rookie</SelectItem>
               </SelectContent>
             </Select>
+
+            <TableViewManagerControl columns={matrixTableViewColumns} manager={matrixTableView} />
 
             {/* Active tile filter badge */}
             {activeFilter && activeFilter !== 'all' && (

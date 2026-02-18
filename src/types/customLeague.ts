@@ -30,6 +30,8 @@ export interface CustomLeagueStructure {
   conferenceCount: number
   divisionsPerConference: number
   teamsPerDivision: number
+  /** Team-to-group mapping. Group ids are generated from structure counts. */
+  groupAssignments?: Record<string, string>
   tierCount: number
   enablePromotionRelegation: boolean
   promotionRelegationSpots: number

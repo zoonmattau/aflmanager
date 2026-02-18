@@ -4,12 +4,6 @@ import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 
-function formatCurrency(value: number): string {
-  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`
-  if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(0)}K`
-  return `$${value.toLocaleString('en-AU')}`
-}
-
 export function LeaguePage() {
   const clubs = useGameStore((s) => s.clubs)
   const players = useGameStore((s) => s.players)

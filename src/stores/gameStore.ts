@@ -11,6 +11,10 @@ import type {
   NewsItem,
   CoachingJobOpening,
   SimulationStatus,
+  SavedLineup,
+  Shortlist,
+  ShortlistPriority,
+  ShortlistTargetType,
   WeeklyMatchupTactics,
 } from '@/types/game'
 import type { TradeInboxItem, TradeNegotiationOffer } from '@/types/trade'
@@ -31,14 +35,21 @@ import type { ClubGameplan } from '@/types/club'
 import type { GameCalendar } from '@/types/calendar'
 import type { DraftPickTradeOffer, DraftProspect } from '@/types/draft'
 import clubsJson from '@/data/clubs.json'
-import { generatePlayers } from '@/data/players'
+import { generatePlayers, generateStateLeagueContractPlayers } from '@/data/players'
 import { generateFixture, createInitialLadder } from '@/engine/season/fixtureGenerator'
 import { validateFixture } from '@/engine/season/fixtureValidator'
 import { simulateRound, isRegularSeasonComplete, applyPostRoundEffects } from '@/engine/season/advanceRound'
 import { processMatchResults } from '@/engine/season/processResults'
 import { computeWeeklyPowerRankings } from '@/engine/season/powerRankings'
+import { buildSeasonCalibrationReport } from '@/engine/season/calibrationReport'
 import { generateFinalsRound, isSeasonComplete, getPremier } from '@/engine/season/finals'
 import { recordSeasonResult } from '@/engine/history/historyEngine'
+import {
+  createDefaultRecordsBook,
+  normalizeRecordsBook,
+  refreshRecordsBookLeaderboards,
+  updateRecordsBookForMatches,
+} from '@/engine/history/recordsBook'
 import { getFinalsFormatById } from '@/engine/season/finalsFormats'
 import { applyInjuryEvent, rollMatchInjuries, healInjuries } from '@/engine/players/injuries'
 import {
@@ -55,10 +66,11 @@ import type {
   TribunalLegalRep,
 } from '@/types/discipline'
 import { isPlayerSuspended } from '@/engine/players/availability'
+import { canBeSelectedForAfl, hasActiveStateLeagueContract, isAflListedPlayer, isStateLeagueContracted } from '@/engine/players/contracts'
 import { applyRoleDisputeMorale, updateMoralePostMatch } from '@/engine/players/morale'
 import { applyBetweenRoundMorale, generateMoraleWarnings } from '@/engine/players/happiness'
 import { selectBestLineup } from '@/engine/ai/lineupSelection'
-import { SLOT_POSITION_COMPATIBILITY } from '@/engine/core/constants'
+import { getLineupSlots, SLOT_POSITION_COMPATIBILITY } from '@/engine/core/constants'
 import { SeededRNG } from '@/engine/core/rng'
 import {
   generateClubStaff,
@@ -74,7 +86,12 @@ import {
   detectCareerMilestones,
 } from '@/engine/awards/awardsEngine'
 import { addDays, buildSeasonCalendar, computeDefaultGameStartDate, getYear } from '@/engine/calendar/calendarEngine'
-import { initializeStateLeagues, simStateLeagueRound } from '@/engine/stateLeague/stateLeagueEngine'
+import {
+  initializeStateLeagues,
+  rollStateLeaguesForNewSeason,
+  simStateLeagueRound,
+  applyStateLeagueAffiliationSettings,
+} from '@/engine/stateLeague/stateLeagueEngine'
 import { simulateReservesRound } from '@/engine/stateLeague/reservesSimulation'
 import { createDefaultSettings, DEFAULT_REALISM } from '@/engine/core/defaultSettings'
 import { autoSelectLeadership, getTeamLeadershipRating, getLeadershipMoraleBonus } from '@/engine/leadership/leadershipEngine'
@@ -82,8 +99,6 @@ import { updateClubCulture, getCultureMoraleBuffer, createDefaultCulture } from 
 import type { ClubLeadership } from '@/types/club'
 import { getDevelopmentSpeedMultiplier } from '@/engine/core/difficultyPresets'
 import {
-  getClubState,
-  getTravelFatigue,
   generateDefaultAllocations,
   generateSoldGameOffers,
   applyVenueAllocationsToFixture,
@@ -103,6 +118,13 @@ import {
   startNewSeason,
 } from '@/engine/season/offseasonFlow'
 import { mapPrimaryPositionToPreferredRole, pickArchetypeForRole } from '@/engine/player/roles'
+import { getOverallRating, getPlayerStarRating, syncPlayerPositionRatings } from '@/engine/player/playerRating'
+import {
+  autoAssignClubJumperNumbers,
+  isJumperNumberAvailable,
+  isValidJumperNumber,
+  upsertPlayerJumperHistory,
+} from '@/engine/player/jumperNumbers'
 import {
   generateDraftClassWithProfile,
   applyDraftVariance,
@@ -198,6 +220,11 @@ import { scheduleSpecialEvents as scheduleSpecialEventsEngine } from '@/engine/s
 import { simulateSpecialMatch, applySpecialMatchImpact } from '@/engine/specialEvents/specialMatchSim'
 import { getEventDefinition } from '@/engine/specialEvents/eventDefinitions'
 import { injectSpecialEvents } from '@/engine/calendar/calendarEngine'
+import {
+  buildUpcomingMilestoneNotes,
+  formatUpcomingMilestoneSummary,
+} from '@/engine/narrative/upcomingMilestones'
+import { applyMediaCoverage, deriveMediaStories } from '@/engine/media/mediaFeedEngine'
 
 const OFFSEASON_PHASE_START_OFFSETS: Record<import('@/engine/season/offseasonFlow').OffseasonPhase, number> = {
   'season-end': 0,
@@ -212,6 +239,417 @@ const OFFSEASON_PHASE_START_OFFSETS: Record<import('@/engine/season/offseasonFlo
   'venue-allocation': 70,
   'practice-matches': 77,
   ready: 84,
+}
+
+const LEGACY_SIGNING_WATCHLIST_ID = 'legacy-signing-watchlist'
+const LEGACY_SIGNING_SHORTLIST_ID = 'legacy-signing-shortlist'
+const LEGACY_SIGNING_WATCHLIST_NAME = 'Signing Watchlist'
+const LEGACY_SIGNING_SHORTLIST_NAME = 'Signing Shortlist'
+
+function findShortlistEntryIndex(shortlist: Shortlist, targetType: ShortlistTargetType, targetId: string): number {
+  return shortlist.entries.findIndex((entry) => entry.targetType === targetType && entry.targetId === targetId)
+}
+
+function ensureShortlist(
+  state: Pick<GameState, 'shortlists'>,
+  shortlistId: string,
+  fallbackName: string,
+): Shortlist {
+  const existing = state.shortlists.find((item) => item.id === shortlistId)
+  if (existing) return existing
+  const now = new Date().toISOString()
+  const created: Shortlist = {
+    id: shortlistId,
+    name: fallbackName,
+    createdAt: now,
+    updatedAt: now,
+    entries: [],
+  }
+  state.shortlists.push(created)
+  return created
+}
+
+function syncLegacySigningArrays(state: Pick<GameState, 'shortlists' | 'signingWatchlistPlayerIds' | 'signingShortlistPlayerIds'>): void {
+  const watchlist = state.shortlists.find((item) => item.id === LEGACY_SIGNING_WATCHLIST_ID)
+  const shortlist = state.shortlists.find((item) => item.id === LEGACY_SIGNING_SHORTLIST_ID)
+  state.signingWatchlistPlayerIds = (watchlist?.entries ?? [])
+    .filter((entry) => entry.targetType === 'player')
+    .map((entry) => entry.targetId)
+  state.signingShortlistPlayerIds = (shortlist?.entries ?? [])
+    .filter((entry) => entry.targetType === 'player')
+    .map((entry) => entry.targetId)
+}
+
+function pushUpcomingMilestoneNews(state: GameState): void {
+  if (state.phase !== 'regular-season') return
+  const round = state.season.rounds[state.currentRound]
+  if (!round) return
+  if ((round.byeClubIds ?? []).includes(state.playerClubId)) return
+
+  const fixture = round.fixtures.find(
+    (f) => f.homeClubId === state.playerClubId || f.awayClubId === state.playerClubId,
+  )
+  if (!fixture) return
+
+  const likelyHomeLineup = Object.values(
+    selectBestLineup(
+      Object.values(state.players),
+      fixture.homeClubId,
+      {
+        interchangePlayers: state.settings.matchRules.interchangePlayers,
+        club: state.clubs[fixture.homeClubId],
+      },
+    ).lineup,
+  )
+    .filter((id): id is string => Boolean(id))
+  const likelyAwayLineup = Object.values(
+    selectBestLineup(
+      Object.values(state.players),
+      fixture.awayClubId,
+      {
+        interchangePlayers: state.settings.matchRules.interchangePlayers,
+        club: state.clubs[fixture.awayClubId],
+      },
+    ).lineup,
+  )
+    .filter((id): id is string => Boolean(id))
+  const candidatePlayerIds = [...new Set([...likelyHomeLineup, ...likelyAwayLineup])]
+  const notes = buildUpcomingMilestoneNotes(state.players, candidatePlayerIds).slice(0, 5)
+  if (notes.length === 0) return
+
+  const roundNumber = round.number ?? state.currentRound + 1
+  const newsId = `milestone-watch-${state.currentYear}-${roundNumber}-${fixture.homeClubId}-${fixture.awayClubId}`
+  if (state.newsLog.some((item) => item.id === newsId)) return
+
+  const homeName = state.clubs[fixture.homeClubId]?.abbreviation ?? fixture.homeClubId
+  const awayName = state.clubs[fixture.awayClubId]?.abbreviation ?? fixture.awayClubId
+  const lines = notes.map((note) => `- ${formatUpcomingMilestoneSummary(note)}`)
+  const involvedPlayers = new Set<string>()
+  const involvedClubs = new Set<string>([fixture.homeClubId, fixture.awayClubId])
+  for (const note of notes) {
+    involvedPlayers.add(note.playerId)
+    involvedClubs.add(note.clubId)
+    if (note.targetPlayerId) involvedPlayers.add(note.targetPlayerId)
+  }
+
+  appendNewsItem(state, {
+    id: newsId,
+    date: state.currentDate,
+    headline: `Round ${roundNumber} milestone watch: ${homeName} vs ${awayName}`,
+    body: lines.join('\n'),
+    category: 'milestone',
+    clubIds: [...involvedClubs],
+    playerIds: [...involvedPlayers],
+  })
+}
+
+function trackSigningInteraction(state: GameState, playerId: string): void {
+  if (!playerId) return
+  if (!state.signingInteractionPlayerIds.includes(playerId)) {
+    state.signingInteractionPlayerIds.push(playerId)
+  }
+}
+
+function getUserFixtureForCurrentRound(state: Pick<GameState, 'season' | 'currentRound' | 'playerClubId'>): Fixture | null {
+  const round = state.season.rounds[state.currentRound]
+  if (!round) return null
+  return round.fixtures.find(
+    (f) => f.homeClubId === state.playerClubId || f.awayClubId === state.playerClubId,
+  ) ?? null
+}
+
+function getUserOpponentClubId(state: Pick<GameState, 'season' | 'currentRound' | 'playerClubId'>): string | null {
+  const fixture = getUserFixtureForCurrentRound(state)
+  if (!fixture) return null
+  return fixture.homeClubId === state.playerClubId ? fixture.awayClubId : fixture.homeClubId
+}
+
+function normalizeClubJumperNumbers(
+  state: Pick<GameState, 'players' | 'clubs' | 'currentYear'>,
+  clubId: string,
+): number {
+  if (!state.clubs[clubId]) return 0
+  const result = autoAssignClubJumperNumbers(state.players, clubId, state.currentYear)
+  return result.changedPlayerIds.length
+}
+
+function normalizeAllClubJumperNumbers(state: Pick<GameState, 'players' | 'clubs' | 'currentYear'>): number {
+  let changed = 0
+  for (const clubId of Object.keys(state.clubs)) {
+    changed += normalizeClubJumperNumbers(state, clubId)
+  }
+  return changed
+}
+
+const DEFAULT_STATE_LEAGUE_CONTRACT_TARGET = 14
+
+function getStateLeagueContractedCount(players: Record<string, Player>, clubId: string): number {
+  return Object.values(players).filter((p) => p.clubId === clubId && isStateLeagueContracted(p)).length
+}
+
+function nextStateLeaguePlayerIndex(players: Record<string, Player>, clubId: string): number {
+  const prefix = `${clubId}-state-player-`
+  let max = 0
+  for (const id of Object.keys(players)) {
+    if (!id.startsWith(prefix)) continue
+    const suffix = Number(id.slice(prefix.length))
+    if (Number.isFinite(suffix)) max = Math.max(max, suffix)
+  }
+  return max + 1
+}
+
+function appendContractHistory(player: Player, date: string, type: 'state-sign' | 'state-renew' | 'state-delist' | 'afl-sign', note: string): void {
+  if (!player.contractHistory) player.contractHistory = []
+  player.contractHistory.push({ date, type, note })
+}
+
+function recruitStateLeagueDepthPlayers(
+  state: GameState,
+  clubId: string,
+  count: number,
+  source: 'affiliate' | 'recruitment' | 'renewal',
+  delegated: boolean,
+): string[] {
+  if (count <= 0) return []
+  const seed = state.rngSeed + state.currentRound * 431 + state.currentYear * 977 + count * 19
+  const generated = generateStateLeagueContractPlayers(clubId, seed, count, state.currentDate)
+  const startIndex = nextStateLeaguePlayerIndex(state.players, clubId)
+  const addedIds: string[] = []
+  for (let i = 0; i < generated.length; i++) {
+    const p = generated[i]
+    if (!p) continue
+    const nextId = `${clubId}-state-player-${String(startIndex + i).padStart(3, '0')}`
+    p.id = nextId
+    p.contractTier = 'state-league'
+    p.listStatus = 'reserves'
+    p.stateLeagueContract = {
+      yearsRemaining: source === 'renewal' ? 2 : 1,
+      annualValue: p.stateLeagueContract?.annualValue ?? 70_000,
+      signedDate: state.currentDate,
+      source,
+    }
+    appendContractHistory(
+      p,
+      state.currentDate,
+      'state-sign',
+      delegated ? 'Signed on delegated state-league recommendation.' : 'Signed to state-league affiliate contract.',
+    )
+    state.players[nextId] = p
+    addedIds.push(nextId)
+  }
+  return addedIds
+}
+
+function removeStateLeagueContractedPlayerFromReservesState(state: GameState, playerId: string): void {
+  delete state.reserves.playerAvailabilityAssignments[playerId]
+  delete state.reserves.seasonStatsByPlayer[playerId]
+  state.reserves.lastRoundPerformances = state.reserves.lastRoundPerformances.filter((entry) => entry.playerId !== playerId)
+  state.reserves.promotionWatchlist = state.reserves.promotionWatchlist.filter((id) => id !== playerId)
+  state.reserves.managedLineupPlayerIds = state.reserves.managedLineupPlayerIds.filter((id) => id !== playerId)
+  for (const [slot, id] of Object.entries(state.reserves.managedLineupSlotAssignments) as Array<[LineupSlot, string]>) {
+    if (id === playerId) delete state.reserves.managedLineupSlotAssignments[slot]
+  }
+}
+
+function processStateLeagueContractsForNewSeason(state: GameState): void {
+  const rng = new SeededRNG(state.rngSeed + state.currentYear * 701 + 13)
+  const clubIds = Object.keys(state.clubs)
+  for (const clubId of clubIds) {
+    const clubStaff = Object.values(state.staff).filter((member) => member.clubId === clubId)
+    const reservesCoach = clubStaff.find((member) => member.role === 'reserves-coach') ?? null
+    const recruitingLead = clubStaff.find((member) => member.role === 'recruiting-manager')
+      ?? clubStaff.find((member) => member.role === 'head-coach')
+      ?? null
+    const developmentLift = ((reservesCoach?.ratings.development ?? 50) - 50) / 320
+    const recruitmentLift = ((recruitingLead?.ratings.recruitment ?? 50) - 50) / 360
+
+    const clubStatePlayers = Object.values(state.players)
+      .filter((p) => p.clubId === clubId && isStateLeagueContracted(p))
+
+    for (const player of clubStatePlayers) {
+      if (!player.stateLeagueContract) continue
+      player.stateLeagueContract.yearsRemaining = Math.max(0, player.stateLeagueContract.yearsRemaining - 1)
+    }
+
+    const delegated = clubId === state.playerClubId
+      ? state.reserves.stateLeagueContractDelegationEnabled
+      : true
+    const targetCount = clubId === state.playerClubId
+      ? state.reserves.stateLeagueContractTargetCount
+      : DEFAULT_STATE_LEAGUE_CONTRACT_TARGET
+    if (!delegated) continue
+
+    const expiring = clubStatePlayers.filter((p) => (p.stateLeagueContract?.yearsRemaining ?? 0) <= 0)
+    for (const player of expiring) {
+      const perf = state.reserves.seasonStatsByPlayer[player.id]
+      const avgRating = perf && perf.gamesPlayed > 0
+        ? (state.reserves.lastRoundPerformances.find((x) => x.playerId === player.id)?.rating ?? 68)
+        : 66
+      const keepChance = Math.max(0.2, Math.min(0.85, 0.45 + (avgRating - 68) * 0.012 + (player.age <= 24 ? 0.08 : 0)))
+      const finalKeepChance = Math.max(0.15, Math.min(0.92, keepChance + developmentLift + recruitmentLift))
+      if (rng.chance(finalKeepChance)) {
+        const years = rng.chance(0.28) ? 2 : 1
+        player.stateLeagueContract = {
+          yearsRemaining: years,
+          annualValue: player.stateLeagueContract?.annualValue ?? 70_000,
+          signedDate: state.currentDate,
+          source: 'renewal',
+        }
+        appendContractHistory(player, state.currentDate, 'state-renew', `Auto-renewed for ${years} season${years === 1 ? '' : 's'}.`)
+      } else {
+        appendContractHistory(player, state.currentDate, 'state-delist', 'Auto-delisted by reserves program review.')
+        player.clubId = ''
+        player.listStatus = 'reserves'
+        player.stateLeagueContract = null
+        if (clubId === state.playerClubId) {
+          removeStateLeagueContractedPlayerFromReservesState(state, player.id)
+        }
+      }
+    }
+
+    const activeCount = getStateLeagueContractedCount(state.players, clubId)
+    if (activeCount < targetCount) {
+      const toAdd = targetCount - activeCount
+      const added = recruitStateLeagueDepthPlayers(state, clubId, toAdd, 'recruitment', true)
+      if (clubId === state.playerClubId) {
+        for (const playerId of added) {
+          state.reserves.playerAvailabilityAssignments[playerId] = 'play'
+        }
+      }
+    }
+  }
+}
+
+function isSigningNewsItem(item: NewsItem): boolean {
+  if (item.category !== 'contract') return false
+  const headline = item.headline.toLowerCase()
+  return (
+    headline.includes(' signs with ') ||
+    headline.includes(' re-signs with ') ||
+    headline.includes(' commits to ')
+  )
+}
+
+function upsertDigestItem(
+  list: NewsItem[],
+  date: string,
+  line: string,
+  clubIds: string[],
+  playerIds: string[],
+  channel: 'in-app' | 'email',
+): void {
+  const digestId = `signing-digest-${channel}-${date}`
+  const existing = list.find((item) => item.id === digestId)
+  if (!existing) {
+    list.push(applyMediaCoverage({
+      id: digestId,
+      date,
+      headline: `Daily Signing Digest (${channel === 'email' ? 'Email' : 'In-App'})`,
+      body: line,
+      category: 'contract',
+      clubIds: [...clubIds],
+      playerIds: [...playerIds],
+      read: false,
+    }))
+    return
+  }
+
+  const existingLines = existing.body.split('\n').filter(Boolean)
+  if (!existingLines.includes(line)) {
+    existing.body = `${existing.body}\n${line}`
+  }
+  for (const clubId of clubIds) {
+    if (!existing.clubIds.includes(clubId)) existing.clubIds.push(clubId)
+  }
+  for (const playerId of playerIds) {
+    if (!existing.playerIds.includes(playerId)) existing.playerIds.push(playerId)
+  }
+  existing.read = false
+  existing.media = applyMediaCoverage(existing).media
+}
+
+function pushNewsToList(list: NewsItem[], item: NewsItem): void {
+  if (list.some((news) => news.id === item.id)) return
+  list.push(item)
+}
+
+function appendNewsItem(
+  state: GameState,
+  item: NewsItem,
+  options?: { includeDerived?: boolean; routeSigning?: boolean },
+): boolean {
+  const includeDerived = options?.includeDerived !== false
+  const routeSigning = options?.routeSigning !== false
+  const covered = applyMediaCoverage(item)
+
+  const inserted = routeSigning
+    ? pushSigningNotification(state, covered)
+    : (pushNewsToList(state.newsLog, covered), true)
+
+  if (!inserted) {
+    return false
+  }
+
+  if (includeDerived) {
+    for (const derived of deriveMediaStories(covered)) {
+      appendNewsItem(state, derived, { includeDerived: false, routeSigning: false })
+    }
+  }
+
+  return true
+}
+
+function pushSigningNotification(state: GameState, item: NewsItem): boolean {
+  if (!isSigningNewsItem(item)) {
+    pushNewsToList(state.newsLog, item)
+    return true
+  }
+
+  const playerId = item.playerIds[0]
+  const player = playerId ? state.players[playerId] : undefined
+  const settings = state.settings.notifications.signings
+  const starRating = player ? getPlayerStarRating(player) : 0
+  const isMarquee = starRating >= settings.starThreshold
+  const interacted =
+    (playerId ? state.signingInteractionPlayerIds.includes(playerId) : false) ||
+    (playerId ? state.signingWatchlistPlayerIds.includes(playerId) : false) ||
+    (playerId ? state.signingShortlistPlayerIds.includes(playerId) : false) ||
+    (playerId
+      ? state.shortlists.some((list) =>
+          list.entries.some((entry) => entry.targetType === 'player' && entry.targetId === playerId),
+        )
+      : false)
+
+  if (!isMarquee && !interacted) {
+    return false
+  }
+
+  if (!settings.inApp && !settings.email) {
+    return false
+  }
+
+  const line = `${item.headline} - ${item.body}`
+  if (settings.dailyDigest) {
+    if (settings.inApp) {
+      upsertDigestItem(state.newsLog, item.date, line, item.clubIds, item.playerIds, 'in-app')
+    }
+    if (settings.email) {
+      upsertDigestItem(state.emailLog, item.date, line, item.clubIds, item.playerIds, 'email')
+    }
+    return true
+  }
+
+  if (settings.inApp) {
+    pushNewsToList(state.newsLog, item)
+  }
+  if (settings.email) {
+    pushNewsToList(state.emailLog, applyMediaCoverage({
+      ...item,
+      id: `${item.id}-email`,
+      read: false,
+    }))
+  }
+  return true
 }
 
 // ---------------------------------------------------------------------------
@@ -241,10 +679,12 @@ const DEFAULT_HISTORY: GameHistory = {
   seasons: [],
   draftHistory: [],
   developmentReports: [],
+  playerSeasonStats: [],
   awards: [],
   milestones: [],
   retirementLegacies: [],
   originHistory: [],
+  recordsBook: createDefaultRecordsBook(),
 }
 
 const DEFAULT_META: GameMeta = {
@@ -293,12 +733,19 @@ const createDefaultState = (): GameState => ({
   powerRankings: [],
   matchResults: [],
   newsLog: [],
+  emailLog: [],
   rngSeed: Date.now(),
+  signingInteractionPlayerIds: [],
+  signingWatchlistPlayerIds: [],
+  signingShortlistPlayerIds: [],
+  shortlists: [],
   selectedLineup: null,
+  selectedSubstituteId: null,
+  savedLineups: [],
   draft: null,
   scouts: [],
   tradeHistory: [],
-  history: { ...DEFAULT_HISTORY },
+  history: { ...DEFAULT_HISTORY, recordsBook: createDefaultRecordsBook() },
   leagueConfig: {
     activeClubIds: [],
     expansionPlans: [],
@@ -329,11 +776,21 @@ const createDefaultState = (): GameState => ({
     promotionWatchlist: [],
     delegationEnabled: true,
     managedLineupPlayerIds: [],
+    managedLineupSlotAssignments: {},
+    playerAvailabilityAssignments: {},
+    lastSelectedLineupPlayerIds: [],
+    leadership: {
+      captainId: null,
+      viceCaptainId: null,
+      leadershipGroupIds: [],
+    },
     tactics: {
       tempo: 'balanced',
       aggression: 'balanced',
       youthFocus: true,
     },
+    stateLeagueContractDelegationEnabled: true,
+    stateLeagueContractTargetCount: DEFAULT_STATE_LEAGUE_CONTRACT_TARGET,
   },
   specialEvents: null,
   multiTierState: null,
@@ -348,6 +805,11 @@ const createDefaultState = (): GameState => ({
   },
   coachingJobMarket: [],
   simulation: { ...DEFAULT_SIMULATION_STATUS },
+  jumperManagement: {
+    pending: false,
+    seasonYear: null,
+    lastCompletedYear: null,
+  },
 })
 
 function getAvailableProspectsForDraft(
@@ -464,16 +926,46 @@ function buildSimLineupForClub(
   clubId: string,
 ): Record<string, string> {
   if (clubId === state.playerClubId && state.selectedLineup) {
+    const validSlots = new Set<string>(
+      getLineupSlots(state.settings.matchRules.interchangePlayers),
+    )
     const sanitized: Record<string, string> = {}
     for (const [slot, playerId] of Object.entries(state.selectedLineup)) {
+      if (!validSlots.has(slot)) continue
       const p = state.players[playerId]
-      if (!p || p.clubId !== clubId || p.injury || isPlayerSuspended(p)) continue
+      if (!p || p.clubId !== clubId || !canBeSelectedForAfl(p) || p.injury || isPlayerSuspended(p)) continue
       sanitized[slot] = playerId
     }
     if (Object.keys(sanitized).length > 0) return sanitized
   }
-  const lineup = selectBestLineup(Object.values(state.players), clubId).lineup
+  const lineup = selectBestLineup(
+    Object.values(state.players),
+    clubId,
+    {
+      interchangePlayers: state.settings.matchRules.interchangePlayers,
+      club: state.clubs[clubId],
+    },
+  ).lineup
   return lineup
+}
+
+function buildSimSubstituteForClub(
+  state: GameState,
+  clubId: string,
+  lineup: Record<string, string>,
+): string | null {
+  if (!state.settings.matchRules.enableSubstitutes) return null
+  const selectedLineupIds = new Set(Object.values(lineup).filter((id): id is string => Boolean(id)))
+  const candidates = Object.values(state.players)
+    .filter((p) => p.clubId === clubId && canBeSelectedForAfl(p) && !p.injury && !isPlayerSuspended(p) && p.fitness >= 50)
+    .filter((p) => !selectedLineupIds.has(p.id))
+    .sort((a, b) => averageAttributes(b.attributes) - averageAttributes(a.attributes))
+  if (candidates.length === 0) return null
+  if (clubId === state.playerClubId && state.selectedSubstituteId) {
+    const selected = candidates.find((p) => p.id === state.selectedSubstituteId)
+    if (selected) return selected.id
+  }
+  return candidates[0].id
 }
 
 function applyRoleDisputesForFixtures(state: GameState, fixtureClubIds: Set<string>): void {
@@ -734,6 +1226,34 @@ function seedInitialCoachingOpenings(
   return openings
 }
 
+function enforceSingleClubCareerInvariant(
+  state: Pick<GameState, 'clubs' | 'playerClubId' | 'manager' | 'currentYear'>,
+): void {
+  const validPlayerClubId = state.playerClubId && state.clubs[state.playerClubId] ? state.playerClubId : ''
+  const managerClubId = state.manager.currentClubId && state.clubs[state.manager.currentClubId]
+    ? state.manager.currentClubId
+    : null
+
+  if (state.manager.employmentStatus === 'employed') {
+    const managedClubId = managerClubId ?? (validPlayerClubId || '')
+    if (!managedClubId) {
+      state.playerClubId = ''
+      state.manager.employmentStatus = 'unemployed'
+      state.manager.currentClubId = null
+      if (state.manager.unemployedSinceYear == null) state.manager.unemployedSinceYear = state.currentYear
+      return
+    }
+    state.playerClubId = managedClubId
+    state.manager.currentClubId = managedClubId
+    state.manager.unemployedSinceYear = null
+    return
+  }
+
+  state.playerClubId = ''
+  state.manager.currentClubId = null
+  if (state.manager.unemployedSinceYear == null) state.manager.unemployedSinceYear = state.currentYear
+}
+
 // ---------------------------------------------------------------------------
 // Store actions interface
 // ---------------------------------------------------------------------------
@@ -752,6 +1272,10 @@ interface GameActions {
   updateGameSettings: (updates: Partial<GameSettings>) => void
   advanceRound: () => void
   updatePlayer: (playerId: string, updates: Partial<Player>) => void
+  setPlayerJumperNumber: (playerId: string, jumperNumber: number) => { success: boolean; error?: string }
+  applyUserClubJumperNumbers: (updates: Record<string, number>) => { success: boolean; error?: string }
+  autoAssignUserClubJumperNumbers: () => { success: boolean; assignedCount: number; error?: string }
+  completeJumperManagement: () => { success: boolean; error?: string }
   setPlayerTrainingFocus: (playerId: string, focus: PlayerTrainingFocus | null) => { success: boolean; error?: string }
   updateClub: (clubId: string, updates: Partial<Club>) => void
   setClubLeadership: (clubId: string, leadership: ClubLeadership) => void
@@ -765,9 +1289,45 @@ interface GameActions {
   moveFixtureInRound: (roundIndex: number, fromIndex: number, toIndex: number) => { success: boolean; error?: string }
   swapFixturesInRound: (roundIndex: number, firstIndex: number, secondIndex: number) => { success: boolean; error?: string }
   setSelectedLineup: (lineup: Record<string, string> | null) => void
+  setSelectedSubstitute: (playerId: string | null) => void
+  saveNamedLineup: (input: {
+    name: string
+    lineup: Record<string, string>
+    substitutePlayerId: string | null
+    benchPlayerIds: string[]
+    includeReserves: boolean
+    overwriteExisting?: boolean
+  }) => { success: boolean; error?: string; existingId?: string; savedId?: string; overwritten?: boolean }
+  loadSavedLineup: (lineupId: string, options?: { applyReserves?: boolean }) => { success: boolean; error?: string }
+  renameSavedLineup: (lineupId: string, newName: string) => { success: boolean; error?: string; existingId?: string }
+  deleteSavedLineup: (lineupId: string) => { success: boolean; error?: string }
   addNewsItem: (item: NewsItem) => void
   markNewsRead: (newsId: string) => void
   markAllNewsRead: () => void
+  markEmailRead: (newsId: string) => void
+  markAllEmailRead: () => void
+  addSigningWatchlistPlayer: (playerId: string) => void
+  removeSigningWatchlistPlayer: (playerId: string) => void
+  addSigningShortlistPlayer: (playerId: string) => void
+  removeSigningShortlistPlayer: (playerId: string) => void
+  createShortlist: (name: string) => { success: boolean; error?: string; shortlistId?: string }
+  renameShortlist: (shortlistId: string, name: string) => { success: boolean; error?: string; existingId?: string }
+  deleteShortlist: (shortlistId: string) => { success: boolean; error?: string }
+  addShortlistEntry: (params: {
+    shortlistId: string
+    targetType: ShortlistTargetType
+    targetId: string
+    note?: string
+    priority?: ShortlistPriority
+  }) => { success: boolean; error?: string }
+  removeShortlistEntry: (params: { shortlistId: string; targetType: ShortlistTargetType; targetId: string }) => { success: boolean; error?: string }
+  updateShortlistEntry: (params: {
+    shortlistId: string
+    targetType: ShortlistTargetType
+    targetId: string
+    note?: string
+    priority?: ShortlistPriority
+  }) => { success: boolean; error?: string }
   resetGame: () => void
   loadState: (state: GameState) => void
   updateGameplan: (gameplan: Partial<ClubGameplan>) => void
@@ -783,8 +1343,21 @@ interface GameActions {
   recallFromReserves: (playerId: string) => void
   setReservesDelegation: (enabled: boolean) => void
   setManagedReservesLineup: (playerIds: string[]) => void
+  setManagedReservesLineupSlots: (assignments: Partial<Record<LineupSlot, string>>) => void
+  setReservesPlayerAvailability: (playerId: string, assignment: 'play' | 'rest') => void
+  setReservesLeadership: (leadership: {
+    captainId: string | null
+    viceCaptainId: string | null
+    leadershipGroupIds: string[]
+  }) => void
   setReservesTactics: (updates: Partial<GameState['reserves']['tactics']>) => void
   autoPickManagedReservesLineup: () => void
+  setStateLeagueContractDelegation: (enabled: boolean) => void
+  setStateLeagueContractTargetCount: (count: number) => void
+  reSignStateLeagueContract: (playerId: string, years?: number) => { success: boolean; error?: string }
+  delistStateLeagueContractedPlayer: (playerId: string) => { success: boolean; error?: string }
+  recruitStateLeagueContractPlayer: (count?: number) => { success: boolean; addedIds: string[]; error?: string }
+  signStateLeaguePlayerToAflContract: (playerId: string, years: number, aav: number) => { success: boolean; error?: string }
   setDaySlot: (date: string, slot: ScheduleSlot, activity: TrainingFocus | 'rest' | null) => void
   clearWeekSchedule: () => void
   setTrainingWeekPlan: (plan: import('@/engine/training/trainingEngine').TrainingWeekPlan) => void
@@ -826,6 +1399,7 @@ interface GameActions {
   simOffseasonFullDay: () => { success: boolean; error?: string }
   simOffseasonToMilestone: () => { success: boolean; error?: string }
   applyForCoachingJob: (jobId: string) => { success: boolean; error?: string }
+  resignFromCurrentClub: () => { success: boolean; error?: string }
 
   // Free agency market
   buildFreeAgencyMarketAction: () => void
@@ -939,11 +1513,23 @@ export const useGameStore = create<GameStore>()(
           for (const p of clubPlayers) {
             playersRecord[p.id] = p
           }
+          const stateLeagueDepthPlayers = generateStateLeagueContractPlayers(
+            c.id,
+            seed + hashCode(`${c.id}-state-depth`),
+            DEFAULT_STATE_LEAGUE_CONTRACT_TARGET,
+            gameSettings.gameStartDate ?? '2026-01-01',
+          )
+          for (const p of stateLeagueDepthPlayers) {
+            playersRecord[p.id] = p
+          }
         }
 
         // Auto-select leadership for all clubs based on generated players
         for (const club of Object.values(clubsWithPicks)) {
-          club.leadership = autoSelectLeadership(playersRecord, club.id)
+          const aflListedPlayers = Object.fromEntries(
+            Object.entries(playersRecord).filter(([, player]) => player.clubId === club.id && isAflListedPlayer(player)),
+          )
+          club.leadership = autoSelectLeadership(aflListedPlayers, club.id)
         }
 
         // Initialize culture for all clubs
@@ -1046,6 +1632,7 @@ export const useGameStore = create<GameStore>()(
           }
           state.rngSeed = seed
           state.selectedLineup = null
+          state.selectedSubstituteId = null
 
           state.settings = gameSettings
           state.manager = {
@@ -1063,11 +1650,27 @@ export const useGameStore = create<GameStore>()(
 
           state.clubs = clubsWithPicks
           state.players = playersRecord
+          normalizeAllClubJumperNumbers(state)
           state.staff = staffRecord
           state.scouts = scoutPool
           state.season = season
           state.ladder = ladder
-          state.history = { seasons: [], draftHistory: [], developmentReports: [], awards: [], milestones: [], retirementLegacies: [], originHistory: [] }
+          state.history = {
+            seasons: [],
+            draftHistory: [],
+            developmentReports: [],
+            playerSeasonStats: [],
+            awards: [],
+            milestones: [],
+            retirementLegacies: [],
+            originHistory: [],
+            recordsBook: createDefaultRecordsBook(),
+          }
+          state.jumperManagement = {
+            pending: true,
+            seasonYear: state.currentYear,
+            lastCompletedYear: null,
+          }
           state.leagueConfig = {
             activeClubIds: leagueConfigOverride?.activeClubIds?.length
               ? [...leagueConfigOverride.activeClubIds]
@@ -1098,10 +1701,15 @@ export const useGameStore = create<GameStore>()(
           // Build season calendar (settings-driven finals weeks + start date + game start date for offseason)
           state.calendar = buildSeasonCalendar(2026, season, initialClubId, gameSettings.finals, gameSettings.seasonStartDate, gameSettings.gameStartDate)
 
-          // Initialize state leagues (VFL/SANFL/WAFL)
-          if (gameSettings.leagueMode !== 'fictional') {
-            state.stateLeagues = initializeStateLeagues(clubsRecord, 2026, seed)
-          }
+          // Initialize state leagues + talent pathway (U16/U18)
+          const initializedStateLeagues = initializeStateLeagues(clubsRecord, 2026, seed, {
+            namingTemplate: gameSettings.leagueNamingTemplate,
+            includePathways: gameSettings.includePathwayLeagues,
+          })
+          state.stateLeagues = applyStateLeagueAffiliationSettings(
+            initializedStateLeagues,
+            gameSettings.stateLeagueAffiliations,
+          )
 
           // Initialize venue system for the first season
           if (gameSettings.realism.venueScheduling) {
@@ -1142,6 +1750,7 @@ export const useGameStore = create<GameStore>()(
           for (const club of Object.values(state.clubs)) {
             club.finances.currentSpend = syncClubCurrentSpend(allPlayers, club.id)
           }
+          enforceSingleClubCareerInvariant(state)
         })
 
         const initialized = get()
@@ -1158,6 +1767,7 @@ export const useGameStore = create<GameStore>()(
         })
         set((state) => {
           state.powerRankings = [initialPowerSnapshot]
+          pushUpcomingMilestoneNews(state)
         })
 
         // Schedule special events for the initial season
@@ -1203,6 +1813,22 @@ export const useGameStore = create<GameStore>()(
               ...state.settings.fixtureSchedule,
               ...(updates.fixtureSchedule ?? {}),
             },
+            notifications: {
+              ...state.settings.notifications,
+              ...(updates.notifications ?? {}),
+              signings: {
+                ...state.settings.notifications.signings,
+                ...(updates.notifications?.signings ?? {}),
+              },
+            },
+            stateLeagueAffiliations: {
+              ...state.settings.stateLeagueAffiliations,
+              ...(updates.stateLeagueAffiliations ?? {}),
+              clubAffiliations: {
+                ...state.settings.stateLeagueAffiliations.clubAffiliations,
+                ...(updates.stateLeagueAffiliations?.clubAffiliations ?? {}),
+              },
+            },
             ladderSorting: {
               ...(state.settings.ladderSorting ?? { primary: 'points', tieBreakers: ['percentage', 'wins', 'pointsFor', 'clubId'] }),
               ...(updates.ladderSorting ?? {}),
@@ -1218,12 +1844,20 @@ export const useGameStore = create<GameStore>()(
               ? [...updates.customRivalryPairs]
               : [...(state.settings.customRivalryPairs ?? [])],
           }
+
+          if (state.stateLeagues && updates.stateLeagueAffiliations) {
+            state.stateLeagues = applyStateLeagueAffiliationSettings(
+              state.stateLeagues,
+              state.settings.stateLeagueAffiliations,
+            )
+          }
         })
       },
 
       advanceRound: () => {
         set((state) => {
           state.currentRound += 1
+          pushUpcomingMilestoneNews(state)
         })
       },
 
@@ -1234,6 +1868,109 @@ export const useGameStore = create<GameStore>()(
             Object.assign(existing, updates)
           }
         })
+      },
+
+      setPlayerJumperNumber: (playerId: string, jumperNumber: number) => {
+        const state = get()
+        const player = state.players[playerId]
+        if (!player) return { success: false, error: 'Player not found.' }
+        if (player.clubId !== state.playerClubId) {
+          return { success: false, error: 'Can only edit jumper numbers for players at your club.' }
+        }
+        if (!isValidJumperNumber(jumperNumber)) {
+          return { success: false, error: 'Jumper number must be between 1 and 99.' }
+        }
+        if (!isJumperNumberAvailable(state.players, player.clubId, jumperNumber, playerId)) {
+          return { success: false, error: `Jumper #${jumperNumber} is already in use.` }
+        }
+
+        set((s) => {
+          const target = s.players[playerId]
+          if (!target) return
+          target.jerseyNumber = jumperNumber
+          upsertPlayerJumperHistory(target, s.currentYear)
+        })
+        return { success: true }
+      },
+
+      applyUserClubJumperNumbers: (updates: Record<string, number>) => {
+        const state = get()
+        const clubId = state.playerClubId
+        if (!clubId) return { success: false, error: 'No managed club selected.' }
+        const clubPlayers = Object.values(state.players).filter((player) => player.clubId === clubId)
+        const byId = new Map(clubPlayers.map((player) => [player.id, player]))
+        const finalById = new Map<string, number>()
+
+        for (const player of clubPlayers) {
+          finalById.set(player.id, player.jerseyNumber)
+        }
+        for (const [playerId, number] of Object.entries(updates)) {
+          const player = byId.get(playerId)
+          if (!player) return { success: false, error: 'One or more players are not at your club.' }
+          if (!isValidJumperNumber(number)) {
+            return { success: false, error: `Invalid jumper number for ${player.firstName} ${player.lastName}.` }
+          }
+          finalById.set(playerId, number)
+        }
+
+        const seen = new Set<number>()
+        for (const [playerId, number] of finalById.entries()) {
+          if (seen.has(number)) {
+            const player = byId.get(playerId)
+            return {
+              success: false,
+              error: `Duplicate jumper number #${number}${player ? ` (${player.firstName} ${player.lastName})` : ''}.`,
+            }
+          }
+          seen.add(number)
+        }
+
+        set((s) => {
+          for (const [playerId, number] of finalById.entries()) {
+            const player = s.players[playerId]
+            if (!player || player.clubId !== clubId) continue
+            player.jerseyNumber = number
+            upsertPlayerJumperHistory(player, s.currentYear)
+          }
+        })
+        return { success: true }
+      },
+
+      autoAssignUserClubJumperNumbers: () => {
+        const state = get()
+        if (!state.playerClubId) {
+          return { success: false, assignedCount: 0, error: 'No managed club selected.' }
+        }
+        let assignedCount = 0
+        set((s) => {
+          assignedCount = normalizeClubJumperNumbers(s, s.playerClubId)
+        })
+        return { success: true, assignedCount }
+      },
+
+      completeJumperManagement: () => {
+        const state = get()
+        if (!state.playerClubId) return { success: false, error: 'No managed club selected.' }
+        const clubPlayers = Object.values(state.players).filter((player) => player.clubId === state.playerClubId)
+        const seen = new Set<number>()
+        for (const player of clubPlayers) {
+          if (!isValidJumperNumber(player.jerseyNumber)) {
+            return { success: false, error: `${player.firstName} ${player.lastName} has an invalid jumper number.` }
+          }
+          if (seen.has(player.jerseyNumber)) {
+            const clashes = clubPlayers
+              .filter((p) => p.jerseyNumber === player.jerseyNumber)
+              .map((p) => `${p.firstName} ${p.lastName}`)
+              .join(', ')
+            return { success: false, error: `Duplicate jumper number #${player.jerseyNumber}: ${clashes}.` }
+          }
+          seen.add(player.jerseyNumber)
+        }
+        set((s) => {
+          s.jumperManagement.pending = false
+          s.jumperManagement.lastCompletedYear = s.currentYear
+        })
+        return { success: true }
       },
 
       setPlayerTrainingFocus: (playerId: string, focus: PlayerTrainingFocus | null) => {
@@ -1498,13 +2235,220 @@ export const useGameStore = create<GameStore>()(
 
       setSelectedLineup: (lineup: Record<string, string> | null) => {
         set((state) => {
-          state.selectedLineup = lineup
+          const sanitized: Record<string, string> = {}
+          const used = new Set<string>()
+          for (const [slot, playerId] of Object.entries(lineup ?? {})) {
+            if (!playerId || used.has(playerId)) continue
+            const player = state.players[playerId]
+            if (!player) continue
+            if (player.clubId !== state.playerClubId) continue
+            if (!canBeSelectedForAfl(player)) continue
+            if (player.injury || isPlayerSuspended(player) || player.fitness < 50) continue
+            sanitized[slot] = playerId
+            used.add(playerId)
+          }
+          state.selectedLineup = lineup === null ? null : sanitized
+          const selectedIds = new Set(
+            Object.values(state.selectedLineup ?? {}).filter((id): id is string => Boolean(id)),
+          )
+          state.reserves.managedLineupPlayerIds = state.reserves.managedLineupPlayerIds.filter((id) => !selectedIds.has(id))
+          for (const [slot, playerId] of Object.entries(state.reserves.managedLineupSlotAssignments) as Array<[LineupSlot, string]>) {
+            if (selectedIds.has(playerId)) delete state.reserves.managedLineupSlotAssignments[slot]
+          }
+          if (state.selectedSubstituteId && Object.values(state.selectedLineup ?? {}).includes(state.selectedSubstituteId)) {
+            state.selectedSubstituteId = null
+          }
         })
+      },
+
+      setSelectedSubstitute: (playerId: string | null) => {
+        set((state) => {
+          if (!playerId) {
+            state.selectedSubstituteId = null
+            return
+          }
+          const player = state.players[playerId]
+          if (!player || player.clubId !== state.playerClubId || !canBeSelectedForAfl(player) || player.injury || isPlayerSuspended(player) || player.fitness < 50) {
+            state.selectedSubstituteId = null
+            return
+          }
+          const inLineup = new Set(Object.values(state.selectedLineup ?? {}).filter((id): id is string => Boolean(id)))
+          if (inLineup.has(playerId)) {
+            state.selectedSubstituteId = null
+            return
+          }
+          state.selectedSubstituteId = playerId
+        })
+      },
+
+      saveNamedLineup: ({
+        name,
+        lineup,
+        substitutePlayerId,
+        benchPlayerIds,
+        includeReserves,
+        overwriteExisting,
+      }) => {
+        const state = get()
+        const trimmedName = name.trim()
+        if (!trimmedName) return { success: false, error: 'Lineup name is required.' }
+        if (!state.playerClubId) return { success: false, error: 'No active club selected.' }
+
+        const lowerName = trimmedName.toLowerCase()
+        const existing = state.savedLineups.find(
+          (saved) => saved.clubId === state.playerClubId && saved.name.trim().toLowerCase() === lowerName,
+        )
+        if (existing && !overwriteExisting) {
+          return { success: false, error: 'A lineup with this name already exists.', existingId: existing.id }
+        }
+
+        const lineupIds = new Set(Object.values(lineup).filter((id): id is string => Boolean(id)))
+        const validSubstitute = substitutePlayerId && !lineupIds.has(substitutePlayerId) ? substitutePlayerId : null
+        const uniqueBench = Array.from(new Set(benchPlayerIds.filter((id) => id && !lineupIds.has(id))))
+        const weeklyEntry = state.weeklyGameplans[state.playerClubId]
+        const savedId = existing?.id ?? `lineup-save-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`
+
+        const snapshot: SavedLineup = {
+          id: savedId,
+          name: trimmedName,
+          clubId: state.playerClubId,
+          savedAt: new Date().toISOString(),
+          seasonYear: state.currentYear,
+          round: state.currentRound,
+          opponentClubId: getUserOpponentClubId(state),
+          matchRules: {
+            interchangePlayers: state.settings.matchRules.interchangePlayers,
+            enableSubstitutes: state.settings.matchRules.enableSubstitutes,
+            quartersPerMatch: state.settings.matchRules.quartersPerMatch,
+          },
+          lineup: { ...lineup },
+          benchPlayerIds: uniqueBench,
+          substitutePlayerId: validSubstitute,
+          weeklyGameplanSnapshot: weeklyEntry
+            ? {
+                overrides: { ...weeklyEntry.overrides },
+                matchupTactics: weeklyEntry.matchupTactics
+                  ? {
+                      hardTags: [...weeklyEntry.matchupTactics.hardTags],
+                      physicalAttention: [...weeklyEntry.matchupTactics.physicalAttention],
+                      roleAssignments: [...weeklyEntry.matchupTactics.roleAssignments],
+                    }
+                  : {
+                      hardTags: [],
+                      physicalAttention: [],
+                      roleAssignments: [],
+                    },
+                opponentClubId: weeklyEntry.opponentClubId,
+              }
+            : null,
+          reservesSnapshot: includeReserves
+            ? {
+                managedLineupPlayerIds: [...state.reserves.managedLineupPlayerIds],
+                managedLineupSlotAssignments: { ...state.reserves.managedLineupSlotAssignments },
+                playerAvailabilityAssignments: { ...state.reserves.playerAvailabilityAssignments },
+              }
+            : null,
+        }
+
+        set((s) => {
+          if (existing) {
+            const idx = s.savedLineups.findIndex((saved) => saved.id === existing.id)
+            if (idx >= 0) s.savedLineups[idx] = snapshot
+            else s.savedLineups.unshift(snapshot)
+          } else {
+            s.savedLineups.unshift(snapshot)
+          }
+        })
+
+        return { success: true, savedId, overwritten: Boolean(existing) }
+      },
+
+      loadSavedLineup: (lineupId, options) => {
+        const state = get()
+        const saved = state.savedLineups.find((entry) => entry.id === lineupId)
+        if (!saved) return { success: false, error: 'Saved lineup not found.' }
+        if (saved.clubId !== state.playerClubId) {
+          return { success: false, error: 'This lineup belongs to another club.' }
+        }
+
+        set((s) => {
+          s.selectedLineup = { ...saved.lineup }
+          s.selectedSubstituteId = saved.substitutePlayerId
+          if (s.selectedSubstituteId && Object.values(s.selectedLineup).includes(s.selectedSubstituteId)) {
+            s.selectedSubstituteId = null
+          }
+
+          const baseWeekly = s.weeklyGameplans[s.playerClubId]
+          const loadedOpponent = saved.opponentClubId ?? getUserOpponentClubId(s)
+          if (saved.weeklyGameplanSnapshot) {
+            s.weeklyGameplans[s.playerClubId] = {
+              round: s.currentRound,
+              opponentClubId: loadedOpponent ?? saved.weeklyGameplanSnapshot.opponentClubId ?? '',
+              overrides: { ...saved.weeklyGameplanSnapshot.overrides },
+              matchupTactics: {
+                hardTags: [...saved.weeklyGameplanSnapshot.matchupTactics.hardTags],
+                physicalAttention: [...saved.weeklyGameplanSnapshot.matchupTactics.physicalAttention],
+                roleAssignments: [...saved.weeklyGameplanSnapshot.matchupTactics.roleAssignments],
+              },
+              source: 'user',
+            }
+          } else if (baseWeekly) {
+            s.weeklyGameplans[s.playerClubId] = {
+              ...baseWeekly,
+              round: s.currentRound,
+              opponentClubId: loadedOpponent ?? baseWeekly.opponentClubId,
+            }
+          }
+
+          if (options?.applyReserves !== false && saved.reservesSnapshot) {
+            s.reserves.managedLineupPlayerIds = [...saved.reservesSnapshot.managedLineupPlayerIds]
+            s.reserves.managedLineupSlotAssignments = { ...saved.reservesSnapshot.managedLineupSlotAssignments }
+            s.reserves.playerAvailabilityAssignments = { ...saved.reservesSnapshot.playerAvailabilityAssignments }
+          }
+        })
+
+        return { success: true }
+      },
+
+      renameSavedLineup: (lineupId, newName) => {
+        const state = get()
+        const trimmedName = newName.trim()
+        if (!trimmedName) return { success: false, error: 'Lineup name is required.' }
+        const target = state.savedLineups.find((entry) => entry.id === lineupId)
+        if (!target) return { success: false, error: 'Saved lineup not found.' }
+
+        const lowerName = trimmedName.toLowerCase()
+        const existing = state.savedLineups.find(
+          (entry) =>
+            entry.id !== lineupId &&
+            entry.clubId === state.playerClubId &&
+            entry.name.trim().toLowerCase() === lowerName,
+        )
+        if (existing) {
+          return { success: false, error: 'A lineup with this name already exists.', existingId: existing.id }
+        }
+
+        set((s) => {
+          const item = s.savedLineups.find((entry) => entry.id === lineupId)
+          if (!item) return
+          item.name = trimmedName
+        })
+        return { success: true }
+      },
+
+      deleteSavedLineup: (lineupId) => {
+        const state = get()
+        const exists = state.savedLineups.some((entry) => entry.id === lineupId)
+        if (!exists) return { success: false, error: 'Saved lineup not found.' }
+        set((s) => {
+          s.savedLineups = s.savedLineups.filter((entry) => entry.id !== lineupId)
+        })
+        return { success: true }
       },
 
       addNewsItem: (item: NewsItem) => {
         set((state) => {
-          state.newsLog.push(item)
+          appendNewsItem(state, item)
         })
       },
 
@@ -1523,6 +2467,199 @@ export const useGameStore = create<GameStore>()(
         })
       },
 
+      markEmailRead: (newsId: string) => {
+        set((state) => {
+          const item = state.emailLog.find((n) => n.id === newsId)
+          if (item) item.read = true
+        })
+      },
+
+      markAllEmailRead: () => {
+        set((state) => {
+          for (const item of state.emailLog) {
+            item.read = true
+          }
+        })
+      },
+
+      addSigningWatchlistPlayer: (playerId: string) => {
+        set((state) => {
+          const shortlist = ensureShortlist(state, LEGACY_SIGNING_WATCHLIST_ID, LEGACY_SIGNING_WATCHLIST_NAME)
+          if (findShortlistEntryIndex(shortlist, 'player', playerId) === -1) {
+            const now = new Date().toISOString()
+            shortlist.entries.push({
+              targetType: 'player',
+              targetId: playerId,
+              note: '',
+              priority: 'medium',
+              addedAt: now,
+              updatedAt: now,
+            })
+            shortlist.updatedAt = now
+          }
+          syncLegacySigningArrays(state)
+          trackSigningInteraction(state, playerId)
+        })
+      },
+
+      removeSigningWatchlistPlayer: (playerId: string) => {
+        set((state) => {
+          const shortlist = state.shortlists.find((item) => item.id === LEGACY_SIGNING_WATCHLIST_ID)
+          if (!shortlist) return
+          shortlist.entries = shortlist.entries.filter((entry) => !(entry.targetType === 'player' && entry.targetId === playerId))
+          shortlist.updatedAt = new Date().toISOString()
+          syncLegacySigningArrays(state)
+        })
+      },
+
+      addSigningShortlistPlayer: (playerId: string) => {
+        set((state) => {
+          const shortlist = ensureShortlist(state, LEGACY_SIGNING_SHORTLIST_ID, LEGACY_SIGNING_SHORTLIST_NAME)
+          if (findShortlistEntryIndex(shortlist, 'player', playerId) === -1) {
+            const now = new Date().toISOString()
+            shortlist.entries.push({
+              targetType: 'player',
+              targetId: playerId,
+              note: '',
+              priority: 'medium',
+              addedAt: now,
+              updatedAt: now,
+            })
+            shortlist.updatedAt = now
+          }
+          syncLegacySigningArrays(state)
+          trackSigningInteraction(state, playerId)
+        })
+      },
+
+      removeSigningShortlistPlayer: (playerId: string) => {
+        set((state) => {
+          const shortlist = state.shortlists.find((item) => item.id === LEGACY_SIGNING_SHORTLIST_ID)
+          if (!shortlist) return
+          shortlist.entries = shortlist.entries.filter((entry) => !(entry.targetType === 'player' && entry.targetId === playerId))
+          shortlist.updatedAt = new Date().toISOString()
+          syncLegacySigningArrays(state)
+        })
+      },
+
+      createShortlist: (name: string) => {
+        const trimmed = name.trim()
+        if (!trimmed) return { success: false, error: 'Shortlist name is required.' }
+        const state = get()
+        const existing = state.shortlists.find((item) => item.name.toLowerCase() === trimmed.toLowerCase())
+        if (existing) return { success: false, error: 'A shortlist with this name already exists.', shortlistId: existing.id }
+        const shortlistId = crypto.randomUUID()
+        const now = new Date().toISOString()
+        set((s) => {
+          s.shortlists.push({
+            id: shortlistId,
+            name: trimmed,
+            createdAt: now,
+            updatedAt: now,
+            entries: [],
+          })
+        })
+        return { success: true, shortlistId }
+      },
+
+      renameShortlist: (shortlistId: string, name: string) => {
+        const trimmed = name.trim()
+        if (!trimmed) return { success: false, error: 'Shortlist name is required.' }
+        const state = get()
+        const shortlist = state.shortlists.find((item) => item.id === shortlistId)
+        if (!shortlist) return { success: false, error: 'Shortlist not found.' }
+        const existing = state.shortlists.find(
+          (item) => item.id !== shortlistId && item.name.toLowerCase() === trimmed.toLowerCase(),
+        )
+        if (existing) return { success: false, error: 'A shortlist with this name already exists.', existingId: existing.id }
+        set((s) => {
+          const target = s.shortlists.find((item) => item.id === shortlistId)
+          if (!target) return
+          target.name = trimmed
+          target.updatedAt = new Date().toISOString()
+        })
+        return { success: true }
+      },
+
+      deleteShortlist: (shortlistId: string) => {
+        const state = get()
+        const exists = state.shortlists.some((item) => item.id === shortlistId)
+        if (!exists) return { success: false, error: 'Shortlist not found.' }
+        set((s) => {
+          s.shortlists = s.shortlists.filter((item) => item.id !== shortlistId)
+          syncLegacySigningArrays(s)
+        })
+        return { success: true }
+      },
+
+      addShortlistEntry: ({ shortlistId, targetType, targetId, note, priority }) => {
+        if (!targetId) return { success: false, error: 'Missing target.' }
+        set((s) => {
+          const shortlist = s.shortlists.find((item) => item.id === shortlistId)
+          if (!shortlist) return
+          const index = findShortlistEntryIndex(shortlist, targetType, targetId)
+          const now = new Date().toISOString()
+          if (index === -1) {
+            shortlist.entries.push({
+              targetType,
+              targetId,
+              note: note?.trim() ?? '',
+              priority: priority ?? 'medium',
+              addedAt: now,
+              updatedAt: now,
+            })
+          } else {
+            shortlist.entries[index].note = note?.trim() ?? shortlist.entries[index].note
+            shortlist.entries[index].priority = priority ?? shortlist.entries[index].priority
+            shortlist.entries[index].updatedAt = now
+          }
+          shortlist.updatedAt = now
+          if (targetType === 'player') {
+            trackSigningInteraction(s, targetId)
+          }
+          syncLegacySigningArrays(s)
+        })
+        const fresh = get()
+        const shortlist = fresh.shortlists.find((item) => item.id === shortlistId)
+        if (!shortlist) return { success: false, error: 'Shortlist not found.' }
+        return { success: true }
+      },
+
+      removeShortlistEntry: ({ shortlistId, targetType, targetId }) => {
+        const state = get()
+        const shortlist = state.shortlists.find((item) => item.id === shortlistId)
+        if (!shortlist) return { success: false, error: 'Shortlist not found.' }
+        set((s) => {
+          const target = s.shortlists.find((item) => item.id === shortlistId)
+          if (!target) return
+          target.entries = target.entries.filter((entry) => !(entry.targetType === targetType && entry.targetId === targetId))
+          target.updatedAt = new Date().toISOString()
+          syncLegacySigningArrays(s)
+        })
+        return { success: true }
+      },
+
+      updateShortlistEntry: ({ shortlistId, targetType, targetId, note, priority }) => {
+        const state = get()
+        const shortlist = state.shortlists.find((item) => item.id === shortlistId)
+        if (!shortlist) return { success: false, error: 'Shortlist not found.' }
+        const existing = shortlist.entries.find((entry) => entry.targetType === targetType && entry.targetId === targetId)
+        if (!existing) return { success: false, error: 'Shortlist entry not found.' }
+        set((s) => {
+          const target = s.shortlists.find((item) => item.id === shortlistId)
+          if (!target) return
+          const entry = target.entries.find((item) => item.targetType === targetType && item.targetId === targetId)
+          if (!entry) return
+          if (note !== undefined) entry.note = note
+          if (priority !== undefined) entry.priority = priority
+          const now = new Date().toISOString()
+          entry.updatedAt = now
+          target.updatedAt = now
+          syncLegacySigningArrays(s)
+        })
+        return { success: true }
+      },
+
       proposeTradeOffer: (partnerClubId: string, sendPlayerIds: string[], receivePlayerIds: string[]) => {
         const state = get()
         if (!state.clubs[partnerClubId]) {
@@ -1531,6 +2668,11 @@ export const useGameStore = create<GameStore>()(
         if (sendPlayerIds.length === 0 || receivePlayerIds.length === 0) {
           return { success: false, error: 'Trade must include assets on both sides' }
         }
+        set((s) => {
+          for (const playerId of receivePlayerIds) {
+            trackSigningInteraction(s, playerId)
+          }
+        })
 
         const rng = new SeededRNG(state.rngSeed + Date.now())
         const baseOffer = proposeUserTrade(
@@ -1583,7 +2725,7 @@ export const useGameStore = create<GameStore>()(
           s.players = executed.updatedPlayers
           s.clubs = executed.updatedClubs
           s.tradeHistory.push(executed.completedTrade)
-          s.newsLog.push(executed.news)
+          appendNewsItem(s, executed.news)
           for (const moved of baseOffer.playerMoves) {
             s.tradeBlock = removePlayerTradeBlockListing(s.tradeBlock, moved.playerId)
           }
@@ -1601,6 +2743,13 @@ export const useGameStore = create<GameStore>()(
         const inboxItem = state.tradeInbox.find((item) => item.id === offerId)
         if (!inboxItem) return { success: false, error: 'Offer not found' }
         const offer = inboxItem.offer
+        set((s) => {
+          for (const move of offer.playerMoves) {
+            if (move.toClubId === s.playerClubId) {
+              trackSigningInteraction(s, move.playerId)
+            }
+          }
+        })
         if (offer.status !== 'pending-user') {
           return { success: false, error: 'Offer is no longer active' }
         }
@@ -1635,7 +2784,7 @@ export const useGameStore = create<GameStore>()(
             s.players = executed.updatedPlayers
             s.clubs = executed.updatedClubs
             s.tradeHistory.push(executed.completedTrade)
-            s.newsLog.push(executed.news)
+            appendNewsItem(s, executed.news)
             for (const moved of offer.playerMoves) {
               s.tradeBlock = removePlayerTradeBlockListing(s.tradeBlock, moved.playerId)
             }
@@ -1680,7 +2829,7 @@ export const useGameStore = create<GameStore>()(
             s.players = executed.updatedPlayers
             s.clubs = executed.updatedClubs
             s.tradeHistory.push(executed.completedTrade)
-            s.newsLog.push(executed.news)
+            appendNewsItem(s, executed.news)
             for (const moved of userCounter.playerMoves) {
               s.tradeBlock = removePlayerTradeBlockListing(s.tradeBlock, moved.playerId)
             }
@@ -1804,7 +2953,7 @@ export const useGameStore = create<GameStore>()(
           if (player) {
             applyTribunalOutcomeToPlayer(player, resolved)
             if (resolved.finalWeeks && resolved.finalWeeks > 0) {
-              s.newsLog.push({
+              appendNewsItem(s, {
                 id: crypto.randomUUID(),
                 date: s.currentDate,
                 headline: `${player.firstName} ${player.lastName} suspended (${resolved.finalWeeks}w)`,
@@ -1816,7 +2965,7 @@ export const useGameStore = create<GameStore>()(
                 playerIds: [player.id],
               })
             } else {
-              s.newsLog.push({
+              appendNewsItem(s, {
                 id: crypto.randomUUID(),
                 date: s.currentDate,
                 headline: `${player.firstName} ${player.lastName} cleared at tribunal`,
@@ -1879,7 +3028,7 @@ export const useGameStore = create<GameStore>()(
           if (player) {
             applyTribunalOutcomeToPlayer(player, resolved)
             if (resolved.finalWeeks && resolved.finalWeeks > 0) {
-              s.newsLog.push({
+              appendNewsItem(s, {
                 id: crypto.randomUUID(),
                 date: s.currentDate,
                 headline: `${player.firstName} ${player.lastName} suspended (${resolved.finalWeeks}w)`,
@@ -1891,7 +3040,7 @@ export const useGameStore = create<GameStore>()(
                 playerIds: [player.id],
               })
             } else {
-              s.newsLog.push({
+              appendNewsItem(s, {
                 id: crypto.randomUUID(),
                 date: s.currentDate,
                 headline: `${player.firstName} ${player.lastName} cleared at tribunal`,
@@ -1942,7 +3091,7 @@ export const useGameStore = create<GameStore>()(
           if (player) {
             applyTribunalOutcomeToPlayer(player, resolved)
             if (resolved.finalWeeks && resolved.finalWeeks > 0) {
-              s.newsLog.push({
+              appendNewsItem(s, {
                 id: crypto.randomUUID(),
                 date: s.currentDate,
                 headline: `${player.firstName} ${player.lastName} suspended (${resolved.finalWeeks}w)`,
@@ -2057,7 +3206,7 @@ export const useGameStore = create<GameStore>()(
           s.draft.prospects = combinedProspects
           s.draft.combineCompleted = true
           s.draft.combineDate = s.currentDate
-          s.newsLog.push({
+          appendNewsItem(s, {
             id: crypto.randomUUID(),
             date: s.currentDate,
             headline: `${s.currentYear} National Draft Combine completed`,
@@ -2130,7 +3279,7 @@ export const useGameStore = create<GameStore>()(
               })
               if (offers.length > 0) {
                 s.draft.pickTradeOffers.push(...offers)
-                s.newsLog.push({
+                appendNewsItem(s, {
                   id: crypto.randomUUID(),
                   date: s.currentDate,
                   headline: 'Live draft pick trade offers received',
@@ -2200,6 +3349,7 @@ export const useGameStore = create<GameStore>()(
             )
             aiSelections += 1
             s.players[newPlayer.id] = newPlayer
+            normalizeClubJumperNumbers(s, bidResolution.awardedClubId)
             s.history.draftHistory.push({
               year: s.currentYear,
               pickNumber: activePick.pickNumber,
@@ -2209,7 +3359,7 @@ export const useGameStore = create<GameStore>()(
               playerName: `${newPlayer.firstName} ${newPlayer.lastName}`,
               position: newPlayer.position.primary,
             })
-            s.newsLog.push({
+            appendNewsItem(s, {
               id: crypto.randomUUID(),
               date: s.currentDate,
               headline: `Pick ${activePick.pickNumber}: ${s.clubs[bidResolution.awardedClubId]?.name ?? bidResolution.awardedClubId} select ${newPlayer.firstName} ${newPlayer.lastName}`,
@@ -2284,6 +3434,7 @@ export const useGameStore = create<GameStore>()(
             rng,
           )
           s.players[newPlayer.id] = newPlayer
+          normalizeClubJumperNumbers(s, bidResolution.awardedClubId)
           s.history.draftHistory.push({
             year: s.currentYear,
             pickNumber: activePick.pickNumber,
@@ -2293,7 +3444,7 @@ export const useGameStore = create<GameStore>()(
             playerName: `${newPlayer.firstName} ${newPlayer.lastName}`,
             position: newPlayer.position.primary,
           })
-          s.newsLog.push({
+          appendNewsItem(s, {
             id: crypto.randomUUID(),
             date: s.currentDate,
             headline: `Pick ${activePick.pickNumber}: ${s.clubs[bidResolution.awardedClubId]?.name ?? bidResolution.awardedClubId} select ${newPlayer.firstName} ${newPlayer.lastName}`,
@@ -2388,7 +3539,7 @@ export const useGameStore = create<GameStore>()(
             }
           }
 
-          s.newsLog.push({
+          appendNewsItem(s, {
             id: crypto.randomUUID(),
             date: s.currentDate,
             headline: `Draft pick trade: ${s.clubs[targetOffer.fromClubId]?.abbreviation ?? targetOffer.fromClubId} move up`,
@@ -2441,7 +3592,15 @@ export const useGameStore = create<GameStore>()(
 
         return suggestNextPick(
           club, pick, available, state.players,
-          [], // Shortlist is managed in component state, not store — pass empty
+          [
+            ...new Set(
+              state.shortlists.flatMap((list) =>
+                list.entries
+                  .filter((entry) => entry.targetType === 'prospect')
+                  .map((entry) => entry.targetId),
+              ),
+            ),
+          ],
           staffName, staffRole, staffRecruitment,
           {
             scoutingAccuracy: staffImpact.scoutingAccuracy || 1,
@@ -2547,6 +3706,7 @@ export const useGameStore = create<GameStore>()(
                 prospect, bidResolution.awardedClubId, s.currentYear, activePick.pickNumber, rng,
               )
               s.players[newPlayer.id] = newPlayer
+              normalizeClubJumperNumbers(s, bidResolution.awardedClubId)
               s.history.draftHistory.push({
                 year: s.currentYear,
                 pickNumber: activePick.pickNumber,
@@ -2556,7 +3716,7 @@ export const useGameStore = create<GameStore>()(
                 playerName: `${newPlayer.firstName} ${newPlayer.lastName}`,
                 position: newPlayer.position.primary,
               })
-              s.newsLog.push({
+              appendNewsItem(s, {
                 id: crypto.randomUUID(),
                 date: s.currentDate,
                 headline: `Pick ${activePick.pickNumber}: ${s.clubs[bidResolution.awardedClubId]?.name ?? bidResolution.awardedClubId} select ${newPlayer.firstName} ${newPlayer.lastName}`,
@@ -2596,6 +3756,7 @@ export const useGameStore = create<GameStore>()(
         set((state) => {
           Object.assign(state, loaded)
           state.simulation = { ...DEFAULT_SIMULATION_STATUS }
+          enforceSingleClubCareerInvariant(state)
         })
       },
 
@@ -2606,6 +3767,18 @@ export const useGameStore = create<GameStore>()(
         appendSimulationLog(set as (fn: (state: GameState) => void) => void, 'Processing retirements, delistings, strategy updates, and board outcomes.')
         try {
         const rng = new SeededRNG(state.rngSeed + state.currentYear * 31337)
+        const playerSeasonSnapshots = Object.values(state.players)
+          .filter((player) => player.clubId !== 'retired')
+          .map((player) => ({
+            playerId: player.id,
+            playerName: `${player.firstName} ${player.lastName}`,
+            year: state.currentYear,
+            clubId: player.clubId,
+            age: player.age,
+            position: player.position.primary,
+            overall: getOverallRating(player),
+            stats: { ...player.seasonStats },
+          }))
 
         // 1. Process season end (stats merge, aging, development, retirements)
         const { updatedPlayers, retiredIds, news: retirementNews, developmentReport, retirementLegacies } = processSeasonEnd(
@@ -2714,7 +3887,7 @@ export const useGameStore = create<GameStore>()(
             for (const sack of carouselSacks) {
               delete s.staff[sack.sacked.id]
               s.staff[sack.replacement.id] = sack.replacement
-              s.newsLog.push({
+              appendNewsItem(s, {
                 id: crypto.randomUUID(),
                 date: s.currentDate,
                 headline: sack.headline,
@@ -2727,7 +3900,7 @@ export const useGameStore = create<GameStore>()(
           }
           // Append news
           for (const n of [...retirementNews, ...strategyNews, ...delistNews]) {
-            s.newsLog.push(n)
+            pushSigningNotification(s, n)
           }
 
           if (expectation && finalJobSecurity != null) {
@@ -2750,7 +3923,7 @@ export const useGameStore = create<GameStore>()(
                 urgency: 'high',
               }),
             )
-            s.newsLog.push({
+            appendNewsItem(s, {
               id: crypto.randomUUID(),
               date: s.currentDate,
               headline: `${firedClub?.name ?? 'Your club'} sack ${s.manager.name}`,
@@ -2763,6 +3936,8 @@ export const useGameStore = create<GameStore>()(
           if (aiOpeningsFromSacks.length > 0) {
             s.coachingJobMarket.push(...aiOpeningsFromSacks)
           }
+
+          enforceSingleClubCareerInvariant(s)
 
           if (
             s.manager.employmentStatus === 'unemployed' &&
@@ -2777,6 +3952,19 @@ export const useGameStore = create<GameStore>()(
           if (!s.history.retirementLegacies) {
             s.history.retirementLegacies = []
           }
+          if (!s.history.playerSeasonStats) {
+            s.history.playerSeasonStats = []
+          }
+          for (const snapshot of playerSeasonSnapshots) {
+            const existingIndex = s.history.playerSeasonStats.findIndex(
+              (entry) => entry.playerId === snapshot.playerId && entry.year === snapshot.year,
+            )
+            if (existingIndex >= 0) {
+              s.history.playerSeasonStats[existingIndex] = snapshot
+            } else {
+              s.history.playerSeasonStats.push(snapshot)
+            }
+          }
           const inductedSet = new Set(inductedHallOfFameIds)
           for (const legacy of retirementLegacies) {
             s.history.retirementLegacies.push({
@@ -2784,7 +3972,7 @@ export const useGameStore = create<GameStore>()(
               inductedClubHallOfFame: inductedSet.has(legacy.playerId),
             })
           }
-          s.newsLog.push({
+          appendNewsItem(s, {
             id: crypto.randomUUID(),
             date: s.currentDate,
             headline: `${developmentReport.year} Player Development Report released`,
@@ -2811,7 +3999,7 @@ export const useGameStore = create<GameStore>()(
               if (s.settings.realism.softCapSpending && financials.luxuryTax > 0) {
                 // Deduct luxury tax from balance
                 club.finances.balance -= financials.luxuryTax
-                s.newsLog.push({
+                appendNewsItem(s, {
                   id: crypto.randomUUID(),
                   date: `${s.currentYear}-10-01`,
                   headline: `${club.name} hit with $${financials.luxuryTax.toLocaleString()} luxury tax`,
@@ -2821,7 +4009,7 @@ export const useGameStore = create<GameStore>()(
                   playerIds: [],
                 })
               } else if (financials.isOverCap && !s.settings.realism.softCapSpending) {
-                s.newsLog.push({
+                appendNewsItem(s, {
                   id: crypto.randomUUID(),
                   date: `${s.currentYear}-10-01`,
                   headline: `${club.name} over salary cap`,
@@ -2886,7 +4074,7 @@ export const useGameStore = create<GameStore>()(
               s.tradeHistory.push(t)
             }
             for (const n of news) {
-              s.newsLog.push(n)
+              pushSigningNotification(s, n)
             }
             // Sync currentSpend for all clubs after trades
             const allPlayers = Object.values(s.players)
@@ -2955,7 +4143,7 @@ export const useGameStore = create<GameStore>()(
               }
               // Append news
               for (const n of marketResult.news) {
-                s.newsLog.push(n)
+                pushSigningNotification(s, n)
               }
               // Update market state
               if (s.offseasonState) {
@@ -3000,7 +4188,7 @@ export const useGameStore = create<GameStore>()(
               }
 
               for (const n of tickResult.news) {
-                s.newsLog.push(n)
+                pushSigningNotification(s, n)
               }
 
               // Sync currentSpend for all clubs
@@ -3208,7 +4396,7 @@ export const useGameStore = create<GameStore>()(
                 combineDate: null,
               }
 
-              s.newsLog.push({
+              appendNewsItem(s, {
                 id: crypto.randomUUID(),
                 date: s.currentDate,
                 headline: `${postAdvance.currentYear} draft class announced (${generated.classProfile.strength})`,
@@ -3406,7 +4594,7 @@ export const useGameStore = create<GameStore>()(
             s.draft.prospects = nextDraftProspects
           }
           for (const news of generatedNews) {
-            s.newsLog.push(news)
+            appendNewsItem(s, news)
           }
         })
         updateSimulationStatus(set as (fn: (state: GameState) => void) => void, `Simulation reached ${nextDate}.`)
@@ -3457,7 +4645,7 @@ export const useGameStore = create<GameStore>()(
         const state = get()
         const opening = state.coachingJobMarket.find((job) => job.id === jobId && job.status === 'open')
         if (!opening) return { success: false, error: 'Job opening not found' }
-        if (state.manager.employmentStatus !== 'unemployed') {
+        if (state.manager.employmentStatus !== 'unemployed' || state.playerClubId) {
           return { success: false, error: 'You are already employed' }
         }
 
@@ -3486,7 +4674,7 @@ export const useGameStore = create<GameStore>()(
               ...liveJob,
               status: 'withdrawn',
             }
-            s.newsLog.push({
+            appendNewsItem(s, {
               id: crypto.randomUUID(),
               date: s.currentDate,
               headline: `${club.name} conclude coaching search`,
@@ -3521,7 +4709,7 @@ export const useGameStore = create<GameStore>()(
             job.id === jobId ? { ...job, status: 'filled' } : job,
           )
 
-          s.newsLog.push({
+          appendNewsItem(s, {
             id: crypto.randomUUID(),
             date: s.currentDate,
             headline: `${club.name} appoint ${s.manager.name} as senior coach`,
@@ -3530,9 +4718,48 @@ export const useGameStore = create<GameStore>()(
             clubIds: [club.id],
             playerIds: [],
           })
+          enforceSingleClubCareerInvariant(s)
         })
 
         return { success: accepted, error: accepted ? undefined : 'Application unsuccessful' }
+      },
+
+      resignFromCurrentClub: () => {
+        const state = get()
+        if (state.manager.employmentStatus !== 'employed' || !state.playerClubId) {
+          return { success: false, error: 'No active club to resign from.' }
+        }
+
+        set((s) => {
+          const resignedClubId = s.playerClubId
+          const resignedClub = s.clubs[resignedClubId]
+          s.playerClubId = ''
+          s.manager.employmentStatus = 'unemployed'
+          s.manager.currentClubId = null
+          s.manager.unemployedSinceYear = s.currentYear
+          s.manager.jobSecurity = 0
+
+          s.coachingJobMarket.push(
+            buildCoachingOpening({
+              clubId: resignedClubId,
+              reason: 'The senior coach resigned. Club leadership has opened the role.',
+              postedDate: s.currentDate,
+              urgency: 'high',
+            }),
+          )
+          appendNewsItem(s, {
+            id: crypto.randomUUID(),
+            date: s.currentDate,
+            headline: `${s.manager.name} resigns from ${resignedClub?.name ?? 'their club'}`,
+            body: `${s.manager.name} has stepped down and is now available for other senior coaching roles.`,
+            category: 'general',
+            clubIds: resignedClub ? [resignedClub.id] : [],
+            playerIds: [],
+          })
+          enforceSingleClubCareerInvariant(s)
+        })
+
+        return { success: true }
       },
 
       delistPlayerOffseason: (playerId: string) => {
@@ -3599,6 +4826,8 @@ export const useGameStore = create<GameStore>()(
           }
           p.isRookie = false
           p.morale = Math.min(100, p.morale + 15)
+          trackSigningInteraction(s, playerId)
+          normalizeClubJumperNumbers(s, s.playerClubId)
 
           // Sync currentSpend
           const allPlayers = Object.values(s.players)
@@ -3608,7 +4837,7 @@ export const useGameStore = create<GameStore>()(
           }
 
           // Add signing news
-          s.newsLog.push({
+          pushSigningNotification(s, {
             id: crypto.randomUUID(),
             date: s.currentDate,
             headline: `${p.firstName} ${p.lastName} signs with ${club?.name ?? s.playerClubId}`,
@@ -3647,6 +4876,7 @@ export const useGameStore = create<GameStore>()(
             leagueConfig: promotion.leagueConfig,
             clubs: state.clubs,
             players: state.players,
+            stateLeagues: state.stateLeagues,
           })
           const { season, ladder, newYear } = startNewSeason(
             evolution.clubs,
@@ -3655,8 +4885,11 @@ export const useGameStore = create<GameStore>()(
             state.playerClubId,
             evolution.settings,
           )
+          const rolledStateLeagues = rollStateLeaguesForNewSeason(evolution.stateLeagues, newYear)
 
           set((s) => {
+            const previousStateLeagueContractDelegation = s.reserves.stateLeagueContractDelegationEnabled
+            const previousStateLeagueContractTargetCount = s.reserves.stateLeagueContractTargetCount
             const pruned = pruneExpiredDraftPicks(evolution.clubs, s.currentYear + 1)
             const ledgered = ensureDraftPickLedger(pruned, s.currentYear + 1, 2)
             s.currentYear = newYear
@@ -3672,31 +4905,50 @@ export const useGameStore = create<GameStore>()(
             s.brownlowTracker = []
             s.brownlowRevealed = false
             s.selectedLineup = null
+            s.selectedSubstituteId = null
             s.reserves = {
               seasonStatsByPlayer: {},
               lastRoundPerformances: [],
               promotionWatchlist: [],
               delegationEnabled: true,
               managedLineupPlayerIds: [],
+              managedLineupSlotAssignments: {},
+              playerAvailabilityAssignments: {},
+              lastSelectedLineupPlayerIds: [],
+              leadership: {
+                captainId: null,
+                viceCaptainId: null,
+                leadershipGroupIds: [],
+              },
               tactics: {
                 tempo: 'balanced',
                 aggression: 'balanced',
                 youthFocus: true,
               },
+              stateLeagueContractDelegationEnabled: previousStateLeagueContractDelegation,
+              stateLeagueContractTargetCount: previousStateLeagueContractTargetCount,
             }
             s.clubs = ledgered
             s.players = evolution.players
+            processStateLeagueContractsForNewSeason(s)
+            normalizeAllClubJumperNumbers(s)
             s.settings = evolution.settings
             s.leagueConfig = {
               ...evolution.leagueConfig,
               activeClubIds: [...evolution.leagueConfig.activeClubIds],
               totalTeams: evolution.leagueConfig.activeClubIds.length,
             }
+            s.stateLeagues = rolledStateLeagues
+            s.jumperManagement = {
+              pending: true,
+              seasonYear: newYear,
+              lastCompletedYear: s.jumperManagement.lastCompletedYear,
+            }
             for (const item of evolution.news) {
-              s.newsLog.push(item)
+              appendNewsItem(s, item)
             }
             for (const item of promotion.news) {
-              s.newsLog.push(item)
+              appendNewsItem(s, item)
             }
             s.calendar = buildSeasonCalendar(
               newYear,
@@ -3721,12 +4973,20 @@ export const useGameStore = create<GameStore>()(
           })
           set((s) => {
             s.powerRankings = [initialPowerSnapshot]
+            s.history.recordsBook = refreshRecordsBookLeaderboards({
+              recordsBook: s.history.recordsBook,
+              players: s.players,
+              clubs: s.clubs,
+              currentYear: s.currentYear,
+              history: s.history,
+            })
             s.multiTierState = initializeMultiTierState({
               clubs: s.clubs,
               leagueConfig: s.leagueConfig,
               settings: s.settings,
               seed: s.rngSeed + s.currentYear * 31,
             })
+            pushUpcomingMilestoneNews(s)
           })
 
           // Schedule special events for the new season
@@ -3804,6 +5064,9 @@ export const useGameStore = create<GameStore>()(
 
         const negotiation = state.negotiations.active[negotiationId]
         if (!negotiation) return { success: false, error: 'Negotiation not found' }
+        set((s) => {
+          trackSigningInteraction(s, negotiation.playerId)
+        })
 
         // Use a mutable copy via immer
         let submitResult: { success: boolean; error?: string } = { success: false }
@@ -3846,7 +5109,7 @@ export const useGameStore = create<GameStore>()(
 
             // Append news
             for (const n of tickResult.news) {
-              s.newsLog.push(n)
+              pushSigningNotification(s, n)
             }
 
             // Sync cap for affected clubs
@@ -3909,7 +5172,7 @@ export const useGameStore = create<GameStore>()(
           // News
           if (player) {
             const clubName = s.clubs[neg.clubId]?.name ?? neg.clubId
-            s.newsLog.push({
+            pushSigningNotification(s, {
               id: crypto.randomUUID(),
               date: s.currentDate,
               headline: `${player.firstName} ${player.lastName} ${neg.isReSigning ? 're-signs' : 'signs'} with ${clubName}`,
@@ -3978,6 +5241,7 @@ export const useGameStore = create<GameStore>()(
             if (s.offseasonState) {
               s.offseasonState.freeAgencyMarket = result.market
             }
+            trackSigningInteraction(s, playerId)
           })
         }
 
@@ -4017,6 +5281,7 @@ export const useGameStore = create<GameStore>()(
           for (const [id, p] of Object.entries(result.updatedPlayers)) {
             s.players[id] = p
           }
+          normalizeAllClubJumperNumbers(s)
           // Apply compensation picks
           for (const comp of result.compensationPicks) {
             const club = s.clubs[comp.losingClubId]
@@ -4029,10 +5294,10 @@ export const useGameStore = create<GameStore>()(
               })
             }
           }
-          // Append news
-          for (const n of result.news) {
-            s.newsLog.push(n)
-          }
+            // Append news
+            for (const n of result.news) {
+              pushSigningNotification(s, n)
+            }
           // Update market state
           if (s.offseasonState) {
             s.offseasonState.freeAgencyMarket = result.market
@@ -4087,6 +5352,8 @@ export const useGameStore = create<GameStore>()(
           }
           p.isRookie = false
           p.morale = Math.min(100, p.morale + 15)
+          trackSigningInteraction(s, playerId)
+          normalizeClubJumperNumbers(s, s.playerClubId)
 
           const allPlayers = Object.values(s.players)
           const club = s.clubs[s.playerClubId]
@@ -4094,7 +5361,7 @@ export const useGameStore = create<GameStore>()(
             club.finances.currentSpend = syncClubCurrentSpend(allPlayers, s.playerClubId)
           }
 
-          s.newsLog.push({
+          pushSigningNotification(s, {
             id: crypto.randomUUID(),
             date: s.currentDate,
             headline: `${p.firstName} ${p.lastName} signs with ${club?.name ?? s.playerClubId}`,
@@ -4272,7 +5539,7 @@ export const useGameStore = create<GameStore>()(
       sendToReserves: (playerId: string) => {
         set((state) => {
           const player = state.players[playerId]
-          if (player) {
+          if (player && isAflListedPlayer(player)) {
             player.listStatus = 'reserves'
           }
         })
@@ -4281,7 +5548,7 @@ export const useGameStore = create<GameStore>()(
       recallFromReserves: (playerId: string) => {
         set((state) => {
           const player = state.players[playerId]
-          if (player) {
+          if (player && isAflListedPlayer(player)) {
             player.listStatus = 'senior'
           }
         })
@@ -4303,10 +5570,87 @@ export const useGameStore = create<GameStore>()(
             if (!p) return false
             if (p.clubId !== state.playerClubId) return false
             if (p.injury || isPlayerSuspended(p)) return false
+            if (isStateLeagueContracted(p) && !hasActiveStateLeagueContract(p)) return false
             if (selectedLineupIds.has(id)) return false
             return true
           })
-          state.reserves.managedLineupPlayerIds = Array.from(new Set(valid)).slice(0, 23)
+          const ids = Array.from(new Set(valid)).slice(0, 23)
+          state.reserves.managedLineupPlayerIds = ids
+          const slots = getLineupSlots(state.settings.matchRules.interchangePlayers)
+          const nextAssignments: Partial<Record<LineupSlot, string>> = {}
+          for (let i = 0; i < slots.length && i < ids.length; i++) {
+            nextAssignments[slots[i]] = ids[i]
+          }
+          state.reserves.managedLineupSlotAssignments = nextAssignments
+        })
+      },
+
+      setManagedReservesLineupSlots: (assignments: Partial<Record<LineupSlot, string>>) => {
+        set((state) => {
+          const selectedLineupIds = new Set(
+            Object.values(state.selectedLineup ?? {}).filter((id): id is string => Boolean(id)),
+          )
+          const validSlots = new Set<LineupSlot>(getLineupSlots(state.settings.matchRules.interchangePlayers))
+          const used = new Set<string>()
+          const nextAssignments: Partial<Record<LineupSlot, string>> = {}
+
+          for (const [rawSlot, playerId] of Object.entries(assignments) as Array<[LineupSlot, string | undefined]>) {
+            const slot = rawSlot as LineupSlot
+            if (!validSlots.has(slot)) continue
+            if (!playerId || used.has(playerId) || selectedLineupIds.has(playerId)) continue
+            const p = state.players[playerId]
+            if (!p) continue
+            if (p.clubId !== state.playerClubId || p.injury || isPlayerSuspended(p)) continue
+            if (isStateLeagueContracted(p) && !hasActiveStateLeagueContract(p)) continue
+            nextAssignments[slot] = playerId
+            used.add(playerId)
+          }
+
+          state.reserves.managedLineupSlotAssignments = nextAssignments
+          state.reserves.managedLineupPlayerIds = Object.values(nextAssignments)
+        })
+      },
+
+      setReservesPlayerAvailability: (playerId: string, assignment: 'play' | 'rest') => {
+        set((state) => {
+          const player = state.players[playerId]
+          if (!player || player.clubId !== state.playerClubId) return
+          if (assignment === 'play' && isStateLeagueContracted(player) && !hasActiveStateLeagueContract(player)) {
+            state.reserves.playerAvailabilityAssignments[playerId] = 'rest'
+            return
+          }
+          state.reserves.playerAvailabilityAssignments[playerId] = assignment
+          if (assignment === 'rest') {
+            state.reserves.managedLineupPlayerIds = state.reserves.managedLineupPlayerIds.filter((id) => id !== playerId)
+            for (const [slot, id] of Object.entries(state.reserves.managedLineupSlotAssignments) as Array<[LineupSlot, string]>) {
+              if (id === playerId) delete state.reserves.managedLineupSlotAssignments[slot]
+            }
+          }
+        })
+      },
+
+      setReservesLeadership: (leadership: {
+        captainId: string | null
+        viceCaptainId: string | null
+        leadershipGroupIds: string[]
+      }) => {
+        set((state) => {
+          const clubPlayerIds = new Set(
+            Object.values(state.players)
+              .filter((p) => p.clubId === state.playerClubId)
+              .map((p) => p.id),
+          )
+          const captainId = leadership.captainId && clubPlayerIds.has(leadership.captainId)
+            ? leadership.captainId
+            : null
+          const viceCaptainId = leadership.viceCaptainId && clubPlayerIds.has(leadership.viceCaptainId)
+            ? leadership.viceCaptainId
+            : null
+          const leadershipGroupIds = leadership.leadershipGroupIds
+            .filter((id) => clubPlayerIds.has(id))
+            .slice(0, 8)
+
+          state.reserves.leadership = { captainId, viceCaptainId, leadershipGroupIds }
         })
       },
 
@@ -4326,6 +5670,7 @@ export const useGameStore = create<GameStore>()(
               p.clubId === state.playerClubId &&
               !p.injury &&
               !isPlayerSuspended(p) &&
+              (!isStateLeagueContracted(p) || hasActiveStateLeagueContract(p)) &&
               !selectedLineupIds.has(p.id),
             )
             .sort((a, b) => {
@@ -4333,8 +5678,158 @@ export const useGameStore = create<GameStore>()(
               const bScore = b.form * 0.45 + b.fitness * 0.2 + averageAttributes(b.attributes) * 0.35
               return bScore - aScore
             })
-          state.reserves.managedLineupPlayerIds = candidates.slice(0, 23).map((p) => p.id)
+          const ids = candidates.slice(0, 23).map((p) => p.id)
+          state.reserves.managedLineupPlayerIds = ids
+          const slots = getLineupSlots(state.settings.matchRules.interchangePlayers)
+          const nextAssignments: Partial<Record<LineupSlot, string>> = {}
+          for (let i = 0; i < slots.length && i < ids.length; i++) {
+            nextAssignments[slots[i]] = ids[i]
+          }
+          state.reserves.managedLineupSlotAssignments = nextAssignments
         })
+      },
+
+      setStateLeagueContractDelegation: (enabled: boolean) => {
+        set((state) => {
+          state.reserves.stateLeagueContractDelegationEnabled = enabled
+        })
+      },
+
+      setStateLeagueContractTargetCount: (count: number) => {
+        set((state) => {
+          state.reserves.stateLeagueContractTargetCount = Math.max(6, Math.min(28, Math.round(count)))
+        })
+      },
+
+      reSignStateLeagueContract: (playerId: string, years = 1) => {
+        const state = get()
+        const player = state.players[playerId]
+        if (!player || player.clubId !== state.playerClubId) return { success: false, error: 'Player not found at your club.' }
+        if (!isStateLeagueContracted(player)) return { success: false, error: 'Player is not on a state-league contract.' }
+
+        set((s) => {
+          const p = s.players[playerId]
+          if (!p || !isStateLeagueContracted(p)) return
+          const nextYears = Math.max(1, Math.min(3, Math.round(years)))
+          p.stateLeagueContract = {
+            yearsRemaining: nextYears,
+            annualValue: p.stateLeagueContract?.annualValue ?? 70_000,
+            signedDate: s.currentDate,
+            source: 'renewal',
+          }
+          appendContractHistory(p, s.currentDate, 'state-renew', `Re-signed on a ${nextYears}-year state-league deal.`)
+          appendNewsItem(s, {
+            id: crypto.randomUUID(),
+            date: s.currentDate,
+            headline: `${p.firstName} ${p.lastName} re-signs state-league deal`,
+            body: `${p.firstName} ${p.lastName} has re-signed with the affiliate reserves program on a ${nextYears}-year contract.`,
+            category: 'contract',
+            clubIds: [s.playerClubId],
+            playerIds: [p.id],
+          }, { routeSigning: false })
+        })
+        return { success: true }
+      },
+
+      delistStateLeagueContractedPlayer: (playerId: string) => {
+        const state = get()
+        const player = state.players[playerId]
+        if (!player || player.clubId !== state.playerClubId) return { success: false, error: 'Player not found at your club.' }
+        if (!isStateLeagueContracted(player)) return { success: false, error: 'Player is not on a state-league contract.' }
+
+        set((s) => {
+          const p = s.players[playerId]
+          if (!p) return
+          appendContractHistory(p, s.currentDate, 'state-delist', 'Delisted from state-league contract.')
+          p.clubId = ''
+          p.stateLeagueContract = null
+          p.listStatus = 'reserves'
+          removeStateLeagueContractedPlayerFromReservesState(s, playerId)
+          appendNewsItem(s, {
+            id: crypto.randomUUID(),
+            date: s.currentDate,
+            headline: `${player.firstName} ${player.lastName} delisted from reserves contract`,
+            body: `${player.firstName} ${player.lastName} has been released from the affiliate state-league list.`,
+            category: 'contract',
+            clubIds: [s.playerClubId],
+            playerIds: [playerId],
+          }, { routeSigning: false })
+        })
+        return { success: true }
+      },
+
+      recruitStateLeagueContractPlayer: (count = 1) => {
+        const state = get()
+        const addCount = Math.max(1, Math.min(6, Math.round(count)))
+        if (!state.playerClubId || !state.clubs[state.playerClubId]) {
+          return { success: false, addedIds: [], error: 'No managed club selected.' }
+        }
+        let addedIds: string[] = []
+        set((s) => {
+          addedIds = recruitStateLeagueDepthPlayers(
+            s,
+            s.playerClubId,
+            addCount,
+            'recruitment',
+            s.reserves.stateLeagueContractDelegationEnabled,
+          )
+          for (const playerId of addedIds) {
+            s.reserves.playerAvailabilityAssignments[playerId] = 'play'
+          }
+        })
+        return { success: true, addedIds }
+      },
+
+      signStateLeaguePlayerToAflContract: (playerId: string, years: number, aav: number) => {
+        const state = get()
+        const player = state.players[playerId]
+        if (!player || player.clubId !== state.playerClubId) return { success: false, error: 'Player not found at your club.' }
+        if (!isStateLeagueContracted(player)) return { success: false, error: 'Player is not on a state-league contract.' }
+        const constraints = resolveListConstraints(state.settings)
+        if (!canAddToSeniorList(state.players, state.playerClubId, constraints)) {
+          return { success: false, error: 'No room on the AFL senior list.' }
+        }
+
+        const clampedYears = Math.max(1, Math.min(4, Math.round(years)))
+        const clampedAav = Math.max(MINIMUM_SALARY, Math.min(700_000, Math.round(aav)))
+
+        set((s) => {
+          const p = s.players[playerId]
+          if (!p) return
+          p.contractTier = 'afl-listed'
+          p.stateLeagueContract = null
+          p.contract = {
+            yearsRemaining: clampedYears,
+            aav: clampedAav,
+            yearByYear: Array.from({ length: clampedYears }, (_, idx) =>
+              Math.round((clampedAav * (1 + idx * 0.03)) / 1000) * 1000,
+            ),
+            isRestricted: p.age < 27,
+          }
+          p.listStatus = 'senior'
+          appendContractHistory(
+            p,
+            s.currentDate,
+            'afl-sign',
+            `Upgraded from state-league contract to ${clampedYears}-year AFL contract.`,
+          )
+          appendNewsItem(s, {
+            id: crypto.randomUUID(),
+            date: s.currentDate,
+            headline: `${p.firstName} ${p.lastName} signed to AFL list`,
+            body: `${p.firstName} ${p.lastName} has been upgraded from the affiliate program to a ${clampedYears}-year AFL contract worth $${clampedAav.toLocaleString()} per season.`,
+            category: 'contract',
+            clubIds: [s.playerClubId],
+            playerIds: [p.id],
+          }, { routeSigning: false })
+
+          const allPlayers = Object.values(s.players)
+          const club = s.clubs[s.playerClubId]
+          if (club) {
+            club.finances.currentSpend = syncClubCurrentSpend(allPlayers, s.playerClubId)
+          }
+        })
+        return { success: true }
       },
 
       setDaySlot: (date: string, slot: ScheduleSlot, activity: TrainingFocus | 'rest' | null) => {
@@ -4496,7 +5991,7 @@ export const useGameStore = create<GameStore>()(
           // Push news item
           const def = getEventDefinition(evt.eventId)
           const eventName = def?.name ?? evt.eventId
-          s.newsLog.push({
+          appendNewsItem(s, {
             id: crypto.randomUUID(),
             date: s.currentDate,
             headline: `${evt.teamA.name} ${result.teamAScore.total} def. ${evt.teamB.name} ${result.teamBScore.total}`,
@@ -4550,7 +6045,7 @@ export const useGameStore = create<GameStore>()(
               const player = s.players[expired.playerId]
               if (!player) continue
               applyTribunalOutcomeToPlayer(player, expired)
-              s.newsLog.push({
+              appendNewsItem(s, {
                 id: crypto.randomUUID(),
                 date: s.currentDate,
                 headline: `Tribunal deadline missed: ${player.firstName} ${player.lastName}`,
@@ -4619,6 +6114,17 @@ export const useGameStore = create<GameStore>()(
         })
         state = get()
 
+        const lineupsByClub: Record<string, Record<string, string>> = {}
+        const substitutesByClub: Record<string, string | null> = {}
+        for (const fixture of round.fixtures) {
+          const homeLineup = buildSimLineupForClub(state, fixture.homeClubId)
+          const awayLineup = buildSimLineupForClub(state, fixture.awayClubId)
+          lineupsByClub[fixture.homeClubId] = homeLineup
+          lineupsByClub[fixture.awayClubId] = awayLineup
+          substitutesByClub[fixture.homeClubId] = buildSimSubstituteForClub(state, fixture.homeClubId, homeLineup)
+          substitutesByClub[fixture.awayClubId] = buildSimSubstituteForClub(state, fixture.awayClubId, awayLineup)
+        }
+
         const result = simulateRound({
           round,
           roundIndex: state.currentRound,
@@ -4632,6 +6138,10 @@ export const useGameStore = create<GameStore>()(
           matchupTacticsByClub,
           realism: state.settings.realism,
           injuryFrequency: state.settings.injuryFrequency,
+          ladder: state.ladder,
+          lineupsByClub,
+          substitutesByClub,
+          matchResults: state.matchResults,
         })
 
         // Accumulate venue revenue
@@ -4661,6 +6171,19 @@ export const useGameStore = create<GameStore>()(
           for (const m of result.matches) {
             s.matchResults.push(m)
           }
+          s.history.recordsBook = updateRecordsBookForMatches({
+            recordsBook: s.history.recordsBook,
+            matches: result.matches,
+            clubs: s.clubs,
+            currentYear: s.currentYear,
+          })
+          s.history.recordsBook = refreshRecordsBookLeaderboards({
+            recordsBook: s.history.recordsBook,
+            players: s.players,
+            clubs: s.clubs,
+            currentYear: s.currentYear,
+            history: s.history,
+          })
         })
 
         // Update ladder with settings-driven points
@@ -4673,23 +6196,12 @@ export const useGameStore = create<GameStore>()(
 
         // Build travel fatigue map for post-round effects
         let travelFatigueByClub: Record<string, number> | undefined
-        if (state.venueState) {
-          travelFatigueByClub = {}
-          for (let fi = 0; fi < round.fixtures.length; fi++) {
-            const fixture = round.fixtures[fi]
-            const assignment = state.venueState.assignments.find(
-              (a) => a.roundNumber === round.number && a.fixtureIndex === fi,
-            )
-            if (assignment) {
-              const venueObj = VENUES[assignment.venueId]
-              if (venueObj) {
-                const homeFatigue = getTravelFatigue(getClubState(fixture.homeClubId), venueObj.state)
-                const awayFatigue = getTravelFatigue(getClubState(fixture.awayClubId), venueObj.state)
-                if (homeFatigue > 0) travelFatigueByClub[fixture.homeClubId] = homeFatigue
-                if (awayFatigue > 0) travelFatigueByClub[fixture.awayClubId] = awayFatigue
-              }
-            }
-          }
+        for (const match of result.matches) {
+          const travel = match.result?.simulationContext?.travelFatigue
+          if (!travel) continue
+          if (!travelFatigueByClub) travelFatigueByClub = {}
+          travelFatigueByClub[match.homeClubId] = Math.max(travelFatigueByClub[match.homeClubId] ?? 0, travel.home)
+          travelFatigueByClub[match.awayClubId] = Math.max(travelFatigueByClub[match.awayClubId] ?? 0, travel.away)
         }
 
         // Apply post-round effects (fatigue, fitness, form)
@@ -4710,8 +6222,8 @@ export const useGameStore = create<GameStore>()(
         const allInjuries = result.matches.flatMap((m) => {
           if (!m.result) return []
           const matchPlayerIds = [
-            ...m.result.homePlayerStats.map((ps) => ps.playerId),
-            ...m.result.awayPlayerStats.map((ps) => ps.playerId),
+            ...m.result.homePlayerStats.filter((ps) => ps.participated || ps.minutesPlayed > 0).map((ps) => ps.playerId),
+            ...m.result.awayPlayerStats.filter((ps) => ps.participated || ps.minutesPlayed > 0).map((ps) => ps.playerId),
           ]
           return rollMatchInjuries(
             matchPlayerIds,
@@ -4743,8 +6255,8 @@ export const useGameStore = create<GameStore>()(
               )
             ) continue
             const played = new Set<string>([
-              ...match.result.homePlayerStats.map((ps) => ps.playerId),
-              ...match.result.awayPlayerStats.map((ps) => ps.playerId),
+              ...match.result.homePlayerStats.filter((ps) => ps.participated || ps.minutesPlayed > 0).map((ps) => ps.playerId),
+              ...match.result.awayPlayerStats.filter((ps) => ps.participated || ps.minutesPlayed > 0).map((ps) => ps.playerId),
             ])
             for (const instruction of roundEntry.matchupTactics.physicalAttention) {
               if (!played.has(instruction.targetPlayerId)) continue
@@ -4798,7 +6310,7 @@ export const useGameStore = create<GameStore>()(
             const p = s.players[inj.playerId]
             if (p) {
               applyInjuryEvent(p, inj)
-              s.newsLog.push({
+              appendNewsItem(s, {
                 id: crypto.randomUUID(),
                 date: s.currentDate,
                 headline: `${p.firstName} ${p.lastName} injured (${inj.weeksOut}w)`,
@@ -4822,7 +6334,7 @@ export const useGameStore = create<GameStore>()(
             const player = s.players[tribunalCase.playerId]
             if (!player) continue
             applyTribunalOutcomeToPlayer(player, tribunalCase)
-            s.newsLog.push({
+            appendNewsItem(s, {
               id: crypto.randomUUID(),
               date: s.currentDate,
               headline:
@@ -4857,7 +6369,7 @@ export const useGameStore = create<GameStore>()(
               })
             }
 
-            s.newsLog.push({
+            appendNewsItem(s, {
               id: crypto.randomUUID(),
               date: s.currentDate,
               headline: `Tribunal hearing: ${player.firstName} ${player.lastName}`,
@@ -4938,7 +6450,7 @@ export const useGameStore = create<GameStore>()(
             if (prevMorale === undefined) continue
             const warning = generateMoraleWarnings(p, prevMorale, userClubName, s.currentDate)
             if (warning) {
-              s.newsLog.push(warning)
+              appendNewsItem(s, warning)
             }
           }
 
@@ -4971,7 +6483,7 @@ export const useGameStore = create<GameStore>()(
                       : milestone.type === 'career-marks'
                         ? `${milestone.threshold} career marks`
                         : `${milestone.threshold} career tackles`
-              s.newsLog.push({
+              appendNewsItem(s, {
                 id: crypto.randomUUID(),
                 date: s.currentDate,
                 headline: `${milestone.playerName} reaches ${milestoneLabel}`,
@@ -5047,7 +6559,17 @@ export const useGameStore = create<GameStore>()(
           })
           s.reserves = reservesResult.reserves
           for (const n of reservesResult.news) {
-            s.newsLog.push(n)
+            pushSigningNotification(s, n)
+          }
+          if (s.reserves.stateLeagueContractDelegationEnabled) {
+            const currentDepth = getStateLeagueContractedCount(s.players, s.playerClubId)
+            if (currentDepth < s.reserves.stateLeagueContractTargetCount) {
+              const toAdd = s.reserves.stateLeagueContractTargetCount - currentDepth
+              const added = recruitStateLeagueDepthPlayers(s, s.playerClubId, toAdd, 'recruitment', true)
+              for (const playerId of added) {
+                s.reserves.playerAvailabilityAssignments[playerId] = 'play'
+              }
+            }
           }
 
           // --- Negotiation tick ---
@@ -5084,7 +6606,7 @@ export const useGameStore = create<GameStore>()(
 
             // Append news
             for (const n of tickResult.news) {
-              s.newsLog.push(n)
+              pushSigningNotification(s, n)
             }
 
             // Sync cap for affected clubs
@@ -5107,7 +6629,7 @@ export const useGameStore = create<GameStore>()(
               s.currentRound, s.currentDate, s.settings,
             )
             for (const n of aiResult.news) {
-              s.newsLog.push(n)
+              pushSigningNotification(s, n)
             }
             // Sync cap for AI clubs that re-signed players
             if (aiResult.signings.length > 0) {
@@ -5164,7 +6686,19 @@ export const useGameStore = create<GameStore>()(
         })
 
         if (isRegularSeasonComplete(updatedState.currentRound, updatedState.season.rounds.length)) {
+          const calibrationReport = buildSeasonCalibrationReport(updatedState.matchResults)
           set((s) => {
+            if (calibrationReport) {
+              appendNewsItem(s, {
+                id: `season-calibration-${s.currentYear}`,
+                date: s.currentDate,
+                headline: calibrationReport.headline,
+                body: calibrationReport.body,
+                category: 'general',
+                clubIds: [],
+                playerIds: [],
+              }, { routeSigning: false })
+            }
             s.phase = 'finals'
           })
         }
@@ -5252,7 +6786,7 @@ export const useGameStore = create<GameStore>()(
               const player = s.players[expired.playerId]
               if (!player) continue
               applyTribunalOutcomeToPlayer(player, expired)
-              s.newsLog.push({
+              appendNewsItem(s, {
                 id: crypto.randomUUID(),
                 date: s.currentDate,
                 headline: `Tribunal deadline missed: ${player.firstName} ${player.lastName}`,
@@ -5322,6 +6856,17 @@ export const useGameStore = create<GameStore>()(
             }
           }
 
+          const finalsLineupsByClub: Record<string, Record<string, string>> = {}
+          const finalsSubstitutesByClub: Record<string, string | null> = {}
+          for (const fixture of round.fixtures) {
+            const homeLineup = buildSimLineupForClub(state, fixture.homeClubId)
+            const awayLineup = buildSimLineupForClub(state, fixture.awayClubId)
+            finalsLineupsByClub[fixture.homeClubId] = homeLineup
+            finalsLineupsByClub[fixture.awayClubId] = awayLineup
+            finalsSubstitutesByClub[fixture.homeClubId] = buildSimSubstituteForClub(state, fixture.homeClubId, homeLineup)
+            finalsSubstitutesByClub[fixture.awayClubId] = buildSimSubstituteForClub(state, fixture.awayClubId, awayLineup)
+          }
+
           const result = simulateRound({
             round,
             roundIndex: 100 + finalsWeek, // Offset to avoid colliding with H&A round indices
@@ -5333,6 +6878,9 @@ export const useGameStore = create<GameStore>()(
             matchRules: state.settings.matchRules,
             realism: state.settings.realism,
             injuryFrequency: state.settings.injuryFrequency,
+            ladder: state.ladder,
+            lineupsByClub: finalsLineupsByClub,
+            substitutesByClub: finalsSubstitutesByClub,
           })
 
           // Mark finals matches
@@ -5342,6 +6890,19 @@ export const useGameStore = create<GameStore>()(
             for (const m of finalsResults) {
               s.matchResults.push(m)
             }
+            s.history.recordsBook = updateRecordsBookForMatches({
+              recordsBook: s.history.recordsBook,
+              matches: finalsResults,
+              clubs: s.clubs,
+              currentYear: s.currentYear,
+            })
+            s.history.recordsBook = refreshRecordsBookLeaderboards({
+              recordsBook: s.history.recordsBook,
+              players: s.players,
+              clubs: s.clubs,
+              currentYear: s.currentYear,
+              history: s.history,
+            })
             s.meta.lastSaved = new Date().toISOString()
           })
 
@@ -5364,8 +6925,8 @@ export const useGameStore = create<GameStore>()(
           const finalsInjuries = finalsResults.flatMap((m) => {
             if (!m.result) return []
             const matchPlayerIds = [
-              ...m.result.homePlayerStats.map((ps) => ps.playerId),
-              ...m.result.awayPlayerStats.map((ps) => ps.playerId),
+              ...m.result.homePlayerStats.filter((ps) => ps.participated || ps.minutesPlayed > 0).map((ps) => ps.playerId),
+              ...m.result.awayPlayerStats.filter((ps) => ps.participated || ps.minutesPlayed > 0).map((ps) => ps.playerId),
             ]
             return rollMatchInjuries(
               matchPlayerIds,
@@ -5404,7 +6965,7 @@ export const useGameStore = create<GameStore>()(
               const p = s.players[inj.playerId]
               if (p) {
                 applyInjuryEvent(p, inj)
-                s.newsLog.push({
+                appendNewsItem(s, {
                   id: crypto.randomUUID(),
                   date: s.currentDate,
                   headline: `${p.firstName} ${p.lastName} injured in finals (${inj.weeksOut}w)`,
@@ -5426,7 +6987,7 @@ export const useGameStore = create<GameStore>()(
               const player = s.players[tribunalCase.playerId]
               if (!player) continue
               applyTribunalOutcomeToPlayer(player, tribunalCase)
-              s.newsLog.push({
+              appendNewsItem(s, {
                 id: crypto.randomUUID(),
                 date: s.currentDate,
                 headline:
@@ -5460,7 +7021,7 @@ export const useGameStore = create<GameStore>()(
                 })
               }
 
-              s.newsLog.push({
+              appendNewsItem(s, {
                 id: crypto.randomUUID(),
                 date: s.currentDate,
                 headline: `Tribunal hearing: ${player.firstName} ${player.lastName}`,
@@ -5521,7 +7082,7 @@ export const useGameStore = create<GameStore>()(
                         : milestone.type === 'career-marks'
                           ? `${milestone.threshold} career marks`
                           : `${milestone.threshold} career tackles`
-                s.newsLog.push({
+                appendNewsItem(s, {
                   id: crypto.randomUUID(),
                   date: s.currentDate,
                   headline: `${milestone.playerName} reaches ${milestoneLabel}`,
@@ -5549,6 +7110,13 @@ export const useGameStore = create<GameStore>()(
                 s.ladder,
               )
               s.history = updatedHistory
+              s.history.recordsBook = refreshRecordsBookLeaderboards({
+                recordsBook: s.history.recordsBook,
+                players: s.players,
+                clubs: s.clubs,
+                currentYear: s.currentYear,
+                history: s.history,
+              })
 
               // Archive origin history for this season
               if (s.specialEvents && s.specialEvents.originStandings && s.specialEvents.originStandings.length > 0) {
@@ -5599,7 +7167,7 @@ export const useGameStore = create<GameStore>()(
               if (seasonAwards.brownlowMedal) {
                 const bp = s.players[seasonAwards.brownlowMedal.playerId]
                 if (bp) {
-                  s.newsLog.push({
+                  appendNewsItem(s, {
                     id: crypto.randomUUID(),
                     date: s.currentDate,
                     headline: `${bp.firstName} ${bp.lastName} wins the ${s.currentYear} Brownlow Medal`,
@@ -5614,7 +7182,7 @@ export const useGameStore = create<GameStore>()(
               if (seasonAwards.colemanMedal) {
                 const cp = s.players[seasonAwards.colemanMedal.playerId]
                 if (cp) {
-                  s.newsLog.push({
+                  appendNewsItem(s, {
                     id: crypto.randomUUID(),
                     date: s.currentDate,
                     headline: `${cp.firstName} ${cp.lastName} wins the ${s.currentYear} Coleman Medal`,
@@ -5629,7 +7197,7 @@ export const useGameStore = create<GameStore>()(
               if (seasonAwards.risingStar) {
                 const rp = s.players[seasonAwards.risingStar.playerId]
                 if (rp) {
-                  s.newsLog.push({
+                  appendNewsItem(s, {
                     id: crypto.randomUUID(),
                     date: s.currentDate,
                     headline: `${rp.firstName} ${rp.lastName} wins the ${s.currentYear} Rising Star`,
@@ -5643,7 +7211,7 @@ export const useGameStore = create<GameStore>()(
 
               if (seasonAwards.allAustralian.length > 0) {
                 const firstSelection = s.players[seasonAwards.allAustralian[0]]
-                s.newsLog.push({
+                appendNewsItem(s, {
                   id: crypto.randomUUID(),
                   date: s.currentDate,
                   headline: `${s.currentYear} All-Australian team announced`,
@@ -5660,7 +7228,7 @@ export const useGameStore = create<GameStore>()(
                 const club = s.clubs[clubId]
                 const player = s.players[playerId]
                 if (!club || !player) continue
-                s.newsLog.push({
+                appendNewsItem(s, {
                   id: crypto.randomUUID(),
                   date: s.currentDate,
                   headline: `${player.firstName} ${player.lastName} wins ${club.name}'s Best and Fairest`,
@@ -5672,7 +7240,7 @@ export const useGameStore = create<GameStore>()(
               }
 
               if (premier) {
-                s.newsLog.push({
+                appendNewsItem(s, {
                   id: crypto.randomUUID(),
                   date: s.currentDate,
                   headline: `${s.clubs[premier]?.fullName ?? premier} wins the ${s.currentYear} Premiership!`,
@@ -5729,10 +7297,23 @@ export const useGameStore = create<GameStore>()(
         // Ensure new fields exist on old saves
         const merged = { ...currentState, ...persisted }
         if (!merged.history) {
-          merged.history = { seasons: [], draftHistory: [], developmentReports: [], awards: [], milestones: [], retirementLegacies: [], originHistory: [] }
+          merged.history = {
+            seasons: [],
+            draftHistory: [],
+            developmentReports: [],
+            playerSeasonStats: [],
+            awards: [],
+            milestones: [],
+            retirementLegacies: [],
+            originHistory: [],
+            recordsBook: createDefaultRecordsBook(),
+          }
         }
         if (merged.history && !(merged.history as { developmentReports?: unknown }).developmentReports) {
           ;(merged.history as import('@/types/history').GameHistory).developmentReports = []
+        }
+        if (merged.history && !(merged.history as { playerSeasonStats?: unknown }).playerSeasonStats) {
+          ;(merged.history as import('@/types/history').GameHistory).playerSeasonStats = []
         }
         if (merged.history && !(merged.history as { awards?: unknown }).awards) {
           ;(merged.history as import('@/types/history').GameHistory).awards = []
@@ -5745,6 +7326,14 @@ export const useGameStore = create<GameStore>()(
         }
         if (merged.history && !(merged.history as { originHistory?: unknown }).originHistory) {
           ;(merged.history as import('@/types/history').GameHistory).originHistory = []
+        }
+        if (merged.history && !(merged.history as { recordsBook?: unknown }).recordsBook) {
+          ;(merged.history as import('@/types/history').GameHistory).recordsBook = createDefaultRecordsBook()
+        }
+        if (merged.history) {
+          ;(merged.history as import('@/types/history').GameHistory).recordsBook = normalizeRecordsBook(
+            (merged.history as import('@/types/history').GameHistory).recordsBook,
+          )
         }
 
         // Backfill originConfig on old saves
@@ -5838,6 +7427,62 @@ export const useGameStore = create<GameStore>()(
         if (merged.settings && !merged.settings.customRivalryPairs) {
           merged.settings.customRivalryPairs = []
         }
+        if (merged.settings && !merged.settings.leagueNamingTemplate) {
+          merged.settings.leagueNamingTemplate = 'real-life'
+        }
+        if (merged.settings && merged.settings.includePathwayLeagues === undefined) {
+          merged.settings.includePathwayLeagues = true
+        }
+        const matchRulesSettingsObj = merged.settings?.matchRules as unknown as Record<string, unknown> | undefined
+        if (matchRulesSettingsObj && matchRulesSettingsObj.enableSubstitutes === undefined) {
+          matchRulesSettingsObj.enableSubstitutes = false
+        }
+        if ((merged as Record<string, unknown>).selectedSubstituteId === undefined) {
+          ;(merged as Record<string, unknown>).selectedSubstituteId = null
+        }
+        if (merged.settings && !(merged.settings as { notifications?: unknown }).notifications) {
+          merged.settings.notifications = {
+            signings: {
+              starThreshold: 4,
+              inApp: true,
+              email: true,
+              dailyDigest: false,
+            },
+          }
+        }
+        const notificationSettings = merged.settings?.notifications as unknown as Record<string, unknown> | undefined
+        if (notificationSettings) {
+          if (!('signings' in notificationSettings) || typeof notificationSettings.signings !== 'object' || !notificationSettings.signings) {
+            notificationSettings.signings = {
+              starThreshold: 4,
+              inApp: true,
+              email: true,
+              dailyDigest: false,
+            }
+          }
+          const signingSettings = notificationSettings.signings as Record<string, unknown>
+          if (!('starThreshold' in signingSettings)) signingSettings.starThreshold = 4
+          if (!('inApp' in signingSettings)) signingSettings.inApp = true
+          if (!('email' in signingSettings)) signingSettings.email = true
+          if (!('dailyDigest' in signingSettings)) signingSettings.dailyDigest = false
+        }
+        if (merged.settings && !(merged.settings as { stateLeagueAffiliations?: unknown }).stateLeagueAffiliations) {
+          merged.settings.stateLeagueAffiliations = {
+            allowCustomAffiliations: false,
+            clubAffiliations: {},
+          }
+        }
+        const affiliationSettings = merged.settings?.stateLeagueAffiliations as unknown as Record<string, unknown> | undefined
+        if (affiliationSettings) {
+          if (!('allowCustomAffiliations' in affiliationSettings)) affiliationSettings.allowCustomAffiliations = false
+          if (
+            !('clubAffiliations' in affiliationSettings) ||
+            typeof affiliationSettings.clubAffiliations !== 'object' ||
+            !affiliationSettings.clubAffiliations
+          ) {
+            affiliationSettings.clubAffiliations = {}
+          }
+        }
 
         // Migrate grandFinalVenueMode
         const fin = merged.settings?.finals as unknown as Record<string, unknown> | undefined
@@ -5866,6 +7511,47 @@ export const useGameStore = create<GameStore>()(
         }
         if (merged.stateLeagues === undefined) {
           merged.stateLeagues = null
+        }
+        if (merged.stateLeagues) {
+          for (const league of Object.values(merged.stateLeagues)) {
+            if (!league) continue
+            if (!(league as import('@/types/stateLeague').StateLeague).branding) {
+              ;(league as import('@/types/stateLeague').StateLeague).branding = {
+                logoText: league.name,
+                primaryColor: '#1f2937',
+                secondaryColor: '#e5e7eb',
+              }
+            }
+            if (!(league as import('@/types/stateLeague').StateLeague).divisions) {
+              ;(league as import('@/types/stateLeague').StateLeague).divisions = [
+                { id: 'overall', name: 'Overall', clubIds: league.clubs.map((c) => c.id) },
+              ]
+            }
+            if (!(league as import('@/types/stateLeague').StateLeague).ladderRules) {
+              ;(league as import('@/types/stateLeague').StateLeague).ladderRules = {
+                pointsForWin: 4,
+                pointsForDraw: 2,
+                pointsForLoss: 0,
+                primarySort: 'points',
+                tieBreakers: ['percentage', 'wins', 'pointsFor', 'clubId'],
+              }
+            }
+            if (!(league as import('@/types/stateLeague').StateLeague).fixtureRules) {
+              ;(league as import('@/types/stateLeague').StateLeague).fixtureRules = {
+                rounds: league.season.rounds.length > 0 ? league.season.rounds.length : 18,
+                homeAwayBalance: true,
+              }
+            }
+            if (!(league as import('@/types/stateLeague').StateLeague).finalsRules) {
+              ;(league as import('@/types/stateLeague').StateLeague).finalsRules = {
+                format: 'top-8',
+                qualifyingTeams: Math.min(8, Math.max(2, league.clubs.length)),
+              }
+            }
+            if (!(league as import('@/types/stateLeague').StateLeague).history) {
+              ;(league as import('@/types/stateLeague').StateLeague).history = []
+            }
+          }
         }
         if ((merged as Record<string, unknown>).multiTierState === undefined) {
           ;(merged as Record<string, unknown>).multiTierState = null
@@ -5979,6 +7665,9 @@ export const useGameStore = create<GameStore>()(
         if ((merged as Record<string, unknown>).tradeInbox === undefined) {
           (merged as Record<string, unknown>).tradeInbox = []
         }
+        if ((merged as Record<string, unknown>).emailLog === undefined) {
+          (merged as Record<string, unknown>).emailLog = []
+        }
         if ((merged as Record<string, unknown>).tradeBlock === undefined) {
           (merged as Record<string, unknown>).tradeBlock = initTradeBlockState()
         }
@@ -5987,6 +7676,64 @@ export const useGameStore = create<GameStore>()(
         }
         if ((merged as Record<string, unknown>).weeklyGameplans === undefined) {
           (merged as Record<string, unknown>).weeklyGameplans = {}
+        }
+        if ((merged as Record<string, unknown>).savedLineups === undefined) {
+          (merged as Record<string, unknown>).savedLineups = []
+        }
+        const savedLineupsObj = (merged as Record<string, unknown>).savedLineups
+        if (Array.isArray(savedLineupsObj)) {
+          ;(merged as Record<string, unknown>).savedLineups = savedLineupsObj.map((entryRaw, idx) => {
+            const entry = (entryRaw as Record<string, unknown>) ?? {}
+            const weeklyRaw = (entry.weeklyGameplanSnapshot as Record<string, unknown> | null) ?? null
+            const reservesRaw = (entry.reservesSnapshot as Record<string, unknown> | null) ?? null
+            return {
+              id: String(entry.id ?? `lineup-save-${idx}`),
+              name: String(entry.name ?? `Lineup ${idx + 1}`),
+              clubId: String(entry.clubId ?? merged.playerClubId ?? ''),
+              savedAt: String(entry.savedAt ?? new Date().toISOString()),
+              seasonYear: Number(entry.seasonYear ?? merged.currentYear ?? 2026),
+              round: Number(entry.round ?? merged.currentRound ?? 0),
+              opponentClubId: entry.opponentClubId ? String(entry.opponentClubId) : null,
+              matchRules: {
+                interchangePlayers: Number((entry.matchRules as Record<string, unknown> | undefined)?.interchangePlayers ?? merged.settings?.matchRules?.interchangePlayers ?? 5),
+                enableSubstitutes: Boolean((entry.matchRules as Record<string, unknown> | undefined)?.enableSubstitutes ?? merged.settings?.matchRules?.enableSubstitutes ?? false),
+                quartersPerMatch: Number((entry.matchRules as Record<string, unknown> | undefined)?.quartersPerMatch ?? merged.settings?.matchRules?.quartersPerMatch ?? 4),
+              },
+              lineup: { ...((entry.lineup as Record<string, string> | undefined) ?? {}) },
+              benchPlayerIds: Array.isArray(entry.benchPlayerIds) ? (entry.benchPlayerIds as string[]) : [],
+              substitutePlayerId: entry.substitutePlayerId ? String(entry.substitutePlayerId) : null,
+              weeklyGameplanSnapshot: weeklyRaw
+                ? {
+                    overrides: { ...((weeklyRaw.overrides as Record<string, unknown> | undefined) ?? {}) } as Partial<ClubGameplan>,
+                    matchupTactics: {
+                      hardTags: Array.isArray((weeklyRaw.matchupTactics as Record<string, unknown> | undefined)?.hardTags)
+                        ? [ ...((weeklyRaw.matchupTactics as Record<string, unknown>).hardTags as WeeklyMatchupTactics['hardTags']) ]
+                        : [],
+                      physicalAttention: Array.isArray((weeklyRaw.matchupTactics as Record<string, unknown> | undefined)?.physicalAttention)
+                        ? [ ...((weeklyRaw.matchupTactics as Record<string, unknown>).physicalAttention as WeeklyMatchupTactics['physicalAttention']) ]
+                        : [],
+                      roleAssignments: Array.isArray((weeklyRaw.matchupTactics as Record<string, unknown> | undefined)?.roleAssignments)
+                        ? [ ...((weeklyRaw.matchupTactics as Record<string, unknown>).roleAssignments as WeeklyMatchupTactics['roleAssignments']) ]
+                        : [],
+                    },
+                    opponentClubId: weeklyRaw.opponentClubId ? String(weeklyRaw.opponentClubId) : null,
+                  }
+                : null,
+              reservesSnapshot: reservesRaw
+                ? {
+                    managedLineupPlayerIds: Array.isArray(reservesRaw.managedLineupPlayerIds)
+                      ? (reservesRaw.managedLineupPlayerIds as string[])
+                      : [],
+                    managedLineupSlotAssignments: {
+                      ...((reservesRaw.managedLineupSlotAssignments as Record<string, string> | undefined) ?? {}),
+                    },
+                    playerAvailabilityAssignments: {
+                      ...((reservesRaw.playerAvailabilityAssignments as Record<string, 'play' | 'rest'> | undefined) ?? {}),
+                    },
+                  }
+                : null,
+            }
+          })
         }
         if ((merged as Record<string, unknown>).powerRankings === undefined) {
           (merged as Record<string, unknown>).powerRankings = []
@@ -5998,11 +7745,21 @@ export const useGameStore = create<GameStore>()(
             promotionWatchlist: [],
             delegationEnabled: true,
             managedLineupPlayerIds: [],
+            managedLineupSlotAssignments: {},
+            playerAvailabilityAssignments: {},
+            lastSelectedLineupPlayerIds: [],
+            leadership: {
+              captainId: null,
+              viceCaptainId: null,
+              leadershipGroupIds: [],
+            },
             tactics: {
               tempo: 'balanced',
               aggression: 'balanced',
               youthFocus: true,
             },
+            stateLeagueContractDelegationEnabled: true,
+            stateLeagueContractTargetCount: DEFAULT_STATE_LEAGUE_CONTRACT_TARGET,
           }
         }
         const reservesObj = (merged as Record<string, unknown>).reserves as Record<string, unknown> | undefined
@@ -6012,12 +7769,34 @@ export const useGameStore = create<GameStore>()(
           if (!('promotionWatchlist' in reservesObj)) reservesObj.promotionWatchlist = []
           if (!('delegationEnabled' in reservesObj)) reservesObj.delegationEnabled = true
           if (!('managedLineupPlayerIds' in reservesObj)) reservesObj.managedLineupPlayerIds = []
+          if (!('managedLineupSlotAssignments' in reservesObj)) reservesObj.managedLineupSlotAssignments = {}
+          if (!('playerAvailabilityAssignments' in reservesObj)) reservesObj.playerAvailabilityAssignments = {}
+          if (!('lastSelectedLineupPlayerIds' in reservesObj)) reservesObj.lastSelectedLineupPlayerIds = []
+          if (!('leadership' in reservesObj)) {
+            reservesObj.leadership = {
+              captainId: null,
+              viceCaptainId: null,
+              leadershipGroupIds: [],
+            }
+          }
           if (!('tactics' in reservesObj)) {
             reservesObj.tactics = {
               tempo: 'balanced',
               aggression: 'balanced',
               youthFocus: true,
             }
+          }
+          if (!('stateLeagueContractDelegationEnabled' in reservesObj)) {
+            reservesObj.stateLeagueContractDelegationEnabled = true
+          }
+          if (!('stateLeagueContractTargetCount' in reservesObj)) {
+            reservesObj.stateLeagueContractTargetCount = DEFAULT_STATE_LEAGUE_CONTRACT_TARGET
+          }
+          const leadershipObj = reservesObj.leadership as Record<string, unknown> | undefined
+          if (leadershipObj) {
+            if (!('captainId' in leadershipObj)) leadershipObj.captainId = null
+            if (!('viceCaptainId' in leadershipObj)) leadershipObj.viceCaptainId = null
+            if (!('leadershipGroupIds' in leadershipObj)) leadershipObj.leadershipGroupIds = []
           }
           const tacticsObj = reservesObj.tactics as Record<string, unknown> | undefined
           if (tacticsObj) {
@@ -6043,6 +7822,110 @@ export const useGameStore = create<GameStore>()(
         if ((merged as Record<string, unknown>).simulation === undefined) {
           ;(merged as Record<string, unknown>).simulation = { ...DEFAULT_SIMULATION_STATUS }
         }
+        if ((merged as Record<string, unknown>).jumperManagement === undefined) {
+          ;(merged as Record<string, unknown>).jumperManagement = {
+            pending: false,
+            seasonYear: null,
+            lastCompletedYear: null,
+          }
+        }
+        if ((merged as Record<string, unknown>).signingInteractionPlayerIds === undefined) {
+          ;(merged as Record<string, unknown>).signingInteractionPlayerIds = []
+        }
+        if ((merged as Record<string, unknown>).signingWatchlistPlayerIds === undefined) {
+          ;(merged as Record<string, unknown>).signingWatchlistPlayerIds = []
+        }
+        if ((merged as Record<string, unknown>).signingShortlistPlayerIds === undefined) {
+          ;(merged as Record<string, unknown>).signingShortlistPlayerIds = []
+        }
+        if ((merged as Record<string, unknown>).shortlists === undefined) {
+          ;(merged as Record<string, unknown>).shortlists = []
+        }
+        const shortlistsRaw = (merged as Record<string, unknown>).shortlists
+        if (Array.isArray(shortlistsRaw)) {
+          ;(merged as Record<string, unknown>).shortlists = shortlistsRaw.map((rawItem, idx) => {
+            const raw = (rawItem as Record<string, unknown>) ?? {}
+            const createdAt = typeof raw.createdAt === 'string' ? raw.createdAt : new Date().toISOString()
+            const updatedAt = typeof raw.updatedAt === 'string' ? raw.updatedAt : createdAt
+            const entriesRaw = Array.isArray(raw.entries) ? raw.entries : []
+            return {
+              id: String(raw.id ?? `shortlist-${idx}`),
+              name: String(raw.name ?? `Shortlist ${idx + 1}`),
+              createdAt,
+              updatedAt,
+              entries: entriesRaw
+                .map((entryRaw) => {
+                  const entry = (entryRaw as Record<string, unknown>) ?? {}
+                  const targetType: ShortlistTargetType | null =
+                    entry.targetType === 'prospect' ? 'prospect'
+                    : entry.targetType === 'player' ? 'player'
+                    : null
+                  const targetId = typeof entry.targetId === 'string' ? entry.targetId : ''
+                  if (!targetType || !targetId) return null
+                  const priority: ShortlistPriority =
+                    entry.priority === 'low' || entry.priority === 'high' || entry.priority === 'critical'
+                      ? entry.priority
+                      : 'medium'
+                  return {
+                    targetType,
+                    targetId,
+                    note: typeof entry.note === 'string' ? entry.note : '',
+                    priority,
+                    addedAt: typeof entry.addedAt === 'string' ? entry.addedAt : createdAt,
+                    updatedAt: typeof entry.updatedAt === 'string' ? entry.updatedAt : updatedAt,
+                  }
+                })
+                .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)),
+            } satisfies Shortlist
+          })
+        } else {
+          ;(merged as Record<string, unknown>).shortlists = []
+        }
+        const mergedShortlists = (merged as Record<string, unknown>).shortlists as Shortlist[]
+        const legacyWatchlist = ensureShortlist(
+          merged as Pick<GameState, 'shortlists'>,
+          LEGACY_SIGNING_WATCHLIST_ID,
+          LEGACY_SIGNING_WATCHLIST_NAME,
+        )
+        const legacyShortlist = ensureShortlist(
+          merged as Pick<GameState, 'shortlists'>,
+          LEGACY_SIGNING_SHORTLIST_ID,
+          LEGACY_SIGNING_SHORTLIST_NAME,
+        )
+        const watchIds = Array.isArray((merged as Record<string, unknown>).signingWatchlistPlayerIds)
+          ? ((merged as Record<string, unknown>).signingWatchlistPlayerIds as string[])
+          : []
+        const shortIds = Array.isArray((merged as Record<string, unknown>).signingShortlistPlayerIds)
+          ? ((merged as Record<string, unknown>).signingShortlistPlayerIds as string[])
+          : []
+        const migrationNow = new Date().toISOString()
+        for (const playerId of watchIds) {
+          if (!playerId || findShortlistEntryIndex(legacyWatchlist, 'player', playerId) !== -1) continue
+          legacyWatchlist.entries.push({
+            targetType: 'player',
+            targetId: playerId,
+            note: '',
+            priority: 'medium',
+            addedAt: migrationNow,
+            updatedAt: migrationNow,
+          })
+        }
+        for (const playerId of shortIds) {
+          if (!playerId || findShortlistEntryIndex(legacyShortlist, 'player', playerId) !== -1) continue
+          legacyShortlist.entries.push({
+            targetType: 'player',
+            targetId: playerId,
+            note: '',
+            priority: 'medium',
+            addedAt: migrationNow,
+            updatedAt: migrationNow,
+          })
+        }
+        for (const list of mergedShortlists) {
+          list.updatedAt = list.updatedAt || migrationNow
+          list.createdAt = list.createdAt || list.updatedAt
+        }
+        syncLegacySigningArrays(merged as Pick<GameState, 'shortlists' | 'signingWatchlistPlayerIds' | 'signingShortlistPlayerIds'>)
         ;(merged as Record<string, unknown>).simulation = { ...DEFAULT_SIMULATION_STATUS }
 
         // Backfill specialEvents for old saves
@@ -6095,6 +7978,7 @@ export const useGameStore = create<GameStore>()(
             managerObj.currentClubId = merged.playerClubId
           }
         }
+        enforceSingleClubCareerInvariant(merged)
 
         // Backfill draft class profile for old saves
         if (merged.draft && !(merged.draft as { classProfile?: unknown }).classProfile) {
@@ -6227,7 +8111,56 @@ export const useGameStore = create<GameStore>()(
             if (!(player as { upskillPlans?: unknown }).upskillPlans) {
               player.upskillPlans = []
             }
+            if (!(player as { contractTier?: unknown }).contractTier) {
+              player.contractTier = 'afl-listed'
+            }
+            if ((player as { stateLeagueContract?: unknown }).stateLeagueContract === undefined) {
+              player.stateLeagueContract = null
+            }
+            if (!(player as { contractHistory?: unknown }).contractHistory) {
+              player.contractHistory = []
+            }
+            if (!(player as { jumperHistory?: unknown }).jumperHistory) {
+              player.jumperHistory = []
+            }
+            if (player.clubId && isValidJumperNumber(player.jerseyNumber)) {
+              upsertPlayerJumperHistory(player, merged.currentYear ?? 2026)
+            }
+            syncPlayerPositionRatings(player)
           }
+        }
+
+        if (merged.players && merged.clubs) {
+          normalizeAllClubJumperNumbers({
+            players: merged.players,
+            clubs: merged.clubs,
+            currentYear: merged.currentYear ?? 2026,
+          })
+        }
+
+        if (merged.history && merged.clubs && merged.players) {
+          const history = merged.history as import('@/types/history').GameHistory
+          const playedMatches = (merged.matchResults ?? []).filter((m): m is Match => Boolean(m?.result))
+          history.recordsBook = updateRecordsBookForMatches({
+            recordsBook: history.recordsBook,
+            matches: playedMatches,
+            clubs: merged.clubs,
+            currentYear: merged.currentYear ?? 2026,
+          })
+          history.recordsBook = refreshRecordsBookLeaderboards({
+            recordsBook: history.recordsBook,
+            players: merged.players,
+            clubs: merged.clubs,
+            currentYear: merged.currentYear ?? 2026,
+            history,
+          })
+        }
+
+        if (merged.newsLog) {
+          merged.newsLog = merged.newsLog.map((item) => applyMediaCoverage(item))
+        }
+        if (merged.emailLog) {
+          merged.emailLog = merged.emailLog.map((item) => applyMediaCoverage(item))
         }
 
         return merged as GameStore
@@ -6243,3 +8176,4 @@ function hashCode(str: string): number {
   }
   return hash >>> 0
 }
+

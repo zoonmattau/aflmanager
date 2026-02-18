@@ -5,6 +5,7 @@ import type { LeaguePreset } from '@/types/leaguePreset'
 import type { GameState } from '@/types/game'
 import type { CustomLeagueTemplate } from '@/types/customLeague'
 import { DEFAULT_GLOBAL_SETTINGS } from '@/types/globalSettings'
+import { DEFAULT_TABLE_VIEW_SETTINGS } from '@/types/tableView'
 import {
   getSaveIndex,
   saveGameToSlot,
@@ -68,7 +69,27 @@ export const useAppStore = create<AppStore>()((set, get) => ({
     // Load global settings
     const storedSettings = await getGlobalSettings()
     const globalSettings = storedSettings
-      ? { ...DEFAULT_GLOBAL_SETTINGS, ...storedSettings }
+      ? {
+        ...DEFAULT_GLOBAL_SETTINGS,
+        ...storedSettings,
+        tableViews: {
+          ...DEFAULT_TABLE_VIEW_SETTINGS,
+          ...(storedSettings.tableViews ?? {}),
+          tables: {
+            ...DEFAULT_TABLE_VIEW_SETTINGS.tables,
+            ...(storedSettings.tableViews?.tables ?? {}),
+          },
+          globalPresets: {
+            ...DEFAULT_TABLE_VIEW_SETTINGS.globalPresets,
+            ...(storedSettings.tableViews?.globalPresets ?? {}),
+          },
+        },
+        lineupAutofill: {
+          ...DEFAULT_GLOBAL_SETTINGS.lineupAutofill,
+          ...(storedSettings.lineupAutofill ?? {}),
+          customPresets: storedSettings.lineupAutofill?.customPresets ?? DEFAULT_GLOBAL_SETTINGS.lineupAutofill.customPresets,
+        },
+      }
       : { ...DEFAULT_GLOBAL_SETTINGS }
 
     // Load league presets

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -11,11 +11,16 @@ import { addDays, formatDate } from '@/engine/calendar/calendarEngine'
 import { selectBestLineup } from '@/engine/ai/lineupSelection'
 import { getLineupSlots } from '@/engine/core/constants'
 import { isPlayerSuspended } from '@/engine/players/availability'
+import { canBeSelectedForAfl } from '@/engine/players/contracts'
 import type {
   MatchupInstructionIntensity,
   MatchupRoleAssignmentType,
   WeeklyMatchupTactics,
 } from '@/types/game'
+import {
+  buildUpcomingMilestoneNotes,
+  formatUpcomingMilestoneLabel,
+} from '@/engine/narrative/upcomingMilestones'
 
 type MatchupOption =
   | {
@@ -75,6 +80,7 @@ function sanitizeLineup(
     const player = players[playerId]
     if (!player) continue
     if (player.clubId !== playerClubId) continue
+    if (!canBeSelectedForAfl(player)) continue
     if (player.injury || isPlayerSuspended(player) || player.fitness < 50) continue
     next[slot] = playerId
     seen.add(playerId)
@@ -84,6 +90,7 @@ function sanitizeLineup(
 
 export function MatchupPreviewPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const phase = useGameStore((s) => s.phase)
   const season = useGameStore((s) => s.season)
   const currentRound = useGameStore((s) => s.currentRound)
@@ -93,6 +100,7 @@ export function MatchupPreviewPage() {
   const players = useGameStore((s) => s.players)
   const ladder = useGameStore((s) => s.ladder)
   const selectedLineup = useGameStore((s) => s.selectedLineup)
+  const selectedSubstituteId = useGameStore((s) => s.selectedSubstituteId)
   const matchResults = useGameStore((s) => s.matchResults)
   const settings = useGameStore((s) => s.settings)
   const weeklyGameplans = useGameStore((s) => s.weeklyGameplans)
@@ -137,13 +145,15 @@ export function MatchupPreviewPage() {
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [newTaggerId, setNewTaggerId] = useState<string>('')
-  const [newTagTargetId, setNewTagTargetId] = useState<string>('')
+  const prefillTargetPlayerId = searchParams.get('targetPlayerId')
+
+  const [newTagTargetId, setNewTagTargetId] = useState<string>(() => prefillTargetPlayerId ?? '')
   const [newTagIntensity, setNewTagIntensity] = useState<MatchupInstructionIntensity>('standard')
   const [newEnforcerId, setNewEnforcerId] = useState<string>('')
-  const [newRoughTargetId, setNewRoughTargetId] = useState<string>('')
+  const [newRoughTargetId, setNewRoughTargetId] = useState<string>(() => prefillTargetPlayerId ?? '')
   const [newRoughIntensity, setNewRoughIntensity] = useState<MatchupInstructionIntensity>('standard')
   const [newRolePlayerId, setNewRolePlayerId] = useState<string>('')
-  const [newRoleTargetId, setNewRoleTargetId] = useState<string>(NO_TARGET)
+  const [newRoleTargetId, setNewRoleTargetId] = useState<string>(() => prefillTargetPlayerId ?? NO_TARGET)
   const [newRoleType, setNewRoleType] = useState<MatchupRoleAssignmentType>('run-with')
   const [newRoleIntensity, setNewRoleIntensity] = useState<MatchupInstructionIntensity>('standard')
 
@@ -153,22 +163,47 @@ export function MatchupPreviewPage() {
       const found = options.find((o) => o.key === selectedKey)
       if (found) return found
     }
+    if (prefillTargetPlayerId) {
+      const targetPlayer = players[prefillTargetPlayerId]
+      if (targetPlayer) {
+        const matchOption = options.find(
+          (o) => o.kind === 'match' && o.opponentId === targetPlayer.clubId,
+        )
+        if (matchOption) return matchOption
+      }
+    }
     return options[0]
-  }, [options, selectedKey])
+  }, [options, selectedKey, prefillTargetPlayerId, players])
 
   const userLineup = useMemo(() => {
-    const fallback = selectBestLineup(Object.values(players), playerClubId).lineup
+    const fallback = selectBestLineup(
+      Object.values(players),
+      playerClubId,
+      {
+        interchangePlayers: settings.matchRules.interchangePlayers,
+        club: clubs[playerClubId],
+      },
+    ).lineup
     return sanitizeLineup(selectedLineup ?? fallback, players, playerClubId, settings.matchRules.interchangePlayers)
-  }, [players, playerClubId, selectedLineup, settings.matchRules.interchangePlayers])
+  }, [players, playerClubId, selectedLineup, settings.matchRules.interchangePlayers, clubs])
   const userLineupPlayerIds = useMemo(
     () => Object.values(userLineup).filter((id): id is string => Boolean(id)),
     [userLineup],
   )
   const opponentLikelyLineupPlayerIds = useMemo(() => {
     if (!selected || selected.kind !== 'match') return [] as string[]
-    return Object.values(selectBestLineup(Object.values(players), selected.opponentId).lineup)
+    return Object.values(
+      selectBestLineup(
+        Object.values(players),
+        selected.opponentId,
+        {
+          interchangePlayers: settings.matchRules.interchangePlayers,
+          club: clubs[selected.opponentId],
+        },
+      ).lineup,
+    )
       .filter((id): id is string => Boolean(id))
-  }, [selected, players])
+  }, [selected, players, settings.matchRules.interchangePlayers, clubs])
   const userLineupPlayers = useMemo(
     () => userLineupPlayerIds.map((id) => players[id]).filter(Boolean),
     [userLineupPlayerIds, players],
@@ -177,6 +212,24 @@ export function MatchupPreviewPage() {
     () => opponentLikelyLineupPlayerIds.map((id) => players[id]).filter(Boolean),
     [opponentLikelyLineupPlayerIds, players],
   )
+
+  const userMilestoneNotes = useMemo(
+    () => buildUpcomingMilestoneNotes(players, userLineupPlayerIds).slice(0, 4),
+    [players, userLineupPlayerIds],
+  )
+  const opponentMilestoneNotes = useMemo(
+    () => buildUpcomingMilestoneNotes(players, opponentLikelyLineupPlayerIds).slice(0, 4),
+    [players, opponentLikelyLineupPlayerIds],
+  )
+  const milestoneByPlayerId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const note of [...userMilestoneNotes, ...opponentMilestoneNotes]) {
+      if (!map.has(note.playerId)) {
+        map.set(note.playerId, formatUpcomingMilestoneLabel(note))
+      }
+    }
+    return map
+  }, [userMilestoneNotes, opponentMilestoneNotes])
   const canEditSelectedMatchup = selected?.kind === 'match' && selected.roundIndex === currentRound
   const activeTactics = useMemo<WeeklyMatchupTactics>(() => {
     if (!selected || selected.kind !== 'match' || selected.roundIndex !== currentRound) {
@@ -287,6 +340,35 @@ export function MatchupPreviewPage() {
                         : 'Opponent trend: mixed form, so press early and build scoreboard pressure.'}
                     </p>
                   </div>
+                  {(userMilestoneNotes.length > 0 || opponentMilestoneNotes.length > 0) && (
+                    <div className="rounded border border-cyan-500/30 bg-cyan-500/5 p-2 space-y-2">
+                      <p className="text-xs font-semibold text-cyan-700">Milestone Watch</p>
+                      <div className="grid gap-2 md:grid-cols-2 text-xs">
+                        <div className="space-y-1">
+                          <p className="font-medium">Your likely lineup</p>
+                          {userMilestoneNotes.map((note) => (
+                            <p key={note.id} className="text-muted-foreground">
+                              {note.playerName}: {formatUpcomingMilestoneLabel(note)}
+                            </p>
+                          ))}
+                          {userMilestoneNotes.length === 0 && (
+                            <p className="text-muted-foreground">No immediate milestone chases.</p>
+                          )}
+                        </div>
+                        <div className="space-y-1">
+                          <p className="font-medium">Opponent likely lineup</p>
+                          {opponentMilestoneNotes.map((note) => (
+                            <p key={note.id} className="text-muted-foreground">
+                              {note.playerName}: {formatUpcomingMilestoneLabel(note)}
+                            </p>
+                          ))}
+                          {opponentMilestoneNotes.length === 0 && (
+                            <p className="text-muted-foreground">No immediate milestone chases.</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   {!canEditSelectedMatchup ? (
                     <div className="rounded border p-2 text-xs text-muted-foreground">
                       Tactical matchup instructions can be set for the current round only.
@@ -307,7 +389,9 @@ export function MatchupPreviewPage() {
                             <SelectTrigger><SelectValue placeholder="Select player" /></SelectTrigger>
                             <SelectContent>
                               {userLineupPlayers.map((p) => (
-                                <SelectItem key={p.id} value={p.id}>{p.firstName} {p.lastName}</SelectItem>
+                                <SelectItem key={p.id} value={p.id}>
+                                  {p.firstName} {p.lastName}{milestoneByPlayerId.has(p.id) ? ` - ${milestoneByPlayerId.get(p.id)}` : ''}
+                                </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
@@ -318,7 +402,9 @@ export function MatchupPreviewPage() {
                             <SelectTrigger><SelectValue placeholder="Select opponent" /></SelectTrigger>
                             <SelectContent>
                               {opponentLikelyPlayers.map((p) => (
-                                <SelectItem key={p.id} value={p.id}>{p.firstName} {p.lastName}</SelectItem>
+                                <SelectItem key={p.id} value={p.id}>
+                                  {p.firstName} {p.lastName}{milestoneByPlayerId.has(p.id) ? ` - ${milestoneByPlayerId.get(p.id)}` : ''}
+                                </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
@@ -361,7 +447,9 @@ export function MatchupPreviewPage() {
                             <SelectTrigger><SelectValue placeholder="Select player" /></SelectTrigger>
                             <SelectContent>
                               {userLineupPlayers.map((p) => (
-                                <SelectItem key={p.id} value={p.id}>{p.firstName} {p.lastName}</SelectItem>
+                                <SelectItem key={p.id} value={p.id}>
+                                  {p.firstName} {p.lastName}{milestoneByPlayerId.has(p.id) ? ` - ${milestoneByPlayerId.get(p.id)}` : ''}
+                                </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
@@ -372,7 +460,9 @@ export function MatchupPreviewPage() {
                             <SelectTrigger><SelectValue placeholder="Select opponent" /></SelectTrigger>
                             <SelectContent>
                               {opponentLikelyPlayers.map((p) => (
-                                <SelectItem key={p.id} value={p.id}>{p.firstName} {p.lastName}</SelectItem>
+                                <SelectItem key={p.id} value={p.id}>
+                                  {p.firstName} {p.lastName}{milestoneByPlayerId.has(p.id) ? ` - ${milestoneByPlayerId.get(p.id)}` : ''}
+                                </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
@@ -415,7 +505,9 @@ export function MatchupPreviewPage() {
                             <SelectTrigger><SelectValue placeholder="Select player" /></SelectTrigger>
                             <SelectContent>
                               {userLineupPlayers.map((p) => (
-                                <SelectItem key={p.id} value={p.id}>{p.firstName} {p.lastName}</SelectItem>
+                                <SelectItem key={p.id} value={p.id}>
+                                  {p.firstName} {p.lastName}{milestoneByPlayerId.has(p.id) ? ` - ${milestoneByPlayerId.get(p.id)}` : ''}
+                                </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
@@ -438,7 +530,9 @@ export function MatchupPreviewPage() {
                             <SelectContent>
                               <SelectItem value={NO_TARGET}>No target</SelectItem>
                               {opponentLikelyPlayers.map((p) => (
-                                <SelectItem key={p.id} value={p.id}>{p.firstName} {p.lastName}</SelectItem>
+                                <SelectItem key={p.id} value={p.id}>
+                                  {p.firstName} {p.lastName}{milestoneByPlayerId.has(p.id) ? ` - ${milestoneByPlayerId.get(p.id)}` : ''}
+                                </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
@@ -554,7 +648,10 @@ export function MatchupPreviewPage() {
                 lineup={userLineup}
                 players={players}
                 clubs={clubs}
+                userClubId={playerClubId}
                 interchangeCount={settings.matchRules.interchangePlayers}
+                substitutesEnabled={settings.matchRules.enableSubstitutes}
+                userSubstituteId={selectedSubstituteId}
                 oppositionClubId={selected.opponentId}
                 showOpposition={true}
                 onAssign={() => {}}
@@ -568,3 +665,4 @@ export function MatchupPreviewPage() {
     </div>
   )
 }
+

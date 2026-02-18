@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import type { Player, LineupSlot } from '@/types/player'
 import type { Club } from '@/types/club'
 import { getLineupSlots } from '@/engine/core/constants'
+import { getOverallRating } from '@/engine/player/playerRating'
 import { FIELD_SLOTS, OPPOSITE_SLOT } from './fieldConstants'
 import { FieldSvg } from './FieldSvg'
 
@@ -16,6 +17,9 @@ export interface MatchupFieldPreviewProps {
   userClub: Club
   opponentClub: Club
   interchangeCount: number
+  substitutesEnabled?: boolean
+  userSubstituteId?: string | null
+  opponentSubstituteId?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +104,9 @@ export function MatchupFieldPreview({
   userClub,
   opponentClub,
   interchangeCount,
+  substitutesEnabled = false,
+  userSubstituteId = null,
+  opponentSubstituteId = null,
 }: MatchupFieldPreviewProps) {
   const userColor = userClub?.colors.primary ?? '#22c55e'
   const oppColor = opponentClub?.colors.primary ?? '#ef4444'
@@ -116,8 +123,7 @@ export function MatchupFieldPreview({
         .map((slot) => {
           const pid = userLineup[slot]
           return pid ? players[pid] ?? null : null
-        })
-        .filter(Boolean) as Player[],
+        }),
     [interchangeSlots, userLineup, players],
   )
 
@@ -128,10 +134,35 @@ export function MatchupFieldPreview({
         .map((slot) => {
           const pid = opponentLineup[slot]
           return pid ? players[pid] ?? null : null
-        })
-        .filter(Boolean) as Player[],
+        }),
     [interchangeSlots, opponentLineup, players],
   )
+
+  const userSubstitute = useMemo(() => {
+    if (!substitutesEnabled) return null
+    const assigned = new Set(Object.values(userLineup))
+    if (userSubstituteId) {
+      const explicit = players[userSubstituteId]
+      if (explicit && !assigned.has(explicit.id)) return explicit
+    }
+    return Object.values(players)
+      .filter((p) => p.clubId === userClub.id && !p.injury && p.fitness >= 50)
+      .filter((p) => !assigned.has(p.id))
+      .sort((a, b) => getOverallRating(b) - getOverallRating(a))[0] ?? null
+  }, [substitutesEnabled, userSubstituteId, players, userClub.id, userLineup])
+
+  const opponentSubstitute = useMemo(() => {
+    if (!substitutesEnabled) return null
+    const assigned = new Set(Object.values(opponentLineup))
+    if (opponentSubstituteId) {
+      const explicit = players[opponentSubstituteId]
+      if (explicit && !assigned.has(explicit.id)) return explicit
+    }
+    return Object.values(players)
+      .filter((p) => p.clubId === opponentClub.id && !p.injury && p.fitness >= 50)
+      .filter((p) => !assigned.has(p.id))
+      .sort((a, b) => getOverallRating(b) - getOverallRating(a))[0] ?? null
+  }, [substitutesEnabled, opponentSubstituteId, players, opponentClub.id, opponentLineup])
 
   return (
     <div className="w-full space-y-2">
@@ -198,7 +229,7 @@ export function MatchupFieldPreview({
       {/* Interchange bench */}
       <div
         className="relative mx-auto w-full max-w-[760px] rounded-lg border border-zinc-700 bg-zinc-800/85 px-3 py-3"
-        style={{ minHeight: 70 }}
+        style={{ minHeight: substitutesEnabled ? 100 : 70 }}
       >
         <span className="absolute -top-2 left-3 bg-zinc-800 px-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
           Interchange
@@ -207,8 +238,8 @@ export function MatchupFieldPreview({
           {/* User bench */}
           <div className="flex flex-1 flex-wrap gap-1 pt-1">
             {userBench.length > 0 ? (
-              userBench.map((p) => (
-                <CompactMagnet key={p.id} player={p} color={userColor} side="left" />
+              userBench.map((p, idx) => (
+                <CompactMagnet key={`user-bench-${idx}-${p?.id ?? 'empty'}`} player={p} color={userColor} side="left" />
               ))
             ) : (
               <span className="text-[9px] text-zinc-500">No interchange</span>
@@ -219,14 +250,28 @@ export function MatchupFieldPreview({
           {/* Opponent bench */}
           <div className="flex flex-1 flex-wrap justify-end gap-1 pt-1">
             {oppBench.length > 0 ? (
-              oppBench.map((p) => (
-                <CompactMagnet key={p.id} player={p} color={oppColor} side="right" />
+              oppBench.map((p, idx) => (
+                <CompactMagnet key={`opp-bench-${idx}-${p?.id ?? 'empty'}`} player={p} color={oppColor} side="right" />
               ))
             ) : (
               <span className="text-[9px] text-zinc-500">No interchange</span>
             )}
           </div>
         </div>
+        {substitutesEnabled && (
+          <div className="mt-3 grid grid-cols-2 gap-2 border-t border-zinc-700/70 pt-2">
+            <div className="space-y-1">
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-zinc-500">Sub</p>
+              <CompactMagnet player={userSubstitute} color={userColor} side="left" />
+            </div>
+            <div className="space-y-1 text-right">
+              <p className="text-[9px] font-semibold uppercase tracking-wide text-zinc-500">Sub</p>
+              <div className="flex justify-end">
+                <CompactMagnet player={opponentSubstitute} color={oppColor} side="right" />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

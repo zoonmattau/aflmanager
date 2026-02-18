@@ -313,13 +313,34 @@ export function buildSeasonAwardRecord(
   }
 }
 
-const MILESTONE_THRESHOLDS: Array<{ type: MilestoneType; stat: keyof Player['careerStats']; thresholds: number[] }> = [
-  { type: 'games-played', stat: 'gamesPlayed', thresholds: [50, 100, 150, 200, 250, 300, 350] },
-  { type: 'career-goals', stat: 'goals', thresholds: [50, 100, 200, 300, 400, 500, 700, 900, 1000] },
+type MilestoneTrackedStat = 'gamesPlayed' | 'goals' | 'disposals' | 'marks' | 'tackles'
+
+const MILESTONE_THRESHOLDS: Array<{ type: MilestoneType; stat: MilestoneTrackedStat; thresholds: number[] }> = [
+  { type: 'games-played', stat: 'gamesPlayed', thresholds: [] },
+  { type: 'career-goals', stat: 'goals', thresholds: [] },
   { type: 'career-disposals', stat: 'disposals', thresholds: [500, 1000, 2000, 3000, 4000, 5000, 7000] },
   { type: 'career-marks', stat: 'marks', thresholds: [200, 500, 1000, 1500, 2000] },
   { type: 'career-tackles', stat: 'tackles', thresholds: [100, 250, 500, 750, 1000] },
 ]
+
+function buildCrossedThresholds(
+  previous: number,
+  current: number,
+  thresholds: number[],
+  step?: number,
+): number[] {
+  if (current <= previous) return []
+  if (!step) {
+    return thresholds.filter((threshold) => previous < threshold && current >= threshold)
+  }
+  const crossed: number[] = []
+  let threshold = Math.floor(previous / step) * step + step
+  while (threshold <= current) {
+    crossed.push(threshold)
+    threshold += step
+  }
+  return crossed
+}
 
 export function detectCareerMilestones(
   beforeStats: Record<string, Pick<Player['careerStats'], 'gamesPlayed' | 'goals' | 'disposals' | 'marks' | 'tackles'>>,
@@ -336,7 +357,12 @@ export function detectCareerMilestones(
     for (const definition of MILESTONE_THRESHOLDS) {
       const previous = prior[definition.stat]
       const current = player.careerStats[definition.stat]
-      for (const threshold of definition.thresholds) {
+      const crossedThresholds =
+        definition.type === 'games-played' || definition.type === 'career-goals'
+          ? buildCrossedThresholds(previous, current, [], 50)
+          : buildCrossedThresholds(previous, current, definition.thresholds)
+
+      for (const threshold of crossedThresholds) {
         if (previous < threshold && current >= threshold) {
           milestones.push({
             id: `milestone-${player.id}-${definition.type}-${threshold}-${year}-${round}`,

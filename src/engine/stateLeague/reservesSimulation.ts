@@ -3,6 +3,7 @@ import type { Player, PlayerAttributes } from '@/types/player'
 import type { NewsItem, ReservesPlayerPerformance, ReservesSystemState } from '@/types/game'
 import { SeededRNG } from '@/engine/core/rng'
 import { isPlayerSuspended } from '@/engine/players/availability'
+import { hasActiveStateLeagueContract, isAflListedPlayer, isStateLeagueContracted } from '@/engine/players/contracts'
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
@@ -137,12 +138,14 @@ export function simulateReservesRound(params: {
   const seasonStatsByPlayer: Record<string, ReservesSystemState['seasonStatsByPlayer'][string]> = {
     ...params.reserves.seasonStatsByPlayer,
   }
+  const availabilityAssignments = { ...params.reserves.playerAvailabilityAssignments }
 
   const availableByClub = new Map<string, Player[]>()
   for (const player of Object.values(players)) {
     if (!player.clubId || !clubs[player.clubId]) continue
     if (playedPlayerIds.has(player.id)) continue
     if (player.injury || isPlayerSuspended(player)) continue
+    if (isStateLeagueContracted(player) && !hasActiveStateLeagueContract(player)) continue
     if (!availableByClub.has(player.clubId)) availableByClub.set(player.clubId, [])
     availableByClub.get(player.clubId)!.push(player)
   }
@@ -160,11 +163,32 @@ export function simulateReservesRound(params: {
 
   const userAvailable = availableByClub.get(userClubId) ?? []
   const userAvailableIds = new Set(userAvailable.map((p) => p.id))
+  const userPlayable = userAvailable.filter((p) => availabilityAssignments[p.id] !== 'rest')
+  const explicitPlay = userAvailable.filter((p) => availabilityAssignments[p.id] === 'play')
+  const explicitPlaySet = new Set(explicitPlay.map((p) => p.id))
+  const forcedSlotIds = Object.values(params.reserves.managedLineupSlotAssignments ?? {})
+    .filter((id): id is string => Boolean(id))
+    .filter((id) => userAvailableIds.has(id) && availabilityAssignments[id] !== 'rest' && !explicitPlaySet.has(id))
+  const forcedSlotSet = new Set(forcedSlotIds)
+  const userDefaultPlayable = userPlayable.filter((p) => !explicitPlaySet.has(p.id))
   const userManagedValid = params.reserves.managedLineupPlayerIds.filter((id) => userAvailableIds.has(id))
+  const explicitPlayIds = autoPick(explicitPlay, params.reserves.tactics.youthFocus).slice(0, 23)
+  const explicitPlayIdSet = new Set(explicitPlayIds)
+  const userDefaultAuto = autoPick(userDefaultPlayable, params.reserves.tactics.youthFocus)
+  const userManagedPlayable = userManagedValid
+    .filter((id) => availabilityAssignments[id] !== 'rest' && !explicitPlayIdSet.has(id) && !forcedSlotSet.has(id))
   const userPlayingIds = params.reserves.delegationEnabled
-    ? autoPick(userAvailable, params.reserves.tactics.youthFocus)
-    : [...userManagedValid, ...autoPick(userAvailable, params.reserves.tactics.youthFocus).filter((id) => !userManagedValid.includes(id))]
-        .slice(0, 23)
+    ? [
+      ...explicitPlayIds,
+      ...forcedSlotIds.filter((id) => !explicitPlayIdSet.has(id)),
+      ...userDefaultAuto.filter((id) => !explicitPlayIdSet.has(id) && !forcedSlotSet.has(id)),
+    ].slice(0, 23)
+    : [
+      ...explicitPlayIds,
+      ...forcedSlotIds.filter((id) => !explicitPlayIdSet.has(id)),
+      ...userManagedPlayable.filter((id) => !explicitPlayIdSet.has(id)),
+      ...userDefaultAuto.filter((id) => !explicitPlayIdSet.has(id) && !forcedSlotSet.has(id) && !userManagedPlayable.includes(id)),
+    ].slice(0, 23)
   const userPlayingSet = new Set(userPlayingIds)
 
   const performances: ReservesPlayerPerformance[] = []
@@ -222,11 +246,17 @@ export function simulateReservesRound(params: {
   for (const [clubId, clubPerformances] of performancesByClub) {
     if (clubId === userClubId) continue
     const reservePromote = clubPerformances
-      .filter((p) => players[p.playerId]?.listStatus === 'reserves')
+      .filter((p) => {
+        const player = players[p.playerId]
+        return Boolean(player && player.listStatus === 'reserves' && isAflListedPlayer(player))
+      })
       .sort((a, b) => b.rating - a.rating)[0]
     if (!reservePromote || reservePromote.rating < 80) continue
     const demoteCandidate = clubPerformances
-      .filter((p) => players[p.playerId]?.listStatus !== 'reserves')
+      .filter((p) => {
+        const player = players[p.playerId]
+        return Boolean(player && player.listStatus !== 'reserves' && isAflListedPlayer(player))
+      })
       .sort((a, b) => a.rating - b.rating)[0]
     const promotedPlayer = players[reservePromote.playerId]
     if (!promotedPlayer) continue
@@ -268,7 +298,22 @@ export function simulateReservesRound(params: {
       promotionWatchlist,
       delegationEnabled: params.reserves.delegationEnabled,
       managedLineupPlayerIds: params.reserves.managedLineupPlayerIds.filter((id) => userAvailableIds.has(id)),
+      managedLineupSlotAssignments: Object.fromEntries(
+        Object.entries(params.reserves.managedLineupSlotAssignments ?? {}).filter(([, id]) =>
+          Boolean(id) && userAvailableIds.has(id as string),
+        ),
+      ),
+      playerAvailabilityAssignments: Object.fromEntries(
+        Object.entries(availabilityAssignments).filter(([id]) => {
+          const player = players[id]
+          return Boolean(player && player.clubId === userClubId)
+        }),
+      ),
+      lastSelectedLineupPlayerIds: [...userPlayingIds],
+      leadership: { ...params.reserves.leadership },
       tactics: params.reserves.tactics,
+      stateLeagueContractDelegationEnabled: params.reserves.stateLeagueContractDelegationEnabled,
+      stateLeagueContractTargetCount: params.reserves.stateLeagueContractTargetCount,
     },
     news,
   }

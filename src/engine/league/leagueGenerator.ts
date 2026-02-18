@@ -53,14 +53,14 @@ function generateClubName(rng: SeededRNG, usedCities: Set<string>, usedMascots: 
   // Pick unused city
   const availableCities = CITIES.filter((c) => !usedCities.has(c))
   city = availableCities.length > 0
-    ? availableCities[rng.intBetween(0, availableCities.length - 1)]
-    : CITIES[rng.intBetween(0, CITIES.length - 1)]
+    ? availableCities[rng.nextInt(0, availableCities.length - 1)]
+    : CITIES[rng.nextInt(0, CITIES.length - 1)]
 
   // Pick unused mascot
   const availableMascots = MASCOTS.filter((m) => !usedMascots.has(m))
   mascot = availableMascots.length > 0
-    ? availableMascots[rng.intBetween(0, availableMascots.length - 1)]
-    : MASCOTS[rng.intBetween(0, MASCOTS.length - 1)]
+    ? availableMascots[rng.nextInt(0, availableMascots.length - 1)]
+    : MASCOTS[rng.nextInt(0, MASCOTS.length - 1)]
 
   return { city, mascot }
 }
@@ -68,22 +68,22 @@ function generateClubName(rng: SeededRNG, usedCities: Set<string>, usedMascots: 
 function generateColors(rng: SeededRNG, usedPrimaries: Set<string>): ClubColors {
   const availablePrimaries = PRIMARY_COLORS.filter((c) => !usedPrimaries.has(c))
   const primary = availablePrimaries.length > 0
-    ? availablePrimaries[rng.intBetween(0, availablePrimaries.length - 1)]
-    : PRIMARY_COLORS[rng.intBetween(0, PRIMARY_COLORS.length - 1)]
+    ? availablePrimaries[rng.nextInt(0, availablePrimaries.length - 1)]
+    : PRIMARY_COLORS[rng.nextInt(0, PRIMARY_COLORS.length - 1)]
 
-  const secondary = SECONDARY_COLORS[rng.intBetween(0, SECONDARY_COLORS.length - 1)]
+  const secondary = SECONDARY_COLORS[rng.nextInt(0, SECONDARY_COLORS.length - 1)]
 
   return { primary, secondary }
 }
 
 function generateFacilities(rng: SeededRNG): ClubFacilities {
   return {
-    trainingGround: rng.intBetween(1, 4),
-    gym: rng.intBetween(1, 4),
-    medicalCentre: rng.intBetween(1, 4),
-    recoveryPool: rng.intBetween(1, 3),
-    analysisSuite: rng.intBetween(1, 3),
-    youthAcademy: rng.intBetween(1, 3),
+    trainingGround: rng.nextInt(1, 4),
+    gym: rng.nextInt(1, 4),
+    medicalCentre: rng.nextInt(1, 4),
+    recoveryPool: rng.nextInt(1, 3),
+    analysisSuite: rng.nextInt(1, 3),
+    youthAcademy: rng.nextInt(1, 3),
   }
 }
 
@@ -91,15 +91,15 @@ function generateFinances(rng: SeededRNG): ClubFinances {
   const salaryCap = 15_500_000
   return {
     salaryCap,
-    currentSpend: rng.intBetween(10_000_000, 15_000_000),
-    revenue: rng.intBetween(14_000_000, 20_000_000),
-    expenses: rng.intBetween(12_000_000, 18_000_000),
-    balance: rng.intBetween(2_000_000, 10_000_000),
+    currentSpend: rng.nextInt(10_000_000, 15_000_000),
+    revenue: rng.nextInt(14_000_000, 20_000_000),
+    expenses: rng.nextInt(12_000_000, 18_000_000),
+    balance: rng.nextInt(2_000_000, 10_000_000),
   }
 }
 
 function generateGameplan(rng: SeededRNG): ClubGameplan {
-  const pick = <T>(arr: T[]): T => arr[rng.intBetween(0, arr.length - 1)]
+  const pick = <T>(arr: T[]): T => arr[rng.nextInt(0, arr.length - 1)]
   return {
     offensiveStyle: pick(['attacking', 'balanced', 'defensive'] as const),
     tempo: pick(['fast', 'medium', 'slow'] as const),
@@ -137,7 +137,7 @@ export function generateFictionalLeague(teamCount: number, seed: number): Club[]
     const colors = generateColors(rng, usedPrimaries)
     usedPrimaries.add(colors.primary)
 
-    const groundSuffix = GROUNDS[rng.intBetween(0, GROUNDS.length - 1)]
+    const groundSuffix = GROUNDS[rng.nextInt(0, GROUNDS.length - 1)]
     const homeGround = `${city} ${groundSuffix}`
 
     const id = `fictional-${city.toLowerCase().replace(/\s+/g, '-')}`
@@ -150,6 +150,9 @@ export function generateFictionalLeague(teamCount: number, seed: number): Club[]
       abbreviation,
       mascot,
       homeGround,
+      established: rng.nextInt(1850, 2024),
+      premierships: rng.nextInt(0, 16),
+      tier: (['large', 'medium', 'small'] as const)[rng.nextInt(0, 2)],
       colors,
       facilities: generateFacilities(rng),
       finances: generateFinances(rng),
@@ -159,11 +162,17 @@ export function generateFictionalLeague(teamCount: number, seed: number): Club[]
         { year: 2026, round: 3, originalClubId: id, currentClubId: id },
       ],
       gameplan: generateGameplan(rng),
+      tacticalIdentity: (['fast-movement', 'contested', 'defensive', 'stoppage-focused', 'corridor-heavy'] as const)[rng.nextInt(0, 4)],
+      leadership: {
+        captainId: null,
+        viceCaptainId: null,
+        leadershipGroupIds: [],
+      },
       aiPersonality: {
-        competitiveWindow: (['win-now', 'balanced', 'rebuilding'] as const)[rng.intBetween(0, 2)],
-        draftPhilosophy: (['best-available', 'positional-need', 'high-upside'] as const)[rng.intBetween(0, 2)],
-        riskTolerance: (['aggressive', 'moderate', 'conservative'] as const)[rng.intBetween(0, 2)],
-        tradeActivity: (['active', 'moderate', 'passive'] as const)[rng.intBetween(0, 2)],
+        competitiveWindow: (['win-now', 'balanced', 'rebuilding'] as const)[rng.nextInt(0, 2)],
+        draftPhilosophy: (['best-available', 'positional-need', 'high-upside'] as const)[rng.nextInt(0, 2)],
+        riskTolerance: (['aggressive', 'moderate', 'conservative'] as const)[rng.nextInt(0, 2)],
+        tradeActivity: (['active', 'moderate', 'passive'] as const)[rng.nextInt(0, 2)],
       },
     }
 

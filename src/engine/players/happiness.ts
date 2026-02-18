@@ -18,11 +18,29 @@ import { getClubState } from '@/engine/venues/venueEngine'
 // 1. computeMoraleFactors
 // ---------------------------------------------------------------------------
 
+function getJumperPreferenceMoraleEffect(player: Player): number {
+  const preference = player.jumperPreference
+  if (!preference || preference.level === 'none' || preference.preferredNumbers.length === 0) {
+    return 0
+  }
+
+  const hasAssignedNumber = player.jerseyNumber > 0
+  const hasPreferredNumber = hasAssignedNumber && preference.preferredNumbers.includes(player.jerseyNumber)
+  if (hasPreferredNumber) {
+    return preference.level === 'demand' ? 2 : 1
+  }
+  if (!hasAssignedNumber) {
+    return preference.level === 'demand' ? -1 : 0
+  }
+  return preference.level === 'demand' ? -2 : -1
+}
+
 export function computeMoraleFactors(
   player: Player,
   clubId: string,
   ladder: LadderEntry[],
   culture: Club['culture'],
+  clubLeadership: Club['leadership'] | undefined,
   currentRound: number,
   teamCount: number,
 ): MoraleFactors {
@@ -78,6 +96,31 @@ export function computeMoraleFactors(
     }
   }
 
+  // --- Contract terms / promise fulfilment ---
+  let contractTerms = 0
+  const clauses = player.contract.clauses ?? []
+  const hasSecurity = clauses.some((c) => c.type === 'no-trade' || c.type === 'limited-trade' || c.type === 'player-option')
+  if (hasSecurity) contractTerms += 1
+
+  const rolePromise = clauses.find((c) => c.type === 'role-promise')
+  if (rolePromise && currentRound > 0) {
+    const gameRatio = player.seasonStats.gamesPlayed / currentRound
+    if (gameRatio < 0.5 && !player.injury) contractTerms -= 1
+  }
+
+  const leadershipPromise = clauses.find((c) => c.type === 'leadership-promise')
+  if (leadershipPromise && clubLeadership) {
+    const isInLeadershipGroup =
+      clubLeadership.captainId === player.id ||
+      clubLeadership.viceCaptainId === player.id ||
+      clubLeadership.leadershipGroupIds.includes(player.id)
+    if (isInLeadershipGroup) contractTerms += 1
+    else if (player.age >= 24) contractTerms -= 1
+  }
+
+  // --- Jumper preference satisfaction ---
+  const jumperPreference = getJumperPreferenceMoraleEffect(player)
+
   // --- Culture ---
   let cultureEffect = 0
   const cultureScore = culture?.score ?? 50
@@ -90,7 +133,7 @@ export function computeMoraleFactors(
   // --- Mean reversion (gentle drift toward 55) ---
   let meanReversion = 0
   const positiveFactors = teamSuccess + cultureEffect
-  const negativeTotal = homeState + contractStatus + underpayment + roleSatisfaction
+  const negativeTotal = homeState + contractStatus + underpayment + roleSatisfaction + Math.min(0, jumperPreference)
   if (player.morale > 85 && positiveFactors <= 0) {
     meanReversion = -1
   } else if (player.morale < 35 && negativeTotal >= -1) {
@@ -103,6 +146,8 @@ export function computeMoraleFactors(
     contractStatus,
     underpayment,
     roleSatisfaction,
+    contractTerms,
+    jumperPreference,
     culture: cultureEffect,
     meanReversion,
   }
@@ -126,12 +171,12 @@ export function applyBetweenRoundMorale(
     if (!club) continue
 
     const factors = computeMoraleFactors(
-      player, player.clubId, ladder, club.culture, currentRound, teamCount,
+      player, player.clubId, ladder, club.culture, club.leadership, currentRound, teamCount,
     )
 
     const totalDelta = factors.teamSuccess + factors.homeState +
       factors.contractStatus + factors.underpayment +
-      factors.roleSatisfaction + factors.culture + factors.meanReversion
+      factors.roleSatisfaction + factors.contractTerms + factors.jumperPreference + factors.culture + factors.meanReversion
 
     // Clamp per-round delta to ±4
     const clampedDelta = Math.max(-4, Math.min(4, totalDelta))

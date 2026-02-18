@@ -1,5 +1,6 @@
 import type {
   GameSettings,
+  NotificationSettings,
   MatchTimeSlot,
   BlockbusterMatch,
   SeasonStructureSettings,
@@ -268,6 +269,7 @@ export const DEFAULT_MATCH_RULES: MatchRulesSettings = {
   quartersPerMatch: 4,
   possessionsMultiplier: 1.0,
   interchangePlayers: 5,
+  enableSubstitutes: false,
 }
 
 export const DEFAULT_LADDER_POINTS: LadderPointsSettings = {
@@ -405,6 +407,8 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   difficulty: 'medium',
   simSpeed: 'normal',
   leagueMode: 'real',
+  leagueNamingTemplate: 'real-life',
+  includePathwayLeagues: true,
   teamCount: 18,
   seasonStructure: { ...DEFAULT_SEASON_STRUCTURE },
   matchRules: { ...DEFAULT_MATCH_RULES },
@@ -431,6 +435,18 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   },
   customRivalryPairs: [],
   specialEvents: { ...DEFAULT_SPECIAL_EVENTS, events: { ...DEFAULT_SPECIAL_EVENTS.events } },
+  notifications: {
+    signings: {
+      starThreshold: 4,
+      inApp: true,
+      email: true,
+      dailyDigest: false,
+    },
+  },
+  stateLeagueAffiliations: {
+    allowCustomAffiliations: false,
+    clubAffiliations: {},
+  },
   seasonStartDate: '2026-03-20',
   gameStartDate: computeDefaultGameStartDate(2026),
 }
@@ -466,6 +482,13 @@ export function createDefaultSettings(): GameSettings {
         participatingStates: [...DEFAULT_ORIGIN_CONFIG.participatingStates],
         alliesStates: [...DEFAULT_ORIGIN_CONFIG.alliesStates],
       },
+    },
+    notifications: {
+      signings: { ...DEFAULT_GAME_SETTINGS.notifications.signings },
+    } satisfies NotificationSettings,
+    stateLeagueAffiliations: {
+      allowCustomAffiliations: DEFAULT_GAME_SETTINGS.stateLeagueAffiliations.allowCustomAffiliations,
+      clubAffiliations: { ...DEFAULT_GAME_SETTINGS.stateLeagueAffiliations.clubAffiliations },
     },
   }
 }

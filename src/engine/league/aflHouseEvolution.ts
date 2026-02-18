@@ -2,6 +2,7 @@ import type { Club } from '@/types/club'
 import type { LeagueConfig, ExpansionPlan, ExpansionClubData } from '@/types/expansion'
 import type { GameSettings, NewsItem } from '@/types/game'
 import type { Player } from '@/types/player'
+import type { StateLeague, StateLeagueId } from '@/types/stateLeague'
 import { SeededRNG } from '@/engine/core/rng'
 import { createDefaultCulture } from '@/engine/culture/cultureEngine'
 import { createInitialClubIdentity } from '@/engine/clubs/identity'
@@ -24,6 +25,7 @@ export interface AflHouseEvolutionResult {
   leagueConfig: LeagueConfig
   clubs: Record<string, Club>
   players: Record<string, Player>
+  stateLeagues: Record<StateLeagueId, StateLeague> | null
   news: NewsItem[]
 }
 
@@ -160,6 +162,103 @@ function activateExpansionPlan(params: {
   ))
 }
 
+function runStateLeagueRestructure(
+  stateLeagues: Record<StateLeagueId, StateLeague> | null,
+  rng: SeededRNG,
+  date: string,
+): NewsItem[] {
+  if (!stateLeagues) return []
+  const eligible = Object.entries(stateLeagues)
+    .map(([id, league]) => ({ id: id as StateLeagueId, league }))
+    .filter(({ league }) => league.clubs.length > 0)
+  if (eligible.length === 0) return []
+  const target = rng.pick(eligible)
+  const league = target.league
+  const actions: Array<'rename-club' | 'expand-contract' | 'realign-divisions'> = ['rename-club', 'expand-contract', 'realign-divisions']
+  const action = rng.pick(actions)
+  const news: NewsItem[] = []
+
+  if (action === 'rename-club') {
+    const club = rng.pick(league.clubs)
+    const suffix = rng.pick(['United', 'Athletic', 'District', 'City'])
+    const oldName = club.name
+    if (!oldName.toLowerCase().includes(suffix.toLowerCase())) {
+      club.name = `${oldName} ${suffix}`
+      club.abbreviation = club.name.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase()
+      news.push(buildNews(
+        date,
+        `AFL House approves ${league.name} rebrand`,
+        `${oldName} has been renamed to ${club.name} as part of a governance-driven identity refresh.`,
+      ))
+    }
+  } else if (action === 'expand-contract' && league.clubs.length > 4) {
+    if (rng.chance(0.5) && league.clubs.length < 20) {
+      const newId = `${league.id}-exp-${Math.max(1, league.history.length + 1)}-${league.clubs.length + 1}`
+      const newClub = {
+        id: newId,
+        name: `${league.name} Select ${league.clubs.length + 1}`,
+        abbreviation: `S${(league.clubs.length + 1).toString().padStart(2, '0')}`,
+        colors: { primary: '#0f172a', secondary: '#e2e8f0' },
+        logoText: 'SEL',
+        homeGround: `${league.name} Community Oval`,
+        aflAffiliateId: null,
+        isAFLReserves: false,
+      }
+      league.clubs.push(newClub)
+      league.divisions[0]?.clubIds.push(newClub.id)
+      league.ladder.push({
+        clubId: newClub.id,
+        played: 0,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        points: 0,
+        pointsFor: 0,
+        pointsAgainst: 0,
+        percentage: 0,
+      })
+      news.push(buildNews(
+        date,
+        `AFL House expands ${league.name}`,
+        `${newClub.name} has been added to ${league.name} under governance expansion powers.`,
+      ))
+    } else {
+      const removed = league.clubs.pop()
+      if (removed) {
+        league.divisions = league.divisions.map((division) => ({
+          ...division,
+          clubIds: division.clubIds.filter((clubId) => clubId !== removed.id),
+        }))
+        league.ladder = league.ladder.filter((entry) => entry.clubId !== removed.id)
+        news.push(buildNews(
+          date,
+          `AFL House contracts ${league.name}`,
+          `${removed.name} has exited ${league.name} after a governance review.`,
+        ))
+      }
+    }
+  } else if (action === 'realign-divisions') {
+    const sortedIds = league.clubs.map((club) => club.id).sort((a, b) => a.localeCompare(b))
+    const split = Math.ceil(sortedIds.length / 2)
+    league.divisions = [
+      { id: 'north', name: 'North', clubIds: sortedIds.slice(0, split) },
+      { id: 'south', name: 'South', clubIds: sortedIds.slice(split) },
+    ]
+    const divisionByClub = new Map<string, string>()
+    for (const division of league.divisions) {
+      for (const clubId of division.clubIds) divisionByClub.set(clubId, division.id)
+    }
+    league.clubs = league.clubs.map((club) => ({ ...club, divisionId: divisionByClub.get(club.id) }))
+    news.push(buildNews(
+      date,
+      `AFL House realigns ${league.name}`,
+      `${league.name} has been split into North and South divisions for next season.`,
+    ))
+  }
+
+  return news
+}
+
 export function runAflHouseEndOfYearEvolution(params: {
   currentYear: number
   currentDate: string
@@ -168,6 +267,7 @@ export function runAflHouseEndOfYearEvolution(params: {
   leagueConfig: LeagueConfig
   clubs: Record<string, Club>
   players: Record<string, Player>
+  stateLeagues: Record<StateLeagueId, StateLeague> | null
 }): AflHouseEvolutionResult {
   const { currentYear, currentDate, rngSeed } = params
   const settings: GameSettings = {
@@ -198,6 +298,34 @@ export function runAflHouseEndOfYearEvolution(params: {
   }
   const clubs: Record<string, Club> = { ...params.clubs }
   const players: Record<string, Player> = { ...params.players }
+  const stateLeagues: Record<StateLeagueId, StateLeague> | null = params.stateLeagues
+    ? (Object.fromEntries(
+      Object.entries(params.stateLeagues).map(([leagueId, league]) => [
+        leagueId,
+        {
+          ...league,
+          branding: { ...league.branding },
+          clubs: league.clubs.map((club) => ({ ...club, colors: { ...club.colors } })),
+          divisions: league.divisions.map((division) => ({ ...division, clubIds: [...division.clubIds] })),
+          ladderRules: {
+            ...league.ladderRules,
+            tieBreakers: [...league.ladderRules.tieBreakers],
+          },
+          fixtureRules: { ...league.fixtureRules },
+          finalsRules: { ...league.finalsRules },
+          season: {
+            ...league.season,
+            rounds: league.season.rounds.map((round) => ({
+              ...round,
+              results: round.results.map((result) => ({ ...result })),
+            })),
+          },
+          ladder: league.ladder.map((entry) => ({ ...entry })),
+          history: league.history.map((record) => ({ ...record })),
+        } satisfies StateLeague,
+      ]),
+    ) as Record<StateLeagueId, StateLeague>)
+    : null
   const news: NewsItem[] = []
   const rng = new SeededRNG(rngSeed + currentYear * 17713)
   const newYear = currentYear + 1
@@ -205,7 +333,7 @@ export function runAflHouseEndOfYearEvolution(params: {
   leagueConfig.totalTeams = leagueConfig.activeClubIds.length
 
   if (!settings.realism.aflHouseInterference) {
-    return { settings, leagueConfig, clubs, players, news }
+    return { settings, leagueConfig, clubs, players, stateLeagues, news }
   }
 
   // Existing expansion plans can mature into AFL entry even in quiet years.
@@ -231,7 +359,7 @@ export function runAflHouseEndOfYearEvolution(params: {
 
   // Unlikely yearly chance of AFL House policy evolution.
   if (!rng.chance(0.22)) {
-    return { settings, leagueConfig, clubs, players, news }
+    return { settings, leagueConfig, clubs, players, stateLeagues, news }
   }
 
   const enabledCategories: EvolutionCategory[] = []
@@ -242,7 +370,7 @@ export function runAflHouseEndOfYearEvolution(params: {
   if (settings.realism.aflHouseSalaryCapEvolution) enabledCategories.push('salary-cap')
   if (settings.realism.aflHouseFixtureEvolution) enabledCategories.push('fixture')
   if (enabledCategories.length === 0) {
-    return { settings, leagueConfig, clubs, players, news }
+    return { settings, leagueConfig, clubs, players, stateLeagues, news }
   }
 
   const shuffled = rng.shuffle(enabledCategories)
@@ -304,6 +432,10 @@ export function runAflHouseEndOfYearEvolution(params: {
             ? 'League governance has shifted to a conference-aligned model for next season.'
             : 'League governance has shifted to a divisional model for next season.',
       ))
+      if (rng.chance(0.6)) {
+        const restructureNews = runStateLeagueRestructure(stateLeagues, rng, currentDate)
+        news.push(...restructureNews)
+      }
       continue
     }
 
@@ -421,5 +553,5 @@ export function runAflHouseEndOfYearEvolution(params: {
     }
   }
 
-  return { settings, leagueConfig, clubs, players, news }
+  return { settings, leagueConfig, clubs, players, stateLeagues, news }
 }

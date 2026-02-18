@@ -1,5 +1,8 @@
 import type { Player, LineupSlot } from '@/types/player'
 import { getPositionSuitabilityForSlot } from '@/engine/player/positionEligibility'
+import { getOverallRating, getPlayerPositionRating } from '@/engine/player/playerRating'
+import { SLOT_POSITION_COMPATIBILITY } from '@/engine/core/constants'
+import { getPositionBadgeStrongClass } from '@/lib/positionColor'
 
 export type PositionSuitability = 'primary' | 'secondary' | 'out-of-position'
 
@@ -18,15 +21,15 @@ export function getPositionSuitability(
 }
 
 const SUITABILITY_BORDER: Record<PositionSuitability, string> = {
-  primary: 'border-green-500',
-  secondary: 'border-yellow-500',
-  'out-of-position': 'border-red-500',
+  primary: 'border-zinc-500/70',
+  secondary: 'border-zinc-500/70',
+  'out-of-position': 'border-zinc-500/70',
 }
 
 const SUITABILITY_BG: Record<PositionSuitability, string> = {
-  primary: 'bg-green-500/20',
-  secondary: 'bg-yellow-500/20',
-  'out-of-position': 'bg-red-500/20',
+  primary: 'bg-zinc-800/80',
+  secondary: 'bg-zinc-800/80',
+  'out-of-position': 'bg-zinc-800/80',
 }
 
 export function PlayerMagnet({ player, slot, suitability }: PlayerMagnetProps) {
@@ -34,9 +37,16 @@ export function PlayerMagnet({ player, slot, suitability }: PlayerMagnetProps) {
   const bgClass = SUITABILITY_BG[suitability]
 
   const surname =
-    player.lastName.length > 8
-      ? player.lastName.slice(0, 7) + '.'
+    player.lastName.length > 12
+      ? player.lastName.slice(0, 11) + '.'
       : player.lastName
+  const displayName = `${player.firstName.charAt(0)}. ${surname}`
+  const overall = getOverallRating(player)
+  const slotKey = slot as LineupSlot | undefined
+  const slotPrimaryPos = slotKey ? SLOT_POSITION_COMPATIBILITY[slotKey]?.[0] : undefined
+  const slotOverall = slotPrimaryPos
+    ? getPlayerPositionRating(player, slotPrimaryPos)
+    : overall
 
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
     e.dataTransfer.effectAllowed = 'move'
@@ -54,15 +64,18 @@ export function PlayerMagnet({ player, slot, suitability }: PlayerMagnetProps) {
     <div
       draggable
       onDragStart={handleDragStart}
-      className={`flex items-center gap-1.5 rounded-md border-2 ${borderClass} ${bgClass} cursor-grab active:cursor-grabbing select-none w-[86px] h-[34px] px-1.5 shrink-0 shadow-sm`}
+      className={`flex items-center gap-[clamp(3px,0.45vw,7px)] rounded-md border-2 ${borderClass} ${bgClass} cursor-grab active:cursor-grabbing select-none w-[clamp(52px,8.2vw,118px)] h-[clamp(26px,3.9vw,46px)] px-[clamp(3px,0.55vw,7px)] shrink-0 shadow-sm`}
       title={`${player.firstName} ${player.lastName} (${player.position.primary})`}
     >
-      <span className="text-[10px] font-bold leading-none text-white w-6 text-center">
+      <span className="hidden min-[1150px]:block w-[clamp(18px,1.8vw,28px)] text-center text-[clamp(8px,1vw,12px)] font-bold leading-none text-white">
         #{player.jerseyNumber}
       </span>
       <div className="flex-1 min-w-0 leading-tight">
-        <span className="text-[9px] text-zinc-100 truncate block">{surname}</span>
-        <span className="text-[8px] text-zinc-300">{position}</span>
+        <span className="block truncate text-[clamp(7px,0.82vw,10px)] text-zinc-100">{displayName}</span>
+        <span className="block truncate text-[clamp(6px,0.72vw,9px)] text-zinc-300">
+          <span className={`rounded border px-1 py-0 ${getPositionBadgeStrongClass(position)}`}>{position}</span>{' '}
+          {slotPrimaryPos ? `${slotPrimaryPos} ${slotOverall}` : `OVR ${overall}`}
+        </span>
       </div>
     </div>
   )

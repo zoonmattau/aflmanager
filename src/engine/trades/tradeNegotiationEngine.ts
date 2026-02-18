@@ -1286,6 +1286,37 @@ export function validateTradeConsent(
       continue
     }
 
+    const clauses = player.contract.clauses ?? []
+    const hasNoTrade = clauses.some((c) => c.type === 'no-trade')
+    if (hasNoTrade) {
+      return {
+        ok: false,
+        reason: `${player.firstName} ${player.lastName} holds a no-trade clause.`,
+      }
+    }
+
+    const limitedTrade = clauses.find((c) => c.type === 'limited-trade')
+    if (limitedTrade?.vetoClubIds?.includes(move.toClubId)) {
+      return {
+        ok: false,
+        reason: `${player.firstName} ${player.lastName} blocked a move to ${clubs[move.toClubId]?.abbreviation ?? move.toClubId} (limited no-trade clause).`,
+      }
+    }
+    const homeStateOnly = clauses.some((c) => c.type === 'home-state')
+    if (homeStateOnly && player.homeState && getClubState(move.toClubId) !== player.homeState) {
+      return {
+        ok: false,
+        reason: `${player.firstName} ${player.lastName} can only be traded to their home state under contract terms.`,
+      }
+    }
+    const contenderOnly = clauses.some((c) => c.type === 'contender-only')
+    if (contenderOnly && clubs[move.toClubId]?.aiPersonality.competitiveWindow !== 'win-now') {
+      return {
+        ok: false,
+        reason: `${player.firstName} ${player.lastName} can only be moved to a contender under contract terms.`,
+      }
+    }
+
     const loyalty = player.personality.loyalty / 100
     const moraleFactor = player.morale >= 65 ? 0.18 : player.morale <= 45 ? -0.12 : 0
     const contenderPull = clubs[move.toClubId]?.aiPersonality.competitiveWindow === 'win-now' ? -0.06 : 0

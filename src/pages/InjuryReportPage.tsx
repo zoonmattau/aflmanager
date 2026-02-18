@@ -136,7 +136,7 @@ export function InjuryReportPage() {
                             <Link to={`/player/${p.id}`} className="font-medium hover:underline">
                               {p.firstName} {p.lastName}
                             </Link>
-                            <PlayerStarRating stars={getPlayerStarRating(p)} className="scale-[0.75] origin-left" />
+                            <PlayerStarRating stars={getPlayerStarRating(p)} player={p} className="scale-[0.75] origin-left" />
                           </div>
                         </TableCell>
                         <TableCell>{p.injury?.type}</TableCell>
@@ -184,7 +184,7 @@ export function InjuryReportPage() {
                             <Link to={`/player/${p.id}`} className="font-medium hover:underline">
                               {p.firstName} {p.lastName}
                             </Link>
-                            <PlayerStarRating stars={getPlayerStarRating(p)} className="scale-[0.75] origin-left" />
+                            <PlayerStarRating stars={getPlayerStarRating(p)} player={p} className="scale-[0.75] origin-left" />
                           </div>
                         </TableCell>
                         <TableCell className="text-right font-mono">{p.fatigue}</TableCell>
@@ -230,7 +230,7 @@ export function InjuryReportPage() {
                             <Link to={`/player/${p.id}`} className="font-medium hover:underline">
                               {p.firstName} {p.lastName}
                             </Link>
-                            <PlayerStarRating stars={getPlayerStarRating(p)} className="scale-[0.75] origin-left" />
+                            <PlayerStarRating stars={getPlayerStarRating(p)} player={p} className="scale-[0.75] origin-left" />
                           </div>
                         </TableCell>
                         <TableCell>{clubs[p.clubId]?.abbreviation ?? p.clubId}</TableCell>
@@ -280,7 +280,7 @@ export function InjuryReportPage() {
                             <Link to={`/player/${player.id}`} className="font-medium hover:underline">
                               {player.firstName} {player.lastName}
                             </Link>
-                            <PlayerStarRating stars={getPlayerStarRating(player)} className="scale-[0.75] origin-left" />
+                            <PlayerStarRating stars={getPlayerStarRating(player)} player={player} className="scale-[0.75] origin-left" />
                           </div>
                         </TableCell>
                         <TableCell>{clubs[player.clubId]?.abbreviation ?? player.clubId}</TableCell>

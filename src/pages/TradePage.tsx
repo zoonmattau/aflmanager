@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react'
+import { useMemo, useState, useCallback, type ReactNode } from 'react'
 import { useGameStore } from '@/stores/gameStore'
 import type { Player } from '@/types/player'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -48,6 +48,9 @@ import type { TradeGradeLetter } from '@/engine/history/summaryEngine'
 import { getPackageTradeValue } from '@/engine/trades/tradeValuation'
 import type { TradeInboxItem } from '@/types/trade'
 import { getDemandAdjustedValue } from '@/engine/trades/tradeNegotiationEngine'
+import { useTableViewManager, type TableViewColumnConfig } from '@/components/table-view/useTableViewManager'
+import { TableViewManagerControl } from '@/components/table-view/TableViewManagerControl'
+import { ShortlistAssignMenu, ShortlistManager } from '@/components/shortlists/ShortlistManager'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -108,6 +111,8 @@ function PlayerSelectionList({
   onSearchChange,
   clubName,
   emptyMessage,
+  tableId,
+  renderActions,
 }: {
   players: Player[]
   selectedIds: Set<string>
@@ -116,6 +121,8 @@ function PlayerSelectionList({
   onSearchChange: (value: string) => void
   clubName: string
   emptyMessage: string
+  tableId: string
+  renderActions?: (player: Player) => ReactNode
 }) {
   const filtered = useMemo(() => {
     if (!searchValue.trim()) return players
@@ -128,14 +135,60 @@ function PlayerSelectionList({
     )
   }, [players, searchValue])
 
+  const viewColumns = useMemo<TableViewColumnConfig[]>(
+    () => [
+      { id: 'selected', label: '', defaultWidth: 40, sortable: false },
+      { id: 'player', label: 'Player', defaultWidth: 180, sortable: true },
+      { id: 'pos', label: 'Pos', defaultWidth: 70, sortable: true },
+      { id: 'age', label: 'Age', defaultWidth: 56, sortable: true },
+      { id: 'aav', label: 'AAV', defaultWidth: 90, sortable: true },
+      { id: 'actions', label: '', defaultWidth: 110, sortable: false },
+    ],
+    [],
+  )
+  const tableView = useTableViewManager({
+    tableId,
+    columns: viewColumns,
+    defaultSort: { columnId: 'player', direction: 'asc' },
+  })
+  const visibleColumnIds = useMemo(() => {
+    const hidden = new Set(tableView.snapshot.hiddenColumnIds)
+    return tableView.snapshot.columnOrder.filter((id) => !hidden.has(id))
+  }, [tableView.snapshot.columnOrder, tableView.snapshot.hiddenColumnIds])
+  const sorted = useMemo(() => {
+    const sort = tableView.snapshot.sort
+    if (!sort) return filtered
+    const rows = [...filtered]
+    rows.sort((a, b) => {
+      const va =
+        sort.columnId === 'player' ? `${a.lastName},${a.firstName}`.toLowerCase()
+        : sort.columnId === 'pos' ? a.position.primary
+        : sort.columnId === 'age' ? a.age
+        : sort.columnId === 'aav' ? a.contract.aav
+        : 0
+      const vb =
+        sort.columnId === 'player' ? `${b.lastName},${b.firstName}`.toLowerCase()
+        : sort.columnId === 'pos' ? b.position.primary
+        : sort.columnId === 'age' ? b.age
+        : sort.columnId === 'aav' ? b.contract.aav
+        : 0
+      if (va === vb) return 0
+      return va > vb ? 1 : -1
+    })
+    return sort.direction === 'desc' ? rows.reverse() : rows
+  }, [filtered, tableView.snapshot.sort])
+
   return (
     <div className="space-y-2">
-      <Input
-        placeholder={`Search ${clubName} players...`}
-        value={searchValue}
-        onChange={(e) => onSearchChange(e.target.value)}
-        className="h-8 text-sm"
-      />
+      <div className="flex items-center gap-2">
+        <Input
+          placeholder={`Search ${clubName} players...`}
+          value={searchValue}
+          onChange={(e) => onSearchChange(e.target.value)}
+          className="h-8 text-sm"
+        />
+        <TableViewManagerControl columns={viewColumns} manager={tableView} />
+      </div>
       <ScrollArea className="h-[300px] rounded-md border">
         <div className="p-1">
           {filtered.length === 0 ? (
@@ -146,19 +199,16 @@ function PlayerSelectionList({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="px-2 py-1 text-xs w-8"></TableHead>
-                  <TableHead className="px-2 py-1 text-xs">Player</TableHead>
-                  <TableHead className="px-2 py-1 text-xs">Pos</TableHead>
-                  <TableHead className="px-2 py-1 text-xs text-center">
-                    Age
-                  </TableHead>
-                  <TableHead className="px-2 py-1 text-xs text-right">
-                    AAV
-                  </TableHead>
+                  {visibleColumnIds.includes('selected') && <TableHead className="px-2 py-1 text-xs w-8"></TableHead>}
+                  {visibleColumnIds.includes('player') && <TableHead className="px-2 py-1 text-xs">Player</TableHead>}
+                  {visibleColumnIds.includes('pos') && <TableHead className="px-2 py-1 text-xs">Pos</TableHead>}
+                  {visibleColumnIds.includes('age') && <TableHead className="px-2 py-1 text-xs text-center">Age</TableHead>}
+                  {visibleColumnIds.includes('aav') && <TableHead className="px-2 py-1 text-xs text-right">AAV</TableHead>}
+                  {visibleColumnIds.includes('actions') && <TableHead className="px-2 py-1 text-xs text-right">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((player) => {
+                {sorted.map((player) => {
                   const isSelected = selectedIds.has(player.id)
                   return (
                     <TableRow
@@ -170,7 +220,7 @@ function PlayerSelectionList({
                       }`}
                       onClick={() => onToggle(player.id)}
                     >
-                      <TableCell className="px-2 py-1.5">
+                      {visibleColumnIds.includes('selected') && <TableCell className="px-2 py-1.5">
                         <div
                           className={`h-4 w-4 rounded border flex items-center justify-center ${
                             isSelected
@@ -194,21 +244,24 @@ function PlayerSelectionList({
                             </svg>
                           )}
                         </div>
-                      </TableCell>
-                      <TableCell className="px-2 py-1.5 font-medium whitespace-nowrap">
+                      </TableCell>}
+                      {visibleColumnIds.includes('player') && <TableCell className="px-2 py-1.5 font-medium whitespace-nowrap">
                         {player.firstName} {player.lastName}
-                      </TableCell>
-                      <TableCell className="px-2 py-1.5">
+                      </TableCell>}
+                      {visibleColumnIds.includes('pos') && <TableCell className="px-2 py-1.5">
                         <Badge variant="outline" className="text-xs">
                           {player.position.primary}
                         </Badge>
-                      </TableCell>
-                      <TableCell className="px-2 py-1.5 text-center">
+                      </TableCell>}
+                      {visibleColumnIds.includes('age') && <TableCell className="px-2 py-1.5 text-center">
                         {player.age}
-                      </TableCell>
-                      <TableCell className="px-2 py-1.5 text-right font-mono text-xs">
+                      </TableCell>}
+                      {visibleColumnIds.includes('aav') && <TableCell className="px-2 py-1.5 text-right font-mono text-xs">
                         {formatDollars(player.contract.aav)}
-                      </TableCell>
+                      </TableCell>}
+                      {visibleColumnIds.includes('actions') && <TableCell className="px-2 py-1.5 text-right">
+                        {renderActions?.(player)}
+                      </TableCell>}
                     </TableRow>
                   )
                 })}
@@ -768,6 +821,10 @@ function MakeTradeTab() {
                   onSearchChange={setSendSearch}
                   clubName={myClub?.name ?? 'your club'}
                   emptyMessage="No players found"
+                  tableId={`trade-send-${playerClubId}`}
+                  renderActions={(player) => (
+                    <ShortlistAssignMenu targetType="player" targetId={player.id} buttonLabel="List" buttonVariant="ghost" buttonSize="sm" />
+                  )}
                 />
                 <SelectedPlayerChips
                   players={sendPlayers}
@@ -798,6 +855,10 @@ function MakeTradeTab() {
                   onSearchChange={setReceiveSearch}
                   clubName={partnerClub?.name ?? 'their club'}
                   emptyMessage="No players found"
+                  tableId={`trade-receive-${partnerId || 'none'}`}
+                  renderActions={(player) => (
+                    <ShortlistAssignMenu targetType="player" targetId={player.id} buttonLabel="List" buttonVariant="ghost" buttonSize="sm" />
+                  )}
                 />
                 <SelectedPlayerChips
                   players={receivePlayers}
@@ -1293,6 +1354,11 @@ function TradeHistoryTab() {
                     <p className="font-semibold text-sm">{news.headline}</p>
                   </div>
                   <p className="text-sm text-muted-foreground">{news.body}</p>
+                  {news.media?.reporterName && news.media?.outletName && (
+                    <p className="text-xs text-muted-foreground/80">
+                      Reported by {news.media.reporterName} ({news.media.outletName})
+                    </p>
+                  )}
                   <div className="flex flex-wrap gap-1.5 pt-1">
                     {involvedClubs.map((club) => (
                       <Badge
@@ -1668,6 +1734,7 @@ export function TradePage() {
           <TabsTrigger value="inbox">Trade Inbox</TabsTrigger>
           <TabsTrigger value="trade-block">Trade Block</TabsTrigger>
           <TabsTrigger value="make-trade">Make a Trade</TabsTrigger>
+          <TabsTrigger value="shortlists">Shortlists</TabsTrigger>
           <TabsTrigger value="history">Trade History</TabsTrigger>
           <TabsTrigger value="rumours">Rumours</TabsTrigger>
         </TabsList>
@@ -1706,6 +1773,10 @@ export function TradePage() {
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+
+        <TabsContent value="shortlists">
+          <ShortlistManager targetTypeFilter="player" title="Trade Targets Shortlists" />
         </TabsContent>
 
         <TabsContent value="history">

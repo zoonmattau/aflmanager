@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ThemeProvider } from '@/components/layout/ThemeProvider'
 import { AppLayout } from '@/components/layout/AppLayout'
@@ -30,6 +30,7 @@ import { InboxPage } from '@/pages/InboxPage'
 import { LeaguePage } from '@/pages/LeaguePage'
 import { CalendarPage } from '@/pages/CalendarPage'
 import { ReservesPage } from '@/pages/ReservesPage'
+import { ReservesMatchPreviewPage } from '@/pages/ReservesMatchPreviewPage'
 import { StateLeaguePage } from '@/pages/StateLeaguePage'
 import { BrownlowNightPage } from '@/pages/BrownlowNightPage'
 import { PlayerDevelopmentReportPage } from '@/pages/PlayerDevelopmentReportPage'
@@ -39,12 +40,16 @@ import { MatchupPreviewPage } from '@/pages/MatchupPreviewPage'
 import { GameSettingsPage } from '@/pages/GameSettingsPage'
 import { TribunalPage } from '@/pages/TribunalPage'
 import { PreseasonPreviewPage } from '@/pages/PreseasonPreviewPage'
+import { RecordsPage } from '@/pages/RecordsPage'
+import { JumperManagementPage } from '@/pages/JumperManagementPage'
 import { useGameStore } from '@/stores/gameStore'
 import { useAppStore } from '@/stores/appStore'
 
 function GameRoutes() {
   const playerClubId = useGameStore((s) => s.playerClubId)
   const phase = useGameStore((s) => s.phase)
+  const jumperManagement = useGameStore((s) => s.jumperManagement)
+  const location = useLocation()
   const unemployed = phase !== 'setup' && !playerClubId
 
   if (unemployed) {
@@ -58,10 +63,15 @@ function GameRoutes() {
     )
   }
 
+  if (jumperManagement.pending && location.pathname !== '/jumper-management') {
+    return <Navigate to="/jumper-management" replace />
+  }
+
   return (
     <AppLayout>
       <Routes>
         <Route path="/" element={<DashboardPage />} />
+        <Route path="/jumper-management" element={<JumperManagementPage />} />
         <Route path="/inbox" element={<InboxPage />} />
         <Route path="/squad" element={<SquadPage />} />
         <Route path="/fixture" element={<MatchDayPage />} />
@@ -69,7 +79,10 @@ function GameRoutes() {
         <Route path="/ladder" element={<LadderPage />} />
         <Route path="/lineup" element={<LineupPage />} />
         <Route path="/gameplan" element={<GameplanPage />} />
+        <Route path="/player" element={<PlayerProfilePage />} />
         <Route path="/player/:playerId" element={<PlayerProfilePage />} />
+        <Route path="/players" element={<PlayerProfilePage />} />
+        <Route path="/players/:playerId" element={<PlayerProfilePage />} />
         <Route path="/salary-cap" element={<SalaryCapPage />} />
         <Route path="/contracts" element={<ContractsPage />} />
         <Route path="/draft" element={<DraftPage />} />
@@ -81,8 +94,10 @@ function GameRoutes() {
         <Route path="/club/:clubId" element={<ClubPage />} />
         <Route path="/squad/:clubId" element={<SquadPage />} />
         <Route path="/league" element={<LeaguePage />} />
+        <Route path="/records" element={<RecordsPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/reserves" element={<ReservesPage />} />
+        <Route path="/reserves/match-preview" element={<ReservesMatchPreviewPage />} />
         <Route path="/state-leagues" element={<StateLeaguePage />} />
         <Route path="/training" element={<TrainingPage />} />
         <Route path="/offseason" element={<OffseasonPage />} />
@@ -121,8 +136,14 @@ function AutoSaveEffect() {
       timerRef.current = setInterval(() => {
         const gameState = useGameStore.getState()
         if (gameState.meta.id) {
-          gameState.meta.lastSaved = new Date().toISOString()
-          saveCurrentGame(gameState)
+          const nextLastSaved = new Date().toISOString()
+          void saveCurrentGame({
+            ...gameState,
+            meta: {
+              ...gameState.meta,
+              lastSaved: nextLastSaved,
+            },
+          })
         }
       }, globalSettings.autoSaveIntervalMinutes * 60 * 1000)
     }

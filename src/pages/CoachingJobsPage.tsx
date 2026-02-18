@@ -12,9 +12,13 @@ function urgencyBadgeClass(urgency: 'low' | 'medium' | 'high'): string {
 
 export function CoachingJobsPage() {
   const manager = useGameStore((s) => s.manager)
+  const playerClubId = useGameStore((s) => s.playerClubId)
   const clubs = useGameStore((s) => s.clubs)
   const openings = useGameStore((s) => s.coachingJobMarket)
   const applyForCoachingJob = useGameStore((s) => s.applyForCoachingJob)
+  const resignFromCurrentClub = useGameStore((s) => s.resignFromCurrentClub)
+  const managedClub = playerClubId ? clubs[playerClubId] : null
+  const unemployed = manager.employmentStatus === 'unemployed' && !playerClubId
 
   const openJobs = useMemo(
     () => openings.filter((job) => job.status === 'open'),
@@ -26,7 +30,9 @@ export function CoachingJobsPage() {
       <div>
         <h1 className="text-2xl font-bold">Coaching Job Market</h1>
         <p className="text-sm text-muted-foreground">
-          {manager.name} is unemployed. Apply for open senior coaching roles.
+          {unemployed
+            ? `${manager.name} is unemployed. Apply for open senior coaching roles.`
+            : `${manager.name} is managing ${managedClub?.fullName ?? 'a club'}. Resign first to pursue a new role.`}
         </p>
       </div>
 
@@ -34,9 +40,16 @@ export function CoachingJobsPage() {
         <CardHeader>
           <CardTitle>Career Status</CardTitle>
           <CardDescription>
-            Reputation {manager.reputation} | Job Security {manager.jobSecurity}%
+            Reputation {manager.reputation} | Job Security {manager.jobSecurity}% | {unemployed ? 'Unemployed' : `Current Club: ${managedClub?.name ?? 'Unknown'}`}
           </CardDescription>
         </CardHeader>
+        {!unemployed && (
+          <CardContent>
+            <Button variant="destructive" onClick={() => resignFromCurrentClub()}>
+              Resign From Current Club
+            </Button>
+          </CardContent>
+        )}
       </Card>
 
       {openJobs.length === 0 ? (
@@ -61,7 +74,9 @@ export function CoachingJobsPage() {
                     </div>
                     <p className="text-sm text-muted-foreground">{job.reason}</p>
                   </div>
-                  <Button onClick={() => applyForCoachingJob(job.id)}>Apply</Button>
+                  <Button onClick={() => applyForCoachingJob(job.id)} disabled={!unemployed}>
+                    Apply
+                  </Button>
                 </CardContent>
               </Card>
             )

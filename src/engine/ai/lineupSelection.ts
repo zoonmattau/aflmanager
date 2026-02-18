@@ -1,77 +1,57 @@
 import type { Player, PlayerPositionType, LineupSlot } from '@/types/player'
+import type { Club } from '@/types/club'
 import { getRoleFitMultiplierForSlot } from '@/engine/player/roles'
 import { isPlayerSuspended } from '@/engine/players/availability'
+import { getLineupSlots, SLOT_POSITION_COMPATIBILITY } from '@/engine/core/constants'
+import { getPlayerEligiblePositionTypes } from '@/engine/player/positionEligibility'
+import { canBeSelectedForAfl } from '@/engine/players/contracts'
+import { getPlayerPositionRatings } from '@/engine/player/playerRating'
 
-// ---------------------------------------------------------------------------
-// Position codes that make up a full 22-player AFL lineup
-// ---------------------------------------------------------------------------
+export type LineupAutofillStrategy =
+  | 'best-available'
+  | 'last-game'
+  | 'youth-focus'
+  | 'win-now'
 
-const BACK_LINE: LineupSlot[] = ['LBP', 'RBP', 'FB']
-const HALF_BACK_LINE: LineupSlot[] = ['LHB', 'RHB', 'CHB']
-const CENTRE_LINE: LineupSlot[] = ['LW', 'RW', 'C']
-const HALF_FORWARD_LINE: LineupSlot[] = ['LHF', 'RHF', 'CHF']
-const FORWARD_LINE: LineupSlot[] = ['LFP', 'RFP', 'FF']
-const FOLLOWERS: LineupSlot[] = ['RK', 'RR', 'ROV']
-const INTERCHANGE: LineupSlot[] = ['I1', 'I2', 'I3', 'I4']
-
-/**
- * Ordered list describing which position types fill which slots, and in what
- * priority.  We fill specialist roles first (ruck, centre, wings) before the
- * lines so that versatile players are not wasted on less critical positions.
- */
-const FILL_ORDER: { posType: PlayerPositionType; slots: LineupSlot[] }[] = [
-  // Ruck is hardest to fill – only RK players suit it
-  { posType: 'RK', slots: ['RK'] },
-  // Centre – outside mids map here
-  { posType: 'OM', slots: ['C'] },
-  // Wings
-  { posType: 'W', slots: ['LW', 'RW'] },
-  // Back line
-  { posType: 'FB', slots: ['FB'] },
-  { posType: 'BP', slots: ['LBP', 'RBP'] },
-  // Half-back line
-  { posType: 'CHB', slots: ['CHB'] },
-  { posType: 'HBF', slots: ['LHB', 'RHB'] },
-  // Half-forward line
-  { posType: 'CHF', slots: ['CHF'] },
-  { posType: 'HFF', slots: ['LHF', 'RHF'] },
-  // Forward line
-  { posType: 'FF', slots: ['FF'] },
-  { posType: 'FP', slots: ['LFP', 'RFP'] },
-  // Midfield followers (rover, ruck-rover)
-  { posType: 'IM', slots: ['RR', 'ROV'] },
-]
-
-// ---------------------------------------------------------------------------
-// Rating helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Compute a player's effective overall rating.
- *
- * Base overall = average of the top 10 attribute values.
- * Adjusted overall = baseOverall * (fitness / 100) * (0.7 + form / 100 * 0.3)
- */
-function computeEffectiveRating(player: Player): number {
-  const attrs = player.attributes
-  const values: number[] = Object.values(attrs).filter(
-    (v): v is number => typeof v === 'number',
-  )
-
-  // Sort descending and take top 10
-  values.sort((a, b) => b - a)
-  const top10 = values.slice(0, 10)
-  const baseOverall =
-    top10.length > 0 ? top10.reduce((sum, v) => sum + v, 0) / top10.length : 0
-
-  return baseOverall * (player.fitness / 100) * (0.7 + (player.form / 100) * 0.3)
+export interface LineupAutofillOptions {
+  interchangePlayers?: number
+  club?: Club
+  strategy?: LineupAutofillStrategy
+  baseLineup?: Record<string, string> | null
+  preserveAssignedSlots?: boolean
+  continuityBias?: number // 0-1
 }
 
 /**
- * Compute a position-aware suitability score for a player at a given position
- * type. Uses the player's position ratings when available, falling back to
- * the generic effective rating.
+ * Ordered list describing which position types fill which slots, and in what
+ * priority. We fill specialist roles first (ruck, centre, wings) before the
+ * lines so that versatile players are not wasted on less critical positions.
  */
+const FILL_ORDER: { posType: PlayerPositionType; slots: LineupSlot[] }[] = [
+  { posType: 'RK', slots: ['RK'] },
+  { posType: 'OM', slots: ['C'] },
+  { posType: 'W', slots: ['LW', 'RW'] },
+  { posType: 'FB', slots: ['FB'] },
+  { posType: 'BP', slots: ['LBP', 'RBP'] },
+  { posType: 'CHB', slots: ['CHB'] },
+  { posType: 'HBF', slots: ['LHB', 'RHB'] },
+  { posType: 'CHF', slots: ['CHF'] },
+  { posType: 'HFF', slots: ['LHF', 'RHF'] },
+  { posType: 'FF', slots: ['FF'] },
+  { posType: 'FP', slots: ['LFP', 'RFP'] },
+  { posType: 'IM', slots: ['RR', 'ROV'] },
+]
+
+function computeEffectiveRating(player: Player): number {
+  const values: number[] = Object.values(player.attributes).filter(
+    (v): v is number => typeof v === 'number',
+  )
+  values.sort((a, b) => b - a)
+  const top10 = values.slice(0, 10)
+  const baseOverall = top10.length > 0 ? top10.reduce((sum, v) => sum + v, 0) / top10.length : 0
+  return baseOverall * (player.fitness / 100) * (0.7 + (player.form / 100) * 0.3)
+}
+
 function computeSuitability(
   player: Player,
   targetType: PlayerPositionType,
@@ -80,77 +60,292 @@ function computeSuitability(
   const effectiveRating = computeEffectiveRating(player)
   const roleFit = getRoleFitMultiplierForSlot(player.preferredRole, slot)
 
-  // If the player's primary position matches the target, they are
-  // inherently a better fit.
-  if (player.position.primary === targetType) {
-    return effectiveRating * roleFit
-  }
+  if (player.position.primary === targetType) return effectiveRating * roleFit
 
-  // If the target type appears in the player's position ratings, apply
-  // that rating as a scaling factor (0-100 mapped to 0.0-1.0).
-  const posRating = player.position.ratings[targetType]
-  if (posRating !== undefined) {
-    return effectiveRating * (posRating / 100) * roleFit
-  }
+  const posRating = getPlayerPositionRatings(player)[targetType]
+  if (posRating !== undefined) return effectiveRating * (posRating / 100) * roleFit
 
-  // If the target type is a listed secondary position, give a moderate
-  // discount (80% of effective rating).
-  if (player.position.secondary.includes(targetType)) {
-    return effectiveRating * 0.8 * roleFit
-  }
+  if (player.position.secondary.includes(targetType)) return effectiveRating * 0.8 * roleFit
 
-  // Otherwise the player is out of position – heavy discount.
   return effectiveRating * 0.5 * roleFit
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
+type BenchCategory = 'MID' | 'DEF' | 'FWD' | 'TALL' | 'UTIL'
 
-/**
- * Auto-select the best 22 players for an AI-controlled club.
- *
- * @param players - The full squad of players available for selection.
- * @param clubId  - The club ID to select a lineup for.
- * @returns An object containing:
- *   - `lineup`: a mapping of lineup slots to player IDs
- *   - `selectedPlayerIds`: the 22 chosen player IDs
- */
+function isPlayerEligibleForSlot(player: Player, slot: LineupSlot): boolean {
+  const compat = SLOT_POSITION_COMPATIBILITY[slot] ?? []
+  if (compat.length === 0) return true
+  const eligible = new Set(getPlayerEligiblePositionTypes(player))
+  return compat.some((pos) => eligible.has(pos))
+}
+
+function isTallPlayer(player: Player): boolean {
+  return (
+    player.height >= 194 ||
+    player.position.primary === 'RK' ||
+    player.position.primary === 'CHF' ||
+    player.position.primary === 'FF' ||
+    player.position.primary === 'CHB' ||
+    player.position.primary === 'FB' ||
+    player.preferredRole === 'key-forward' ||
+    player.preferredRole === 'ruck'
+  )
+}
+
+function classifyBenchCategories(player: Player): BenchCategory[] {
+  const categories = new Set<BenchCategory>()
+  const primary = player.position.primary
+
+  if (primary === 'IM' || primary === 'OM' || primary === 'W') categories.add('MID')
+  if (primary === 'BP' || primary === 'FB' || primary === 'HBF' || primary === 'CHB') categories.add('DEF')
+  if (primary === 'HFF' || primary === 'CHF' || primary === 'FP' || primary === 'FF') categories.add('FWD')
+  if (isTallPlayer(player)) categories.add('TALL')
+
+  const versatile =
+    player.preferredRole === 'utility' ||
+    player.position.secondary.length >= 2 ||
+    Object.keys(getPlayerPositionRatings(player)).length >= 4
+
+  if (versatile) categories.add('UTIL')
+  if (categories.size === 0) categories.add('UTIL')
+
+  return [...categories]
+}
+
+function tallyRoleCounts(players: Player[]): { mids: number; defs: number; fwds: number; talls: number } {
+  let mids = 0
+  let defs = 0
+  let fwds = 0
+  let talls = 0
+  for (const player of players) {
+    const cats = classifyBenchCategories(player)
+    if (cats.includes('MID')) mids++
+    if (cats.includes('DEF')) defs++
+    if (cats.includes('FWD')) fwds++
+    if (cats.includes('TALL')) talls++
+  }
+  return { mids, defs, fwds, talls }
+}
+
+function buildBenchTargetOrder(
+  interchangeCount: number,
+  club: Club | undefined,
+  eligiblePlayers: Player[],
+): BenchCategory[] {
+  if (interchangeCount <= 0) return []
+
+  const baseOrder: BenchCategory[] = ['MID', 'MID', 'DEF', 'FWD', 'TALL']
+  const extraPools: BenchCategory[] = []
+
+  const tactical = club?.tacticalIdentity
+  const gameplan = club?.gameplan
+  const personality = club?.aiPersonality
+  const counts = tallyRoleCounts(eligiblePlayers)
+  const tallForwardBias =
+    (gameplan?.forwardLine === 'hold' && gameplan?.offensiveStyle !== 'defensive') ||
+    (counts.fwds >= 8 && counts.talls >= 4)
+
+  switch (tactical) {
+    case 'contested':
+    case 'stoppage-focused':
+      extraPools.push('MID', 'MID', 'TALL', 'DEF', 'FWD')
+      break
+    case 'defensive':
+      extraPools.push('DEF', 'MID', 'TALL', 'DEF', 'FWD')
+      break
+    case 'corridor-heavy':
+    case 'fast-movement':
+      extraPools.push('FWD', 'MID', 'MID', 'TALL', 'DEF')
+      break
+    default:
+      extraPools.push('MID', 'DEF', 'FWD', 'TALL')
+      break
+  }
+
+  if (personality?.competitiveWindow === 'rebuilding') extraPools.unshift('UTIL')
+  if (personality?.riskTolerance === 'conservative') {
+    extraPools.unshift('DEF', 'TALL')
+  } else if (personality?.riskTolerance === 'aggressive') {
+    extraPools.unshift('MID', 'FWD')
+  }
+
+  if (tallForwardBias) {
+    baseOrder[3] = 'TALL'
+    if (interchangeCount >= 5) baseOrder[4] = 'TALL'
+    extraPools.unshift('TALL')
+  }
+
+  const target = [...baseOrder]
+  let idx = 0
+  while (target.length < interchangeCount) {
+    target.push(extraPools[idx % extraPools.length] ?? 'MID')
+    idx++
+  }
+
+  return target.slice(0, interchangeCount)
+}
+
+function benchCategoryScore(
+  player: Player,
+  category: BenchCategory,
+  slot: LineupSlot,
+): number {
+  const roleFit = getRoleFitMultiplierForSlot(player.preferredRole, slot)
+  const base = computeEffectiveRating(player) * roleFit
+  const cats = classifyBenchCategories(player)
+
+  if (cats.includes(category)) return base * 1.08
+  if (category === 'UTIL' && cats.includes('MID')) return base * 1.03
+  if (category === 'TALL' && (cats.includes('DEF') || cats.includes('FWD'))) return base * 0.98
+  return base * 0.85
+}
+
+function tacticalIdentityBoost(player: Player, club?: Club): number {
+  const identity = club?.tacticalIdentity
+  if (!identity) return 1
+
+  const role = player.preferredRole
+  switch (identity) {
+    case 'contested':
+    case 'stoppage-focused':
+      if (role === 'inside-mid' || role === 'ruck' || role === 'lockdown-defender') return 1.08
+      if (role === 'outside-mid' || role === 'wing-runner') return 0.96
+      return 1.02
+    case 'defensive':
+      if (role === 'lockdown-defender' || role === 'intercept-defender' || role === 'rebound-defender') return 1.08
+      if (role === 'key-forward' || role === 'small-forward') return 0.96
+      return 1.01
+    case 'corridor-heavy':
+    case 'fast-movement':
+      if (role === 'outside-mid' || role === 'wing-runner' || role === 'rebound-defender') return 1.08
+      if (role === 'inside-mid' || role === 'lockdown-defender') return 0.97
+      return 1.02
+    default:
+      return 1
+  }
+}
+
+function strategyMultiplier(
+  player: Player,
+  strategy: LineupAutofillStrategy,
+): number {
+  if (strategy === 'best-available' || strategy === 'last-game') return 1
+
+  const overall = computeEffectiveRating(player)
+  if (strategy === 'youth-focus') {
+    const ageBias = Math.max(0.86, Math.min(1.24, 1 + (24 - player.age) * 0.03))
+    const potentialBias = Math.max(0.95, Math.min(1.15, 1 + (player.hiddenAttributes.potentialCeiling - overall) / 420))
+    const devBias = Math.max(0.95, Math.min(1.1, 0.94 + player.hiddenAttributes.developmentRate * 0.08))
+    return ageBias * potentialBias * devBias
+  }
+
+  // win-now
+  const primeAgeBias = player.age >= 24 && player.age <= 31 ? 1.08 : player.age < 23 ? 0.94 : 0.98
+  const currentFormBias = Math.max(0.94, Math.min(1.12, 0.9 + player.form / 500))
+  const currentOverallBias = Math.max(0.94, Math.min(1.12, 0.9 + overall / 500))
+  return primeAgeBias * currentFormBias * currentOverallBias
+}
+
+function continuityMultiplier(
+  playerId: string,
+  slot: LineupSlot,
+  strategy: LineupAutofillStrategy,
+  baseLineup: Record<string, string> | null | undefined,
+  continuityBias: number,
+): number {
+  if (!baseLineup) return 1
+  const entries = Object.entries(baseLineup)
+  if (entries.length === 0) return 1
+  const inLineup = entries.some(([, id]) => id === playerId)
+  if (!inLineup) return 1
+  const sameSlot = baseLineup[slot] === playerId
+  const bias = Math.max(0, Math.min(1, continuityBias))
+
+  if (strategy === 'last-game') {
+    if (sameSlot) return 1.28 + bias * 0.24
+    return 1.14 + bias * 0.2
+  }
+  if (sameSlot) return 1 + bias * 0.18
+  return 1 + bias * 0.1
+}
+
+function slotScore(
+  player: Player,
+  slot: LineupSlot,
+  targetType: PlayerPositionType,
+  strategy: LineupAutofillStrategy,
+  club: Club | undefined,
+  baseLineup: Record<string, string> | null | undefined,
+  continuityBias: number,
+): number {
+  const base = computeSuitability(player, targetType, slot)
+  if (strategy === 'best-available') return base
+  return (
+    base *
+    tacticalIdentityBoost(player, club) *
+    strategyMultiplier(player, strategy) *
+    continuityMultiplier(player.id, slot, strategy, baseLineup, continuityBias)
+  )
+}
+
 export function selectBestLineup(
   players: Player[],
   clubId: string,
+  options?: LineupAutofillOptions,
 ): { lineup: Record<string, string>; selectedPlayerIds: string[] } {
-  // ---- 1. Filter eligible players ----------------------------------------
+  const interchangePlayers = Math.max(0, Math.min(8, options?.interchangePlayers ?? 4))
+  const strategy = options?.strategy ?? 'best-available'
+  const strictBestAvailable = strategy === 'best-available'
+  const baseLineup = strictBestAvailable ? null : (options?.baseLineup ?? null)
+  const preserveAssignedSlots = strictBestAvailable ? false : Boolean(options?.preserveAssignedSlots)
+  const continuityBias = strictBestAvailable ? 0 : (options?.continuityBias ?? 0.55)
+  const lineupSlots = getLineupSlots(interchangePlayers)
+  const onFieldSlots = lineupSlots.filter((slot) => !slot.startsWith('I')) as LineupSlot[]
+  const interchangeSlots = lineupSlots.filter((slot) => slot.startsWith('I')) as LineupSlot[]
 
   const eligible = players
     .filter((p) => p.clubId === clubId)
+    .filter((p) => canBeSelectedForAfl(p))
     .filter((p) => p.injury === null)
     .filter((p) => !isPlayerSuspended(p))
     .filter((p) => p.fitness >= 50)
 
-  // Pre-compute effective ratings for every eligible player so we can sort
-  // them without recalculating each time.
-  const ratingCache = new Map<string, number>()
-  for (const p of eligible) {
-    ratingCache.set(p.id, computeEffectiveRating(p))
-  }
-
-  // ---- 2. Greedy position-type assignment --------------------------------
-
   const lineup: Record<string, string> = {}
   const assigned = new Set<string>()
+  const eligibleById = new Map(eligible.map((p) => [p.id, p]))
 
-  // Helper: from a pool of candidates, pick the best one for a given
-  // position type and assign them to the given slot.
+  if (preserveAssignedSlots && baseLineup) {
+    for (const slot of lineupSlots) {
+      const playerId = baseLineup[slot]
+      if (!playerId || assigned.has(playerId)) continue
+      const player = eligibleById.get(playerId)
+      if (!player) continue
+      if (!isPlayerEligibleForSlot(player, slot)) continue
+      lineup[slot] = playerId
+      assigned.add(playerId)
+    }
+  }
+
   const assignBest = (
     slot: LineupSlot,
     candidates: Player[],
     targetType: PlayerPositionType,
   ): boolean => {
-    // Filter to unassigned candidates and sort by suitability descending
-      const available = candidates
+    const available = candidates
       .filter((p) => !assigned.has(p.id))
-      .map((p) => ({ player: p, score: computeSuitability(p, targetType, slot) }))
+      .filter((p) => isPlayerEligibleForSlot(p, slot))
+      .map((p) => ({
+        player: p,
+        score: slotScore(
+          p,
+          slot,
+          targetType,
+          strategy,
+          options?.club,
+          baseLineup,
+          continuityBias,
+        ),
+      }))
       .sort((a, b) => b.score - a.score)
 
     if (available.length === 0) return false
@@ -161,7 +356,6 @@ export function selectBestLineup(
     return true
   }
 
-  // Build a lookup of eligible players grouped by their primary position.
   const byType = new Map<PlayerPositionType, Player[]>()
   for (const p of eligible) {
     const type = p.position.primary
@@ -169,91 +363,72 @@ export function selectBestLineup(
     byType.get(type)!.push(p)
   }
 
-  // Fill each position-type block in priority order.
   for (const { posType, slots } of FILL_ORDER) {
-    // Primary candidates: players whose primary position matches.
     const primaryCandidates = byType.get(posType) ?? []
-
-    // Secondary candidates: players who list this type as a secondary
-    // position. These are used as fallback.
     const secondaryCandidates = eligible.filter(
-      (p) =>
-        p.position.primary !== posType && p.position.secondary.includes(posType),
+      (p) => p.position.primary !== posType && p.position.secondary.includes(posType),
     )
-
-    // Combined pool: primary first, then secondary.
     const pool = [...primaryCandidates, ...secondaryCandidates]
 
-    for (const slot of slots) {
-      assignBest(slot, pool, posType)
-    }
+    for (const slot of slots) assignBest(slot, pool, posType)
   }
 
-  // ---- 3. Fill any remaining on-field slots with best available -----------
-
-  const ALL_ON_FIELD_SLOTS: LineupSlot[] = [
-    ...BACK_LINE,
-    ...HALF_BACK_LINE,
-    ...CENTRE_LINE,
-    ...HALF_FORWARD_LINE,
-    ...FORWARD_LINE,
-    ...FOLLOWERS,
-  ]
-
-  // Some on-field positions may still be empty if the squad was thin at a
-  // particular position type. Fill them with the best remaining players.
-  for (const slot of ALL_ON_FIELD_SLOTS) {
+  for (const slot of onFieldSlots) {
     if (lineup[slot]) continue
 
     const remaining = eligible
       .filter((p) => !assigned.has(p.id))
-      .sort((a, b) => (ratingCache.get(b.id) ?? 0) - (ratingCache.get(a.id) ?? 0))
+      .filter((p) => isPlayerEligibleForSlot(p, slot))
+      .map((p) => ({
+        player: p,
+        score: slotScore(
+          p,
+          slot,
+          p.position.primary,
+          strategy,
+          options?.club,
+          baseLineup,
+          continuityBias,
+        ),
+      }))
+      .sort((a, b) => b.score - a.score)
 
     if (remaining.length > 0) {
-      lineup[slot] = remaining[0].id
-      assigned.add(remaining[0].id)
+      lineup[slot] = remaining[0].player.id
+      assigned.add(remaining[0].player.id)
     }
   }
 
-  // ---- 4. Fill interchange with best remaining players --------------------
-
-  const interchangeSlots: LineupSlot[] = [...INTERCHANGE]
-
-  // Midfield-type players already assigned to RR / ROV above; now fill
-  // interchange slots. Start with unassigned midfielders (natural
-  // interchange candidates), then any remaining players.
-  const remainingMids = [...(byType.get('IM') ?? []), ...(byType.get('OM') ?? [])]
-    .filter((p) => !assigned.has(p.id))
-    .sort((a, b) => (ratingCache.get(b.id) ?? 0) - (ratingCache.get(a.id) ?? 0))
-
-  for (const slot of interchangeSlots) {
+  const benchTemplate = buildBenchTargetOrder(interchangeSlots.length, options?.club, eligible)
+  for (let i = 0; i < interchangeSlots.length; i++) {
+    const slot = interchangeSlots[i]
     if (lineup[slot]) continue
 
-    if (remainingMids.length > 0) {
-      const mid = remainingMids.shift()!
-      lineup[slot] = mid.id
-      assigned.add(mid.id)
-    }
-  }
-
-  // If interchange spots are still unfilled, use the best remaining from
-  // any position.
-  for (const slot of interchangeSlots) {
-    if (lineup[slot]) continue
-
+    const benchCategory = benchTemplate[i] ?? 'MID'
     const remaining = eligible
       .filter((p) => !assigned.has(p.id))
-      .sort((a, b) => (ratingCache.get(b.id) ?? 0) - (ratingCache.get(a.id) ?? 0))
+      .filter((p) => isPlayerEligibleForSlot(p, slot))
+      .map((p) => ({
+        player: p,
+        score: strictBestAvailable
+          ? benchCategoryScore(p, benchCategory, slot)
+          : (
+            benchCategoryScore(p, benchCategory, slot) *
+            strategyMultiplier(p, strategy) *
+            tacticalIdentityBoost(p, options?.club) *
+            continuityMultiplier(p.id, slot, strategy, baseLineup, continuityBias)
+          ),
+      }))
+      .sort((a, b) => b.score - a.score)
 
     if (remaining.length > 0) {
-      lineup[slot] = remaining[0].id
-      assigned.add(remaining[0].id)
+      lineup[slot] = remaining[0].player.id
+      assigned.add(remaining[0].player.id)
     }
   }
 
-  // ---- 5. Build output ----------------------------------------------------
-
-  const selectedPlayerIds = Object.values(lineup)
-
-  return { lineup, selectedPlayerIds }
+  return {
+    lineup,
+    selectedPlayerIds: Object.values(lineup),
+  }
 }

@@ -74,7 +74,12 @@ export const POSITIONS = LINEUP_SLOTS
 export type MatchPosition = LineupSlot
 
 /** Base position compatibility for all interchange slots */
-const INTERCHANGE_COMPAT: PlayerPositionType[] = ['IM', 'OM', 'W', 'HBF', 'HFF']
+const INTERCHANGE_COMPAT: PlayerPositionType[] = [
+  'IM', 'OM', 'W',
+  'HBF', 'BP', 'FB', 'CHB',
+  'HFF', 'FP', 'FF', 'CHF',
+  'RK',
+]
 
 /** Which player position types fit each lineup slot (in priority order) */
 export const SLOT_POSITION_COMPATIBILITY: Record<LineupSlot, PlayerPositionType[]> = {
@@ -94,7 +99,7 @@ export const SLOT_POSITION_COMPATIBILITY: Record<LineupSlot, PlayerPositionType[
   RFP: ['FP', 'FF', 'HFF'],
   FF:  ['FF', 'FP', 'CHF'],
   RK:  ['RK'],
-  RR:  ['IM', 'OM', 'RK'],
+  RR:  ['IM', 'OM'],
   ROV: ['IM', 'OM'],
   I1:  ['IM', 'OM', 'W', 'HBF', 'HFF'],
   I2:  ['IM', 'OM', 'W', 'HBF', 'HFF'],

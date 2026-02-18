@@ -7,6 +7,8 @@ import {
   PLAYER_TRAINING_FOCUS_ATTRIBUTES,
 } from '@/engine/players/trainingFocus'
 import { MIN_ATTRIBUTE, MAX_ATTRIBUTE } from '@/engine/core/constants'
+import { auditPlayerAttributesInPlace } from '@/engine/player/attributeAudit'
+import { syncPlayerPositionRatings } from '@/engine/player/playerRating'
 
 // ── Training Program Types ──────────────────────────────────────────────────
 
@@ -455,6 +457,7 @@ export function applyTrainingResults(
     // Apply fitness and fatigue
     player.fitness = clamp(player.fitness + result.fitnessChange, 1, 100)
     player.fatigue = clamp(player.fatigue + result.fatigueChange, 0, 100)
+    auditPlayerAttributesInPlace(player, { stage: 'progression' })
   }
 }
 
@@ -532,6 +535,7 @@ function applyPositionUpskillCompletion(
     ? currentRating + rng.nextInt(6, 14)
     : rng.nextInt(45, 62)
   player.position.ratings[targetPosition] = clamp(nextRating, MIN_ATTRIBUTE, MAX_ATTRIBUTE - 1)
+  syncPlayerPositionRatings(player)
 }
 
 function applySkillUpskillCompletion(
@@ -551,6 +555,8 @@ function applySkillUpskillCompletion(
       MAX_ATTRIBUTE - 1,
     )
   }
+  auditPlayerAttributesInPlace(player, { stage: 'progression' })
+  syncPlayerPositionRatings(player)
 }
 
 /**

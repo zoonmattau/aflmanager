@@ -88,7 +88,7 @@ export function PlayerDevelopmentReportPage() {
                       <div>
                         <Link to={`/player/${r.playerId}`} className="font-medium hover:underline">{r.playerName}</Link>
                         {players[r.playerId] && (
-                          <PlayerStarRating stars={getPlayerStarRating(players[r.playerId])} className="scale-[0.75] origin-left" />
+                          <PlayerStarRating stars={getPlayerStarRating(players[r.playerId])} player={players[r.playerId]} className="scale-[0.75] origin-left" />
                         )}
                       </div>
                     </TableCell>
@@ -121,7 +121,7 @@ export function PlayerDevelopmentReportPage() {
                       <div>
                         <Link to={`/player/${r.playerId}`} className="font-medium hover:underline">{r.playerName}</Link>
                         {players[r.playerId] && (
-                          <PlayerStarRating stars={getPlayerStarRating(players[r.playerId])} className="scale-[0.75] origin-left" />
+                          <PlayerStarRating stars={getPlayerStarRating(players[r.playerId])} player={players[r.playerId]} className="scale-[0.75] origin-left" />
                         )}
                       </div>
                     </TableCell>
@@ -146,7 +146,7 @@ export function PlayerDevelopmentReportPage() {
                 <div>
                   <Link to={`/player/${r.playerId}`} className="font-medium text-sm hover:underline">{r.playerName}</Link>
                   {players[r.playerId] && (
-                    <PlayerStarRating stars={getPlayerStarRating(players[r.playerId])} className="scale-[0.75] origin-left" />
+                    <PlayerStarRating stars={getPlayerStarRating(players[r.playerId])} player={players[r.playerId]} className="scale-[0.75] origin-left" />
                   )}
                 </div>
                 <div className="flex items-center gap-2">
@@ -171,7 +171,7 @@ export function PlayerDevelopmentReportPage() {
                 <div>
                   <Link to={`/player/${r.playerId}`} className="font-medium text-sm hover:underline">{r.playerName}</Link>
                   {players[r.playerId] && (
-                    <PlayerStarRating stars={getPlayerStarRating(players[r.playerId])} className="scale-[0.75] origin-left" />
+                    <PlayerStarRating stars={getPlayerStarRating(players[r.playerId])} player={players[r.playerId]} className="scale-[0.75] origin-left" />
                   )}
                 </div>
                 <div className="flex items-center gap-2">

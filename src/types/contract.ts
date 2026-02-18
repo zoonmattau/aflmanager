@@ -8,16 +8,82 @@ export type ContractClauseType =
   | 'limited-trade'
   | 'home-state'
   | 'contender-only'
+  | 'player-option'
+  | 'team-option'
+  | 'vesting'
+  | 'role-promise'
+  | 'leadership-promise'
   | 'performance-bonus'
   | 'games-bonus'
   | 'finals-bonus'
+  | 'awards-bonus'
+  | 'goals-bonus'
+
+export type ContractMilestoneType =
+  | 'games-played'
+  | 'awards'
+  | 'goals'
+  | 'team-finals'
+
+export interface ContractVestingCondition {
+  type: ContractMilestoneType
+  threshold: number
+}
 
 export interface ContractClause {
   type: ContractClauseType
   vetoClubIds?: string[]           // limited-trade
   preferredState?: string          // home-state
-  bonusAmount?: number             // all bonus types
-  bonusThreshold?: { stat: string; value: number }  // performance-bonus
+  bonusAmount?: number             // bonus / vesting amount
+  bonusThreshold?: { stat: string; value: number }  // stat-driven bonuses
+  appliesToYear?: number           // 1-based contract year
+  optionYear?: number              // 1-based option year
+  vestingCondition?: ContractVestingCondition
+  promisedPosition?: import('./player').PlayerPositionType
+  leadershipLevel?: 'group' | 'vice-captain' | 'captain'
+  note?: string
+}
+
+export type NegotiationDemandType =
+  | 'salary'
+  | 'term'
+  | 'role-promise'
+  | 'leadership-group-role'
+  | 'contender-ambition'
+  | 'home-state-preference'
+  | 'no-trade-clause'
+  | 'limited-trade-clause'
+  | 'performance-incentives'
+  | 'option-control'
+  | 'vesting-protection'
+
+export interface NegotiationDemand {
+  type: NegotiationDemandType
+  priority: 'low' | 'medium' | 'high'
+  targetValue?: string
+}
+
+export interface NegotiationConcessions {
+  promisedPosition?: import('./player').PlayerPositionType
+  leadershipGroupRole?: boolean
+  contenderAmbition?: boolean
+  homeStateSupport?: boolean
+  noTradeClause?: boolean
+}
+
+export interface NegotiationFeedbackItem {
+  type: NegotiationDemandType
+  priority: 'low' | 'medium' | 'high'
+  satisfiedByOffer: boolean
+  message: string
+  actionHint: string
+}
+
+export interface NegotiationFeedback {
+  summary: string
+  signableNow: boolean
+  requiredForSignature: NegotiationDemandType[]
+  items: NegotiationFeedbackItem[]
 }
 
 // Contract structure type
@@ -31,6 +97,7 @@ export interface NegotiationOffer {
   structure: ContractStructure
   clauses: ContractClause[]
   incentiveTotal: number
+  concessions?: NegotiationConcessions
 }
 
 // A single exchange in the negotiation
@@ -58,6 +125,8 @@ export interface ActiveNegotiation {
   clubId: string
   status: NegotiationStatus
   playerDemand: NegotiationOffer    // What the player wants (updated on counters)
+  demandProfile: NegotiationDemand[] // Explicit asks that drive counters
+  latestFeedback: NegotiationFeedback | null
   rounds: NegotiationRound[]        // Full history
   maxRounds: number                 // Auto-expire after this many exchanges
   cooldownRemaining: number         // Ticks until player responds

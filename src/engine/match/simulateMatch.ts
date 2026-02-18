@@ -1,5 +1,12 @@
 import { SeededRNG } from '@/engine/core/rng'
-import { QUARTERS_PER_MATCH, POSSESSIONS_PER_QUARTER, POINTS_PER_GOAL, POINTS_PER_BEHIND } from '@/engine/core/constants'
+import {
+  QUARTERS_PER_MATCH,
+  POSSESSIONS_PER_QUARTER,
+  POINTS_PER_GOAL,
+  POINTS_PER_BEHIND,
+  POSITION_LINE,
+  getLineupSlots,
+} from '@/engine/core/constants'
 import { createDefaultGameplan } from '@/engine/gameplan/defaults'
 import type { Match, MatchResult, MatchPlayerStats, QuarterScore, MatchKeyEvent } from '@/types/match'
 import type { Player } from '@/types/player'
@@ -10,8 +17,9 @@ import { getRoleSimulationMultiplier } from '@/engine/player/roles'
 import { isPlayerSuspended } from '@/engine/players/availability'
 import { getMoraleModifier } from '@/engine/players/morale'
 import { getClutchModifier } from '@/engine/leadership/leadershipEngine'
-import { CLUB_DEFAULT_VENUES, VENUES, VENUE_NAME_TO_ID } from '@/data/venues'
-import { getClubState } from '@/engine/venues/venueEngine'
+import { VENUES, VENUE_NAME_TO_ID } from '@/data/venues'
+import { calculateMatchAttendanceFull, getVenueFamiliarityRatingBonus } from '@/engine/venues/venueEngine'
+import type { LadderEntry } from '@/types/season'
 import { getCultureMatchModifier } from '@/engine/culture/cultureEngine'
 import { getTacticalModifiers } from '@/engine/core/tacticalIdentity'
 import type { TacticalIdentity } from '@/types/club'
@@ -35,6 +43,13 @@ interface SimulateMatchInput {
   injuryFrequency?: 'low' | 'medium' | 'high'
   venueHGA?: number
   travelFatigue?: { home: number; away: number }
+  ladder?: LadderEntry[]
+  isBlockbuster?: boolean
+  isRivalry?: boolean
+  homeLineupPlayerIds?: string[]
+  awayLineupPlayerIds?: string[]
+  homeSubstituteId?: string | null
+  awaySubstituteId?: string | null
 }
 
 type WeatherCondition = 'clear' | 'windy' | 'wet' | 'hot' | 'humid'
@@ -76,6 +91,21 @@ interface TacticalRuntime {
   focusByTarget: Map<string, TacticalTargetFocus>
   fatigueLoadByPlayer: Map<string, number>
   interceptBoostByPlayer: Map<string, number>
+}
+
+type TeamLine = 'DEF' | 'MID' | 'FWD' | 'RK'
+type RebalancedStat = 'disposals' | 'marks' | 'tackles'
+
+const TEAM_STAT_TARGETS: Record<RebalancedStat, { base: number; spread: number }> = {
+  disposals: { base: 358, spread: 28 },
+  marks: { base: 84, spread: 10 },
+  tackles: { base: 61, spread: 9 },
+}
+
+const TEAM_LINE_SHARES: Record<RebalancedStat, Record<TeamLine, number>> = {
+  disposals: { DEF: 0.31, MID: 0.45, FWD: 0.17, RK: 0.07 },
+  marks: { DEF: 0.38, MID: 0.32, FWD: 0.22, RK: 0.08 },
+  tackles: { DEF: 0.26, MID: 0.44, FWD: 0.23, RK: 0.07 },
 }
 
 function intensityToWeight(intensity: 'light' | 'standard' | 'hard'): number {
@@ -145,11 +175,51 @@ function buildTacticalRuntime(
   return { focusByTarget, fatigueLoadByPlayer, interceptBoostByPlayer }
 }
 
-function getClubPlayers(players: Record<string, Player>, clubId: string): Player[] {
-  return Object.values(players)
+function getClubPlayers(
+  players: Record<string, Player>,
+  clubId: string,
+  requiredCount: number,
+  selectedPlayerIds?: string[],
+): Player[] {
+  const available = Object.values(players)
     .filter((p) => p.clubId === clubId && !p.injury && !isPlayerSuspended(p) && p.fitness >= 50)
     .sort((a, b) => getOverall(b) - getOverall(a))
-    .slice(0, 22) // Best 22
+
+  const byId = new Map(available.map((p) => [p.id, p]))
+  const selected: Player[] = []
+  const selectedIds = new Set<string>()
+  for (const playerId of selectedPlayerIds ?? []) {
+    if (selectedIds.has(playerId)) continue
+    const player = byId.get(playerId)
+    if (!player) continue
+    selected.push(player)
+    selectedIds.add(playerId)
+    if (selected.length >= requiredCount) break
+  }
+  if (selected.length < requiredCount) {
+    for (const player of available) {
+      if (selectedIds.has(player.id)) continue
+      selected.push(player)
+      selectedIds.add(player.id)
+      if (selected.length >= requiredCount) break
+    }
+  }
+  return selected
+}
+
+function pickSubstitute(
+  availablePlayers: Player[],
+  selectedPlayers: Player[],
+  preferredSubId?: string | null,
+): Player | null {
+  const selectedIds = new Set(selectedPlayers.map((p) => p.id))
+  const candidates = availablePlayers.filter((p) => !selectedIds.has(p.id))
+  if (candidates.length === 0) return null
+  if (preferredSubId) {
+    const preferred = candidates.find((p) => p.id === preferredSubId)
+    if (preferred) return preferred
+  }
+  return candidates[0]
 }
 
 function getOverall(p: Player): number {
@@ -186,17 +256,6 @@ function getTeamRating(players: Player[]): number {
 function resolveVenueId(name: string, explicitId?: string): string | undefined {
   if (explicitId && VENUES[explicitId]) return explicitId
   return VENUE_NAME_TO_ID[name]
-}
-
-function computeVenueFamiliarityBonus(clubId: string, venueId: string | undefined): number {
-  if (!venueId || !VENUES[venueId]) return 0
-  const linked = CLUB_DEFAULT_VENUES[clubId]
-  if (linked?.primary === venueId) return 2.4
-  if (linked?.secondary === venueId) return 1.4
-  const venue = VENUES[venueId]
-  const clubState = getClubState(clubId)
-  if (venue.state === clubState) return 0.9
-  return 0
 }
 
 function generateWeatherModifiers(
@@ -677,8 +736,25 @@ export function simulateMatch(input: SimulateMatchInput): Match {
   const pointsPerGoal = matchRules?.pointsPerGoal ?? POINTS_PER_GOAL
   const pointsPerBehind = matchRules?.pointsPerBehind ?? POINTS_PER_BEHIND
 
-  const homePlayers = getClubPlayers(players, homeClubId)
-  const awayPlayers = getClubPlayers(players, awayClubId)
+  const interchangePlayers = Math.max(0, Math.min(8, matchRules?.interchangePlayers ?? 5))
+  const requiredSelected = getLineupSlots(interchangePlayers).length
+
+  const homeAvailablePlayers = Object.values(players)
+    .filter((p) => p.clubId === homeClubId && !p.injury && !isPlayerSuspended(p) && p.fitness >= 50)
+    .sort((a, b) => getOverall(b) - getOverall(a))
+  const awayAvailablePlayers = Object.values(players)
+    .filter((p) => p.clubId === awayClubId && !p.injury && !isPlayerSuspended(p) && p.fitness >= 50)
+    .sort((a, b) => getOverall(b) - getOverall(a))
+
+  const homePlayers = getClubPlayers(players, homeClubId, requiredSelected, input.homeLineupPlayerIds)
+  const awayPlayers = getClubPlayers(players, awayClubId, requiredSelected, input.awayLineupPlayerIds)
+  const substitutesEnabled = Boolean(matchRules?.enableSubstitutes)
+  const homeSubstitute = substitutesEnabled
+    ? pickSubstitute(homeAvailablePlayers, homePlayers, input.homeSubstituteId)
+    : null
+  const awaySubstitute = substitutesEnabled
+    ? pickSubstitute(awayAvailablePlayers, awayPlayers, input.awaySubstituteId)
+    : null
 
   const homeRating = getTeamRating(homePlayers)
   const awayRating = getTeamRating(awayPlayers)
@@ -706,8 +782,8 @@ export function simulateMatch(input: SimulateMatchInput): Match {
   const homeTactical = buildTacticalRuntime(input.matchupTacticsByClub?.[homeClubId], homePlayers, awayPlayers)
   const awayTactical = buildTacticalRuntime(input.matchupTacticsByClub?.[awayClubId], awayPlayers, homePlayers)
   const suspensionStrictness = input.realism?.tacticalSuspensionConsequences ? 1 : 0.55
-  const homeVenueFamiliarity = computeVenueFamiliarityBonus(homeClubId, venueId)
-  const awayVenueFamiliarity = computeVenueFamiliarityBonus(awayClubId, venueId)
+  const homeVenueFamiliarity = getVenueFamiliarityRatingBonus(homeClubId, venueId)
+  const awayVenueFamiliarity = getVenueFamiliarityRatingBonus(awayClubId, venueId)
 
   // Home advantage: dynamic from venue system, or fallback to 3
   const homeAdvantage = input.venueHGA ?? 3
@@ -718,9 +794,29 @@ export function simulateMatch(input: SimulateMatchInput): Match {
   const adjustedHomeRating = (homeRating + homeAdvantage + homeVenueFamiliarity - homeTravelPenalty) * homeCultureMod
   const adjustedAwayRating = (awayRating + awayVenueFamiliarity - awayTravelPenalty) * awayCultureMod
 
+  // Calculate attendance
+  const homeStarCount = homePlayers.filter((p) => getOverall(p) >= 80).length
+  const awayStarCount = awayPlayers.filter((p) => getOverall(p) >= 80).length
+  const attendanceResult = venueId
+    ? calculateMatchAttendanceFull({
+        venueId,
+        homeClubId,
+        awayClubId,
+        clubs,
+        ladder: input.ladder ?? [],
+        isFinal: !!isFinal,
+        finalType,
+        isBlockbuster: input.isBlockbuster ?? false,
+        isRivalry: input.isRivalry ?? false,
+        homeStarCount,
+        awayStarCount,
+        rng,
+      })
+    : null
+
   // Initialize stats
-  const homeStats = initPlayerStats(homePlayers)
-  const awayStats = initPlayerStats(awayPlayers)
+  const homeStats = initPlayerStats(homePlayers, homeSubstitute)
+  const awayStats = initPlayerStats(awayPlayers, awaySubstitute)
 
   const homeScores: QuarterScore[] = []
   const awayScores: QuarterScore[] = []
@@ -1063,6 +1159,30 @@ export function simulateMatch(input: SimulateMatchInput): Match {
   const homeTotalScore = homeScores.reduce((s, q) => s + q.total, 0)
   const awayTotalScore = awayScores.reduce((s, q) => s + q.total, 0)
 
+  if (substitutesEnabled) {
+    applySubstituteStrategy({
+      rng,
+      teamStats: homeStats,
+      teamPlayers: homePlayers,
+      substitute: homeSubstitute,
+      teamScore: homeTotalScore,
+      opponentScore: awayTotalScore,
+      gameplan: resolvedHomeGameplan,
+    })
+    applySubstituteStrategy({
+      rng,
+      teamStats: awayStats,
+      teamPlayers: awayPlayers,
+      substitute: awaySubstitute,
+      teamScore: awayTotalScore,
+      opponentScore: homeTotalScore,
+      gameplan: resolvedAwayGameplan,
+    })
+  }
+
+  rebalanceTeamStatProfile(rng, homeStats, homePlayers, homeMods, weather)
+  rebalanceTeamStatProfile(rng, awayStats, awayPlayers, awayMods, weather)
+
   // Background disciplinary frees to avoid zero-heavy distributions.
   for (const [teamStats, teamPlayers, teamRisk] of [
     [homeStats, homePlayers, homeTeamFreeRisk],
@@ -1072,6 +1192,7 @@ export function simulateMatch(input: SimulateMatchInput): Match {
     for (const stat of teamStats) {
       const player = playerMap.get(stat.playerId)
       if (!player) continue
+      if (stat.selectedAsSubstitute && !stat.participated) continue
       const playerRisk = getPlayerFreeRiskMultiplier(player, weather)
       const backgroundAgainstChance = clampChance(0.16 * (teamRisk - 0.45) * playerRisk)
       const bonusAgainst = rng.chance(backgroundAgainstChance) ? rng.nextInt(0, 2) : 0
@@ -1086,7 +1207,11 @@ export function simulateMatch(input: SimulateMatchInput): Match {
       const extraLoad =
         (homeTactical.fatigueLoadByPlayer.get(stat.playerId) ?? 0) +
         (awayTactical.fatigueLoadByPlayer.get(stat.playerId) ?? 0)
-      stat.minutesPlayed = Math.min(120, estimateMinutesPlayed(stat) + Math.round(extraLoad * rng.nextInt(3, 6)))
+      if (!stat.participated && stat.minutesPlayed <= 0) continue
+      stat.minutesPlayed = Math.min(120, stat.minutesPlayed > 0
+        ? stat.minutesPlayed + Math.round(extraLoad * rng.nextInt(1, 3))
+        : estimateMinutesPlayed(stat) + Math.round(extraLoad * rng.nextInt(3, 6)))
+      stat.participated = stat.minutesPlayed > 0
     }
   }
 
@@ -1116,6 +1241,8 @@ export function simulateMatch(input: SimulateMatchInput): Match {
       },
       ratingInputs: { home: adjustedHomeRating, away: adjustedAwayRating },
       umpiringRisk: { home: homeTeamFreeRisk, away: awayTeamFreeRisk },
+      attendance: attendanceResult?.attendance,
+      capacityPct: attendanceResult?.capacityPct,
     },
   }
 
@@ -1132,9 +1259,173 @@ export function simulateMatch(input: SimulateMatchInput): Match {
   }
 }
 
-function initPlayerStats(players: Player[]): MatchPlayerStats[] {
-  return players.map((p) => ({
+function rebalanceTeamStatProfile(
+  rng: SeededRNG,
+  teamStats: MatchPlayerStats[],
+  teamPlayers: Player[],
+  mods: GameplanModifiers,
+  weather: WeatherModifiers,
+): void {
+  if (teamStats.length === 0 || teamPlayers.length === 0) return
+  const playerById = new Map(teamPlayers.map((p) => [p.id, p]))
+
+  const paceMult = clampMultiplier(1 + mods.possessionBonus / 180, 0.9, 1.08) * weather.possessionMult
+  const contestMult = clampMultiplier(1 + (mods.contestedMult - 1) * 0.45 + (weather.contestedMult - 1) * 0.4, 0.9, 1.12)
+  const marksMult = clampMultiplier(weather.markMult * mods.markMult, 0.84, 1.08)
+
+  const disposalTarget = Math.max(
+    285,
+    Math.round((TEAM_STAT_TARGETS.disposals.base + rng.nextInt(-TEAM_STAT_TARGETS.disposals.spread, TEAM_STAT_TARGETS.disposals.spread + 1)) * paceMult),
+  )
+  const marksTarget = Math.max(
+    58,
+    Math.round((TEAM_STAT_TARGETS.marks.base + rng.nextInt(-TEAM_STAT_TARGETS.marks.spread, TEAM_STAT_TARGETS.marks.spread + 1)) * marksMult * (0.95 + paceMult * 0.05)),
+  )
+  const tacklesTarget = Math.max(
+    36,
+    Math.round((TEAM_STAT_TARGETS.tackles.base + rng.nextInt(-TEAM_STAT_TARGETS.tackles.spread, TEAM_STAT_TARGETS.tackles.spread + 1)) * contestMult),
+  )
+
+  const disposalAllocation = allocateTeamStatByLine(rng, teamStats, teamPlayers, 'disposals', disposalTarget)
+  const marksAllocation = allocateTeamStatByLine(rng, teamStats, teamPlayers, 'marks', marksTarget)
+  const tacklesAllocation = allocateTeamStatByLine(rng, teamStats, teamPlayers, 'tackles', tacklesTarget)
+
+  for (let i = 0; i < teamStats.length; i++) {
+    const stat = teamStats[i]
+    const player = playerById.get(stat.playerId)
+
+    const oldDisposals = Math.max(0, stat.disposals)
+    const newDisposals = Math.max(0, disposalAllocation[i] ?? 0)
+    const oldKickShare = oldDisposals > 0
+      ? stat.kicks / oldDisposals
+      : player
+        ? clampChance(0.48 + (getGranularRatings(player).kicking - 50) / 250)
+        : 0.55
+    const kicks = Math.min(newDisposals, Math.round(newDisposals * oldKickShare))
+    stat.disposals = newDisposals
+    stat.kicks = kicks
+    stat.handballs = Math.max(0, newDisposals - kicks)
+
+    const oldContestedShare = oldDisposals > 0
+      ? stat.contestedPossessions / oldDisposals
+      : player
+        ? clampChance(0.28 + (player.attributes.contested + player.attributes.clearance + player.attributes.hardness) / 460)
+        : 0.38
+    const contested = Math.max(0, Math.min(newDisposals, Math.round(newDisposals * oldContestedShare)))
+    stat.contestedPossessions = contested
+    stat.uncontestedPossessions = Math.max(0, newDisposals - contested)
+    stat.uncountestedPossessions = stat.uncontestedPossessions
+
+    const metresPerDisposal = oldDisposals > 0 ? stat.metresGained / oldDisposals : 11
+    stat.metresGained = Math.max(0, Math.round(newDisposals * metresPerDisposal))
+
+    const marks = Math.max(0, marksAllocation[i] ?? 0)
+    stat.marks = marks
+    stat.contestedMarks = Math.min(marks, stat.contestedMarks)
+
+    stat.tackles = Math.max(0, tacklesAllocation[i] ?? 0)
+  }
+}
+
+function allocateTeamStatByLine(
+  rng: SeededRNG,
+  stats: MatchPlayerStats[],
+  players: Player[],
+  stat: RebalancedStat,
+  teamTarget: number,
+): number[] {
+  const playerById = new Map(players.map((p) => [p.id, p]))
+  const idxByLine: Record<TeamLine, number[]> = { DEF: [], MID: [], FWD: [], RK: [] }
+  for (let i = 0; i < stats.length; i++) {
+    const player = playerById.get(stats[i].playerId)
+    const line: TeamLine = player ? POSITION_LINE[player.position.primary] : 'MID'
+    idxByLine[line].push(i)
+  }
+
+  const lineTargets = allocateByWeights(
+    teamTarget,
+    (['DEF', 'MID', 'FWD', 'RK'] as TeamLine[]).map((line) => TEAM_LINE_SHARES[stat][line]),
+  )
+
+  const allocation = new Array<number>(stats.length).fill(0)
+  for (const [lineIndex, line] of (['DEF', 'MID', 'FWD', 'RK'] as TeamLine[]).entries()) {
+    const indices = idxByLine[line]
+    if (indices.length === 0) continue
+    const lineTarget = lineTargets[lineIndex] ?? 0
+    if (lineTarget <= 0) continue
+
+    const weights = indices.map((idx) => {
+      const s = stats[idx]
+      const player = playerById.get(s.playerId)
+      const g = player ? getGranularRatings(player) : null
+      const selectedAsSub = s.selectedAsSubstitute ? 0.42 : 1
+      if (stat === 'disposals') {
+        const base = 2.6 + s.disposals * 0.9
+        const skill = g ? ((g.decisionMaking + g.endurance + g.kicking) / 150) : 1
+        return Math.max(0.25, base * skill * selectedAsSub)
+      }
+      if (stat === 'marks') {
+        const base = 0.9 + s.marks * 0.95
+        const skill = g ? ((g.marking + g.intercepting) / 170) : 1
+        return Math.max(0.2, base * skill * selectedAsSub)
+      }
+      const base = 1.1 + s.tackles * 0.95
+      const skill = g ? ((g.tackling + g.strength) / 165) : 1
+      return Math.max(0.2, base * skill * selectedAsSub)
+    })
+
+    const lineAlloc = allocateByWeights(lineTarget, weights, rng)
+    for (let i = 0; i < indices.length; i++) {
+      allocation[indices[i]] += lineAlloc[i] ?? 0
+    }
+  }
+  return allocation
+}
+
+function allocateByWeights(total: number, weights: number[], rng?: SeededRNG): number[] {
+  if (weights.length === 0) return []
+  const safe = weights.map((w) => Math.max(0, Number.isFinite(w) ? w : 0))
+  const sum = safe.reduce((acc, w) => acc + w, 0)
+  if (sum <= 0) {
+    const even = Math.floor(total / weights.length)
+    const out = new Array<number>(weights.length).fill(even)
+    let rem = total - even * weights.length
+    let cursor = 0
+    while (rem > 0) {
+      out[cursor % out.length] += 1
+      rem--
+      cursor++
+    }
+    return out
+  }
+
+  const scaled = safe.map((w) => (w / sum) * total)
+  const floored = scaled.map((v) => Math.floor(v))
+  let remainder = total - floored.reduce((acc, v) => acc + v, 0)
+  const order = scaled
+    .map((v, idx) => ({
+      idx,
+      frac: v - floored[idx],
+      tie: rng ? rng.next() : idx / scaled.length,
+    }))
+    .sort((a, b) => {
+      if (b.frac !== a.frac) return b.frac - a.frac
+      return b.tie - a.tie
+    })
+
+  let cursor = 0
+  while (remainder > 0 && order.length > 0) {
+    floored[order[cursor % order.length].idx] += 1
+    remainder--
+    cursor++
+  }
+  return floored
+}
+
+function initPlayerStats(players: Player[], substitute?: Player | null): MatchPlayerStats[] {
+  const stats: MatchPlayerStats[] = players.map((p) => ({
     playerId: p.id,
+    participated: false,
     minutesPlayed: 0,
     aflFantasyPoints: 0,
     superCoachPoints: 0,
@@ -1164,6 +1455,100 @@ function initPlayerStats(players: Player[]): MatchPlayerStats[] {
     clangers: 0,
     goalAssists: 0,
   }))
+  if (substitute) {
+    stats.push({
+      playerId: substitute.id,
+      participated: false,
+      selectedAsSubstitute: true,
+      minutesPlayed: 0,
+      aflFantasyPoints: 0,
+      superCoachPoints: 0,
+      disposals: 0,
+      kicks: 0,
+      handballs: 0,
+      marks: 0,
+      tackles: 0,
+      goals: 0,
+      behinds: 0,
+      hitouts: 0,
+      contestedPossessions: 0,
+      uncontestedPossessions: 0,
+      uncountestedPossessions: 0,
+      clearances: 0,
+      insideFifties: 0,
+      rebound50s: 0,
+      freesFor: 0,
+      freesAgainst: 0,
+      contestedMarks: 0,
+      scoreInvolvements: 0,
+      metresGained: 0,
+      turnovers: 0,
+      intercepts: 0,
+      onePercenters: 0,
+      bounces: 0,
+      clangers: 0,
+      goalAssists: 0,
+    })
+  }
+  return stats
+}
+
+function applySubstituteStrategy(params: {
+  rng: SeededRNG
+  teamStats: MatchPlayerStats[]
+  teamPlayers: Player[]
+  substitute: Player | null
+  teamScore: number
+  opponentScore: number
+  gameplan: ClubGameplan
+}): void {
+  const { rng, teamStats, substitute, teamScore, opponentScore, gameplan } = params
+  if (!substitute) return
+  const subStats = teamStats.find((s) => s.playerId === substitute.id)
+  if (!subStats) return
+
+  const margin = Math.abs(teamScore - opponentScore)
+  const trailing = teamScore < opponentScore
+  const comfortablyAhead = teamScore - opponentScore >= 24
+  let activateChance = 0.28
+  if (margin <= 18) activateChance += 0.2
+  if (trailing) activateChance += 0.12
+  if (gameplan.rotations === 'high') activateChance += 0.1
+  if (gameplan.aggression === 'high') activateChance += 0.04
+  if (comfortablyAhead) activateChance -= 0.12
+  if (!rng.chance(clampChance(activateChance))) return
+
+  subStats.participated = true
+  subStats.minutesPlayed = rng.nextInt(16, 42)
+
+  const impactScale = subStats.minutesPlayed / 120
+  const ratings = getGranularRatings(substitute)
+  const disposals = Math.max(2, Math.round(3 + impactScale * (9 + ratings.decisionMaking / 16) + rng.nextInt(0, 3)))
+  const kickShare = clampChance(0.45 + (ratings.kicking - 50) / 220)
+  const kicks = Math.min(disposals, Math.round(disposals * kickShare))
+  const handballs = Math.max(0, disposals - kicks)
+  const tackles = Math.max(0, Math.round(impactScale * (2 + ratings.tackling / 45) + rng.nextInt(0, 2)))
+
+  subStats.disposals += disposals
+  subStats.kicks += kicks
+  subStats.handballs += handballs
+  subStats.tackles += tackles
+  subStats.contestedPossessions += Math.max(0, Math.round(disposals * 0.42))
+  subStats.uncontestedPossessions += Math.max(0, disposals - subStats.contestedPossessions)
+  subStats.uncountestedPossessions = subStats.uncontestedPossessions
+  subStats.marks += Math.max(0, Math.round(disposals * 0.25))
+  subStats.clearances += Math.max(0, Math.round(impactScale * (1 + ratings.decisionMaking / 80)))
+  subStats.insideFifties += Math.max(0, Math.round(impactScale * (1 + ratings.kicking / 90)))
+  subStats.rebound50s += Math.max(0, Math.round(impactScale * (1 + ratings.intercepting / 90)))
+  subStats.metresGained += Math.round(disposals * (12 + ratings.speed / 7))
+  subStats.intercepts += Math.max(0, Math.round(impactScale * (ratings.intercepting / 70)))
+  subStats.onePercenters += Math.max(0, Math.round(impactScale * (ratings.spoiling / 95)))
+  if (rng.chance(clampChance(0.08 + ratings.goalSense * 0.001))) {
+    subStats.goals += 1
+    subStats.scoreInvolvements += 1
+  } else if (rng.chance(clampChance(0.1 + ratings.goalSense * 0.0012))) {
+    subStats.behinds += 1
+  }
 }
 
 interface ClutchContext {

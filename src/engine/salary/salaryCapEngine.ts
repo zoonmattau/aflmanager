@@ -118,13 +118,13 @@ export function validateTradeCapImpact(
 export function validateContractOffer(
   players: Player[],
   clubId: string,
-  proposedAAV: number,
+  proposedCapHit: number,
   currentPlayerSalary: number,
   salaryCap: number,
   softCapEnabled: boolean,
 ): CapValidationResult {
   const currentSpend = calculateClubSalaryTotal(players, clubId)
-  const netChange = proposedAAV - currentPlayerSalary
+  const netChange = proposedCapHit - currentPlayerSalary
   return validateCapImpact(currentSpend, netChange, salaryCap, softCapEnabled)
 }
 

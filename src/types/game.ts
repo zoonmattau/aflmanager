@@ -1,5 +1,5 @@
 import type { Club } from './club'
-import type { Player } from './player'
+import type { LineupSlot, Player } from './player'
 import type { Season, LadderEntry, MatchDay, PowerRankingSnapshot } from './season'
 import type { Match } from './match'
 import type { StaffMember } from './staff'
@@ -9,7 +9,7 @@ import type { GameHistory } from './history'
 import type { GameCalendar, WeekSchedule } from './calendar'
 import type { TrainingWeekPlan } from '@/engine/training/trainingEngine'
 import type { SeasonAwards, BrownlowRound } from './awards'
-import type { StateLeague, StateLeagueId } from './stateLeague'
+import type { StateLeague, StateLeagueId, StateLeagueAffiliationSettings } from './stateLeague'
 import type { OffseasonState } from '@/engine/season/offseasonFlow'
 import type { FinalsFormat } from './finals'
 import type { SeasonVenueState } from './venue'
@@ -53,6 +53,7 @@ export interface MatchRulesSettings {
   quartersPerMatch: number       // default 4
   possessionsMultiplier: number  // default 1.0, range 0.5–2.0 (base ~140 possessions)
   interchangePlayers: number     // default 5 (0-8, 2026 AFL rules)
+  enableSubstitutes: boolean     // default false (adds 1 tactical substitute per team)
 }
 
 export interface LadderPointsSettings {
@@ -225,17 +226,81 @@ export interface ReservesSystemState {
   promotionWatchlist: string[]
   delegationEnabled: boolean
   managedLineupPlayerIds: string[]
+  managedLineupSlotAssignments: Partial<Record<LineupSlot, string>>
+  playerAvailabilityAssignments: Record<string, 'play' | 'rest'>
+  lastSelectedLineupPlayerIds: string[]
+  leadership: {
+    captainId: string | null
+    viceCaptainId: string | null
+    leadershipGroupIds: string[]
+  }
   tactics: {
     tempo: 'slow' | 'balanced' | 'fast'
     aggression: 'low' | 'balanced' | 'high'
     youthFocus: boolean
   }
+  stateLeagueContractDelegationEnabled: boolean
+  stateLeagueContractTargetCount: number
+}
+
+export interface SavedLineupMatchRulesMeta {
+  interchangePlayers: number
+  enableSubstitutes: boolean
+  quartersPerMatch: number
+}
+
+export interface SavedLineupReservesSnapshot {
+  managedLineupPlayerIds: string[]
+  managedLineupSlotAssignments: Partial<Record<LineupSlot, string>>
+  playerAvailabilityAssignments: Record<string, 'play' | 'rest'>
+}
+
+export interface SavedLineup {
+  id: string
+  name: string
+  clubId: string
+  savedAt: string
+  seasonYear: number
+  round: number
+  opponentClubId: string | null
+  matchRules: SavedLineupMatchRulesMeta
+  lineup: Record<string, string>
+  benchPlayerIds: string[]
+  substitutePlayerId: string | null
+  weeklyGameplanSnapshot: {
+    overrides: Partial<ClubGameplan>
+    matchupTactics: WeeklyMatchupTactics
+    opponentClubId: string | null
+  } | null
+  reservesSnapshot: SavedLineupReservesSnapshot | null
+}
+
+export type ShortlistTargetType = 'player' | 'prospect'
+export type ShortlistPriority = 'low' | 'medium' | 'high' | 'critical'
+
+export interface ShortlistEntry {
+  targetType: ShortlistTargetType
+  targetId: string
+  note: string
+  priority: ShortlistPriority
+  addedAt: string
+  updatedAt: string
+}
+
+export interface Shortlist {
+  id: string
+  name: string
+  createdAt: string
+  updatedAt: string
+  entries: ShortlistEntry[]
 }
 
 export interface GameSettings {
   difficulty: 'easy' | 'medium' | 'hard' | 'custom'
   simSpeed: 'instant' | 'fast' | 'normal'
   leagueMode: 'real' | 'fictional' | 'custom'
+  leagueNamingTemplate: 'real-life' | 'fictional'
+  includePathwayLeagues: boolean
   teamCount: number
   seasonStructure: SeasonStructureSettings
   matchRules: MatchRulesSettings
@@ -260,8 +325,27 @@ export interface GameSettings {
   }
   customRivalryPairs?: Array<[string, string]>
   specialEvents: SpecialEventsSettings
+  notifications: NotificationSettings
+  stateLeagueAffiliations: StateLeagueAffiliationSettings
   seasonStartDate: string        // ISO date, default '2026-03-20'
   gameStartDate: string          // ISO date, day after previous GF, default computed from startingYear
+}
+
+export interface SigningNotificationPreferences {
+  starThreshold: number
+  inApp: boolean
+  email: boolean
+  dailyDigest: boolean
+}
+
+export interface NotificationSettings {
+  signings: SigningNotificationPreferences
+}
+
+export interface JumperManagementState {
+  pending: boolean
+  seasonYear: number | null
+  lastCompletedYear: number | null
 }
 
 export interface SimulationStatus {
@@ -284,6 +368,14 @@ export interface NewsItem {
   clubIds: string[]     // Related clubs
   playerIds: string[]   // Related players
   read?: boolean        // Undefined = unread (backward-compatible with old saves)
+  media?: {
+    reporterName: string
+    outletName: string
+    outletType: 'tv' | 'radio' | 'newspaper' | 'internet'
+    tone: 'straight' | 'rumour' | 'controversy' | 'analysis' | 'match-report'
+    factBasis: string
+    sourceNewsId?: string
+  }
 }
 
 export interface GameState {
@@ -308,10 +400,17 @@ export interface GameState {
 
   // News & history
   newsLog: NewsItem[]
+  emailLog: NewsItem[]
   rngSeed: number                // Seeded PRNG state
+  signingInteractionPlayerIds: string[]
+  signingWatchlistPlayerIds: string[]
+  signingShortlistPlayerIds: string[]
+  shortlists: Shortlist[]
 
   // Lineup for user's club (player IDs assigned to positions)
   selectedLineup: Record<string, string> | null
+  selectedSubstituteId: string | null
+  savedLineups: SavedLineup[]
 
   // Draft data
   draft: DraftState | null
@@ -377,6 +476,7 @@ export interface GameState {
 
   // Global blocking simulation/loading UX
   simulation: SimulationStatus
+  jumperManagement: JumperManagementState
 }
 
 export interface WeeklyGameplan {

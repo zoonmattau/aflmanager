@@ -1,6 +1,7 @@
 import type { DraftProspect } from '@/types/draft'
 import type { LineupSlot, Player, PlayerPositionType } from '@/types/player'
 import { POSITION_LINE, SLOT_POSITION_COMPATIBILITY } from '@/engine/core/constants'
+import { getPlayerPositionRatings } from '@/engine/player/playerRating'
 
 export type PositionLine = 'DEF' | 'MID' | 'FWD' | 'RK'
 
@@ -38,7 +39,7 @@ export function getPlayerEligiblePositionTypes(
   }
 
   if (resolved.includeRated) {
-    const ratingEntries = Object.entries(player.position.ratings)
+    const ratingEntries = Object.entries(getPlayerPositionRatings(player))
       .filter(([, rating]) => typeof rating === 'number' && rating >= resolved.ratedThreshold)
       .sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0))
 

@@ -5,7 +5,12 @@
  * definitions to generate fixtures, resolve matchups, and determine the premier.
  */
 
-import type { FinalsFormat } from '@/types/finals'
+import type {
+  FinalsFormat,
+  FinalsMatchupRule,
+  FinalsWeekDefinition,
+  TeamSource,
+} from '@/types/finals'
 
 // ── AFL Top 8 (current AFL system) ──────────────────────────────────────────
 
@@ -576,8 +581,6 @@ export function generateStandardKnockout(n: number): FinalsFormat {
     const pairCount = prevPairCount / 2
 
     for (let m = 0; m < pairCount; m++) {
-      const slotA = m * 2
-      const slotB = m * 2 + 1
       // Map back to original bracket pair indices for this round
       const origSlotA = m * 2 * Math.pow(2, round - 2)
       const origSlotB = (m * 2 + 1) * Math.pow(2, round - 2)

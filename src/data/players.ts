@@ -11,6 +11,7 @@ import type {
   PlayerAttributes,
   PlayerCareerStats,
   PlayerContract,
+  PlayerJumperPreference,
   PlayerPersonality,
   PlayerPosition,
   PlayerPositionType,
@@ -24,6 +25,8 @@ import {
 import { deriveAgentArchetype } from '@/engine/player/agentPersonality'
 import { getClubState } from '@/engine/venues/venueEngine'
 import { MINIMUM_SALARY } from '@/engine/core/constants'
+import { auditAndNormalizeAttributes } from '@/engine/player/attributeAudit'
+import { syncPlayerPositionRatings } from '@/engine/player/playerRating'
 
 // ---------------------------------------------------------------------------
 // Types internal to generation
@@ -371,10 +374,235 @@ const ALL_ATTRIBUTE_KEYS: (keyof PlayerAttributes)[] = [
   'centreBounce', 'boundaryThrowIn', 'stoppage',
 ]
 
+type AttributeBounds = { min: number; max: number }
+
+const POSITION_ATTRIBUTE_BOUNDS: Record<PlayerPositionType, Partial<Record<keyof PlayerAttributes, AttributeBounds>>> = {
+  BP: {
+    kickingDistance: { min: 38, max: 82 },
+    setShot: { min: 28, max: 72 },
+    goalkicking: { min: 28, max: 72 },
+    hitouts: { min: 5, max: 35 },
+    ruckCreative: { min: 5, max: 34 },
+    followUp: { min: 8, max: 44 },
+  },
+  FB: {
+    kickingDistance: { min: 36, max: 80 },
+    setShot: { min: 28, max: 72 },
+    goalkicking: { min: 28, max: 70 },
+    hitouts: { min: 5, max: 42 },
+    ruckCreative: { min: 5, max: 38 },
+    followUp: { min: 10, max: 46 },
+  },
+  HBF: {
+    hitouts: { min: 5, max: 36 },
+    ruckCreative: { min: 5, max: 34 },
+    followUp: { min: 10, max: 44 },
+  },
+  CHB: {
+    setShot: { min: 30, max: 76 },
+    goalkicking: { min: 30, max: 76 },
+    hitouts: { min: 5, max: 50 },
+    ruckCreative: { min: 5, max: 42 },
+    followUp: { min: 10, max: 52 },
+  },
+  W: {
+    hitouts: { min: 5, max: 30 },
+    ruckCreative: { min: 5, max: 28 },
+    followUp: { min: 8, max: 36 },
+    markingContested: { min: 28, max: 78 },
+    setShot: { min: 34, max: 80 },
+  },
+  IM: {
+    hitouts: { min: 5, max: 36 },
+    ruckCreative: { min: 5, max: 34 },
+    followUp: { min: 12, max: 48 },
+  },
+  OM: {
+    hitouts: { min: 5, max: 30 },
+    ruckCreative: { min: 5, max: 28 },
+    followUp: { min: 10, max: 40 },
+    centreBounce: { min: 30, max: 86 },
+  },
+  RK: {
+    kickingEfficiency: { min: 30, max: 82 },
+    kickingDistance: { min: 28, max: 78 },
+    setShot: { min: 24, max: 74 },
+    dropPunt: { min: 30, max: 80 },
+    snap: { min: 20, max: 70 },
+    fieldKicking: { min: 30, max: 78 },
+    goalkicking: { min: 22, max: 72 },
+    hitouts: { min: 60, max: 96 },
+    ruckCreative: { min: 52, max: 94 },
+    followUp: { min: 44, max: 90 },
+    centreBounce: { min: 32, max: 84 },
+    boundaryThrowIn: { min: 38, max: 90 },
+    stoppage: { min: 40, max: 92 },
+  },
+  HFF: {
+    hitouts: { min: 5, max: 34 },
+    ruckCreative: { min: 5, max: 30 },
+    followUp: { min: 8, max: 38 },
+    oneOnOne: { min: 26, max: 82 },
+    spoiling: { min: 22, max: 78 },
+  },
+  CHF: {
+    hitouts: { min: 5, max: 58 },
+    ruckCreative: { min: 5, max: 52 },
+    followUp: { min: 10, max: 64 },
+    intercept: { min: 24, max: 82 },
+    spoiling: { min: 24, max: 80 },
+  },
+  FP: {
+    hitouts: { min: 5, max: 24 },
+    ruckCreative: { min: 5, max: 22 },
+    followUp: { min: 8, max: 28 },
+    markingOverhead: { min: 20, max: 76 },
+    markingContested: { min: 22, max: 78 },
+  },
+  FF: {
+    hitouts: { min: 5, max: 48 },
+    ruckCreative: { min: 5, max: 42 },
+    followUp: { min: 10, max: 56 },
+    intercept: { min: 20, max: 78 },
+    spoiling: { min: 20, max: 76 },
+  },
+}
+
 function getOverall(attrs: PlayerAttributes): number {
   let total = 0
   for (const key of ALL_ATTRIBUTE_KEYS) total += attrs[key]
   return total / ALL_ATTRIBUTE_KEYS.length
+}
+
+function centeredNoise(rng: SeededRNG, amplitude: number): number {
+  const tri = (rng.next() + rng.next() + rng.next()) / 3
+  return (tri - 0.5) * 2 * amplitude
+}
+
+function getBaseAttributeBounds(
+  attr: keyof PlayerAttributes,
+  age: number,
+  isRookie: boolean,
+  competitionStrength: CompetitionStrength,
+): AttributeBounds {
+  let min = 34
+  let max = 90
+
+  if (competitionStrength === 'state-strong') {
+    min = 26
+    max = 84
+  } else if (competitionStrength === 'state-weak') {
+    min = 18
+    max = 78
+  }
+
+  if (isRookie) {
+    min -= 4
+    max -= 5
+  }
+
+  const cat = attrCategory(attr)
+  if (cat === 'mental') {
+    min += 2
+    max += 2
+    if (age <= 21) {
+      max -= 4
+    } else if (age >= 30) {
+      min += 2
+      max += 1
+    }
+  } else if (cat === 'physical') {
+    if (age <= 21) {
+      min -= 1
+      max -= 1
+    } else if (age >= 31) {
+      max -= 4
+    }
+  }
+
+  return { min: clamp(min, 5, 95), max: clamp(max, min + 6, 97) }
+}
+
+function resolveAttributeBounds(
+  primary: PlayerPositionType,
+  attr: keyof PlayerAttributes,
+  age: number,
+  isRookie: boolean,
+  competitionStrength: CompetitionStrength,
+): AttributeBounds {
+  const base = getBaseAttributeBounds(attr, age, isRookie, competitionStrength)
+  const posBounds = POSITION_ATTRIBUTE_BOUNDS[primary]?.[attr]
+  if (!posBounds) return base
+  return {
+    min: Math.max(base.min, posBounds.min),
+    max: Math.min(base.max, posBounds.max),
+  }
+}
+
+function applyEliteRarity(
+  value: number,
+  attr: keyof PlayerAttributes,
+  bias: number,
+  targetOverall: number,
+  primary: PlayerPositionType,
+  rng: SeededRNG,
+): number {
+  let adjusted = value
+  if (adjusted > 88) adjusted = 88 + (adjusted - 88) * 0.55
+  if (adjusted > 93) adjusted = 93 + (adjusted - 93) * 0.35
+
+  const isTrueSpecialist = bias >= 0.85
+  const isElitePlayer = targetOverall >= 86
+  const rare99Gate = isTrueSpecialist && isElitePlayer && rng.chance(primary === 'RK' && attr === 'hitouts' ? 0.02 : 0.01)
+  const rare96Gate = (isTrueSpecialist || isElitePlayer) && rng.chance(0.08)
+
+  if (adjusted > 95 && !rare96Gate) {
+    adjusted = 95 - rng.nextFloat(0, 1.4)
+  }
+  const rounded = Math.round(adjusted)
+  if (rounded >= 99 && !rare99Gate) {
+    return 98
+  }
+  return rounded
+}
+
+function normalizeAttributesToTarget(
+  attrs: Record<keyof PlayerAttributes, number>,
+  targetOverall: number,
+  biases: Partial<Record<keyof PlayerAttributes, number>>,
+  boundsByAttr: Record<keyof PlayerAttributes, AttributeBounds>,
+): void {
+  for (let pass = 0; pass < 8; pass++) {
+    const currentOverall = getOverall(attrs as PlayerAttributes)
+    const delta = targetOverall - currentOverall
+    if (Math.abs(delta) <= 0.12) break
+
+    const increasing = delta > 0
+    let totalWeight = 0
+    const weights = {} as Record<keyof PlayerAttributes, number>
+    for (const key of ALL_ATTRIBUTE_KEYS) {
+      const bounds = boundsByAttr[key]
+      const room = increasing ? bounds.max - attrs[key] : attrs[key] - bounds.min
+      if (room <= 0) {
+        weights[key] = 0
+        continue
+      }
+      const bias = biases[key] ?? 0
+      const identityWeight = increasing ? (0.8 + bias * 1.5) : (1.0 + (1 - bias) * 0.8)
+      const weight = identityWeight * (1 + room / 18)
+      weights[key] = weight
+      totalWeight += weight
+    }
+
+    if (totalWeight <= 0.001) break
+    for (const key of ALL_ATTRIBUTE_KEYS) {
+      const weight = weights[key]
+      if (weight <= 0) continue
+      const step = (delta * weight) / totalWeight * 1.45
+      const bounds = boundsByAttr[key]
+      attrs[key] = clamp(Math.round(attrs[key] + step), bounds.min, bounds.max)
+    }
+  }
 }
 
 function pickTargetOverall(
@@ -401,12 +629,12 @@ function pickTargetOverall(
     return rng.nextInt(18, 27)
   }
 
-  // AFL: average around 70 with clear star/good/depth spread.
-  if (roll < 0.08) return isRookie ? rng.nextInt(74, 84) : rng.nextInt(90, 97) // stars
-  if (roll < 0.30) return isRookie ? rng.nextInt(66, 76) : rng.nextInt(80, 89) // good players
-  if (roll < 0.63) return isRookie ? rng.nextInt(58, 70) : rng.nextInt(68, 79) // regular AFL standard
-  if (roll < 0.88) return isRookie ? rng.nextInt(46, 60) : rng.nextInt(55, 67) // lower-end AFL list
-  return isRookie ? rng.nextInt(28, 48) : rng.nextInt(30, 54) // scrubbers / fringe
+  // AFL: centered around ~70 overall, with thin top-end tail.
+  if (roll < 0.04) return isRookie ? rng.nextInt(72, 80) : rng.nextInt(84, 90)
+  if (roll < 0.26) return isRookie ? rng.nextInt(64, 72) : rng.nextInt(74, 82)
+  if (roll < 0.76) return isRookie ? rng.nextInt(56, 66) : rng.nextInt(66, 74)
+  if (roll < 0.96) return isRookie ? rng.nextInt(48, 58) : rng.nextInt(58, 65)
+  return isRookie ? rng.nextInt(38, 48) : rng.nextInt(48, 57)
 }
 
 function ageOverallAdjustment(age: number): number {
@@ -424,50 +652,43 @@ function ageOverallAdjustment(age: number): number {
  */
 function generateAttributes(
   rng: SeededRNG,
+  primary: PlayerPositionType,
   age: number,
   biases: Partial<Record<keyof PlayerAttributes, number>>,
   isRookie: boolean,
   competitionStrength: CompetitionStrength,
 ): PlayerAttributes {
   const baseTarget = pickTargetOverall(rng, isRookie, competitionStrength)
-  const targetOverall = clamp(baseTarget + ageOverallAdjustment(age) + (isRookie ? -3 : 0), 18, 98)
-
+  const targetOverall = clamp(baseTarget + ageOverallAdjustment(age) + (isRookie ? -2 : 0), 20, 92)
   const attrs = {} as Record<keyof PlayerAttributes, number>
+  const boundsByAttr = {} as Record<keyof PlayerAttributes, AttributeBounds>
+
   for (const attr of ALL_ATTRIBUTE_KEYS) {
     const bias = biases[attr] ?? 0
+    const bounds = resolveAttributeBounds(primary, attr, age, isRookie, competitionStrength)
+    boundsByAttr[attr] = bounds
     const cat = attrCategory(attr)
-    const catWeight =
-      cat === 'physical' ? ageMultiplier(age, 'physical') * 1.02
-      : cat === 'mental' ? ageMultiplier(age, 'mental') * 0.98
-      : ageMultiplier(age, 'general')
-
-    const base = targetOverall + rng.nextFloat(-14, 14)
-    const biasBoost = bias > 0 ? rng.nextFloat(3, 12) * bias : -rng.nextFloat(0, 5) * (1 - bias)
-    attrs[attr] = clamp(Math.round(base + biasBoost + (catWeight - 1) * 10), 1, 99)
-  }
-
-  // Special: hitouts, ruckCreative, and followUp should be very low for non-rucks
-  if (!biases.hitouts || biases.hitouts < 0.3) {
-    attrs.hitouts = clamp(rng.nextInt(5, 20), 1, 100)
-    attrs.ruckCreative = clamp(rng.nextInt(5, 20), 1, 100)
-    attrs.followUp = clamp(rng.nextInt(5, 20), 1, 100)
+    const catMult = ageMultiplier(age, cat)
+    const spread = cat === 'mental' ? 8 : cat === 'physical' ? 9 : 10
+    const base = targetOverall + centeredNoise(rng, spread)
+    const biasShift = bias * 10 - (1 - bias) * 3.5
+    const ageShift = (catMult - 1) * 8
+    const raw = base + biasShift + ageShift
+    const bounded = clamp(raw, bounds.min, bounds.max)
+    attrs[attr] = clamp(applyEliteRarity(bounded, attr, bias, targetOverall, primary, rng), bounds.min, bounds.max)
   }
 
   // Leadership scales heavily with age
   if (age >= 28) {
-    attrs.leadership = clamp(attrs.leadership + rng.nextInt(5, 15), 1, 100)
+    const bounds = boundsByAttr.leadership
+    attrs.leadership = clamp(attrs.leadership + rng.nextInt(4, 10), bounds.min, bounds.max)
   } else if (age <= 21) {
-    attrs.leadership = clamp(attrs.leadership - rng.nextInt(5, 15), 1, 100)
+    const bounds = boundsByAttr.leadership
+    attrs.leadership = clamp(attrs.leadership - rng.nextInt(3, 8), bounds.min, bounds.max)
   }
 
-  // Normalize final overall to keep generated distribution close to target.
-  const overallBefore = getOverall(attrs as PlayerAttributes)
-  const delta = targetOverall - overallBefore
-  if (Math.abs(delta) > 0.4) {
-    for (const key of ALL_ATTRIBUTE_KEYS) {
-      attrs[key] = clamp(Math.round(attrs[key] + delta), 1, 99)
-    }
-  }
+  // Bounded normalization preserves position identity while nudging toward target.
+  normalizeAttributesToTarget(attrs, targetOverall, biases, boundsByAttr)
 
   return attrs as PlayerAttributes
 }
@@ -504,6 +725,26 @@ function generatePersonality(rng: SeededRNG): PlayerPersonality {
     loyalty: rng.nextInt(25, 95),
     professionalism: rng.nextInt(35, 95),
     temperament: rng.nextInt(30, 95),
+  }
+}
+
+function generateJumperPreference(
+  rng: SeededRNG,
+  currentNumber: number,
+): PlayerJumperPreference | undefined {
+  const roll = rng.nextFloat(0, 1)
+  if (roll >= 0.55) return undefined
+
+  const level: PlayerJumperPreference['level'] = roll < 0.16 ? 'demand' : 'want'
+  const preferredCount = level === 'demand' ? rng.nextInt(1, 2) : rng.nextInt(1, 3)
+  const preferred = new Set<number>([currentNumber])
+  while (preferred.size < preferredCount) {
+    preferred.add(rng.nextInt(1, 50))
+  }
+
+  return {
+    level,
+    preferredNumbers: Array.from(preferred).sort((a, b) => a - b),
   }
 }
 
@@ -851,12 +1092,16 @@ export function generatePlayers(
     // --- Position ---
     const position = generatePosition(rng, tmpl.primary, tmpl.secondary)
 
-    // --- Attributes ---
-    const attributes = generateAttributes(rng, age, tmpl.biases, isRookie, competitionStrength)
-    const overall = getOverall(attributes)
-
     // --- Hidden ---
     const hiddenAttributes = generateHiddenAttributes(rng, age)
+
+    // --- Attributes ---
+    const generatedAttributes = generateAttributes(rng, tmpl.primary, age, tmpl.biases, isRookie, competitionStrength)
+    const { attributes } = auditAndNormalizeAttributes(tmpl.primary, generatedAttributes, {
+      stage: 'generation',
+      hiddenAttributes,
+    })
+    const overall = getOverall(attributes)
 
     // --- Personality ---
     const personality = generatePersonality(rng)
@@ -891,6 +1136,8 @@ export function generatePlayers(
       dateOfBirth: generateDOB(rng, age),
       clubId,
       jerseyNumber: jersey,
+      jumperHistory: [{ year: 2026, clubId, jumperNumber: jersey }],
+      jumperPreference: generateJumperPreference(rng, jersey),
       height,
       weight,
       position,
@@ -919,7 +1166,11 @@ export function generatePlayers(
       injuryHistory: [],
       trainingFocus: null,
       upskillPlans: [],
+      contractTier: 'afl-listed',
+      stateLeagueContract: null,
+      contractHistory: [],
     }
+    syncPlayerPositionRatings(player)
 
     players.push(player)
   }
@@ -929,6 +1180,53 @@ export function generatePlayers(
   }
 
   return players
+}
+
+export function generateStateLeagueContractPlayers(
+  clubId: string,
+  seed: number,
+  targetCount: number,
+  signedDate = '2026-01-01',
+): Player[] {
+  const source = generatePlayers(`${clubId}-state`, seed, {
+    competitionStrength: 'state-strong',
+    enforceCapCompliance: false,
+  })
+
+  return source.slice(0, Math.max(0, targetCount)).map((player, idx) => {
+    const yearsRemaining = (idx % 3 === 0) ? 2 : 1
+    const annualValue = 55_000 + ((idx % 8) * 5_000)
+    const contract = {
+      ...player.contract,
+      yearsRemaining: 0,
+      aav: 0,
+      yearByYear: [],
+      isRestricted: false,
+    }
+    return {
+      ...player,
+      id: `${clubId}-state-player-${String(idx + 1).padStart(3, '0')}`,
+      clubId,
+      listStatus: 'reserves',
+      isRookie: false,
+      contract,
+      jumperHistory: [{ year: Number(signedDate.slice(0, 4)), clubId, jumperNumber: player.jerseyNumber }],
+      contractTier: 'state-league',
+      stateLeagueContract: {
+        yearsRemaining,
+        annualValue,
+        signedDate,
+        source: 'affiliate',
+      },
+      contractHistory: [{
+        date: signedDate,
+        type: 'state-sign',
+        note: 'Signed to affiliate state-league contract.',
+      }],
+      careerStats: emptyStats(),
+      seasonStats: emptyStats(),
+    } satisfies Player
+  })
 }
 
 // ---------------------------------------------------------------------------

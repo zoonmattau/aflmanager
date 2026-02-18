@@ -1,16 +1,13 @@
 import { useMemo, useState } from 'react'
 import type { Player } from '@/types/player'
-import type { TrainingWeekPlan, PlayerFitnessBreakdown } from '@/engine/training/trainingEngine'
+import type { TrainingWeekPlan } from '@/engine/training/trainingEngine'
 import { buildFitnessBreakdown } from '@/engine/training/trainingEngine'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import {
-  Users,
   Activity,
-  Heart,
   AlertTriangle,
   Shield,
   Zap,

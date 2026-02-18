@@ -44,6 +44,7 @@ import {
   Settings2,
   ChevronLeft,
   ChevronRight,
+  Users,
 } from 'lucide-react'
 
 const MATCH_DAY_ORDER: MatchDay[] = [
@@ -392,6 +393,7 @@ export function MatchDayPage() {
   }, [playerFixture, selectedFixtureKey, sortedFixtures])
   const homeClub = selectedFixture ? clubs[selectedFixture.homeClubId] : null
   const awayClub = selectedFixture ? clubs[selectedFixture.awayClubId] : null
+  const selectedFixtureResult = selectedFixture ? getFixtureResult(matchResults, displayRoundIdx, selectedFixture) : null
 
   const ladderByClub = useMemo(() => {
     const map = new Map<string, { rank: number; points: number; percentage: number }>()
@@ -591,6 +593,8 @@ export function MatchDayPage() {
         players,
         clubs,
         seed: rngSeed + currentRound * 100 + i,
+        matchRules: settings.matchRules,
+        realism: settings.realism,
       }),
     )
 
@@ -912,9 +916,14 @@ export function MatchDayPage() {
                       </div>
                     </div>
 
-                    <div className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
-                      <MapPin className="h-3 w-3" />
-                      {fixture.venue}
+                    <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                      <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{fixture.venue}</span>
+                      {result?.result?.simulationContext?.attendance != null && (
+                        <span className="inline-flex items-center gap-1">
+                          <Users className="h-3 w-3" />
+                          {result.result.simulationContext.attendance.toLocaleString()}
+                        </span>
+                      )}
                     </div>
                   </button>
                 )
@@ -950,6 +959,15 @@ export function MatchDayPage() {
                   <span className="inline-flex items-center gap-1"><Calendar className="h-3 w-3" />{MATCH_DAY_LABELS[selectedFixture.matchDay ?? 'Saturday-Twilight']}</span>
                   {selectedFixture.scheduledTime ? <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" />{selectedFixture.scheduledTime}</span> : null}
                   <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{selectedFixture.venue}</span>
+                  {selectedFixtureResult?.result?.simulationContext?.attendance != null && (
+                    <span className="inline-flex items-center gap-1">
+                      <Users className="h-3 w-3" />
+                      {selectedFixtureResult.result.simulationContext.attendance.toLocaleString()}
+                      {selectedFixtureResult.result.simulationContext.capacityPct != null && (
+                        <span className="text-muted-foreground">({selectedFixtureResult.result.simulationContext.capacityPct}%)</span>
+                      )}
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -1101,6 +1119,21 @@ function MatchResultView({
               <span className="font-bold">{awayClub?.abbreviation}</span>
             </div>
           </div>
+          {result.simulationContext && (
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-xs text-muted-foreground">
+              <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{match.venue}</span>
+              {result.simulationContext.attendance != null && (
+                <span className="inline-flex items-center gap-1">
+                  <Users className="h-3 w-3" />
+                  {result.simulationContext.attendance.toLocaleString()}
+                  {result.simulationContext.capacityPct != null && (
+                    <span>({result.simulationContext.capacityPct}%)</span>
+                  )}
+                </span>
+              )}
+              <span>{result.simulationContext.weather}, {result.simulationContext.groundCondition}</span>
+            </div>
+          )}
         </CardContent>
       </Card>
 

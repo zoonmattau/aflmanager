@@ -3,13 +3,17 @@ import type { Player } from '@/types/player'
 import type { Club } from '@/types/club'
 import type { LineupSlot } from '@/types/player'
 import { selectBestLineup } from '@/engine/ai/lineupSelection'
+import { getOverallRating } from '@/engine/player/playerRating'
 import { OPPOSITE_SLOT } from './fieldConstants'
+import { getPositionBadgeStrongClass } from '@/lib/positionColor'
 
 export interface OppositionOverlayProps {
   oppositionClubId: string
   players: Record<string, Player>
   clubs: Record<string, Club>
   slotPositions: Array<{ slot: LineupSlot; top: number; left: number }>
+  interchangeCount: number
+  onPlayerClick?: (playerId: string) => void
 }
 
 
@@ -18,12 +22,17 @@ export function OppositionOverlay({
   players,
   clubs,
   slotPositions,
+  interchangeCount,
+  onPlayerClick,
 }: OppositionOverlayProps) {
   const oppositionLineup = useMemo(() => {
     const allPlayers = Object.values(players)
-    const result = selectBestLineup(allPlayers, oppositionClubId)
+    const result = selectBestLineup(allPlayers, oppositionClubId, {
+      interchangePlayers: interchangeCount,
+      club: clubs[oppositionClubId],
+    })
     return result.lineup
-  }, [players, oppositionClubId])
+  }, [players, oppositionClubId, interchangeCount, clubs])
 
   const club = clubs[oppositionClubId]
   const clubColor = club?.colors.primary ?? '#ef4444'
@@ -46,9 +55,14 @@ export function OppositionOverlay({
         if (!pos) return null
 
         const surname =
-          player.lastName.length > 7
-            ? player.lastName.slice(0, 6) + '.'
+          player.lastName.length > 12
+            ? player.lastName.slice(0, 11) + '.'
             : player.lastName
+        const displayName = `${player.firstName.charAt(0)}. ${surname}`
+        const overall = getOverallRating(player)
+        const verticalOffset = pos.top <= 50
+          ? 'calc(clamp(26px, 3.9vw, 46px) + 4px)'
+          : 'calc(-1 * (clamp(26px, 3.9vw, 46px) + 4px))'
 
         return (
           <div
@@ -57,24 +71,27 @@ export function OppositionOverlay({
             style={{
               top: `${pos.top}%`,
               left: `${pos.left}%`,
-              transform: 'translate(calc(-50% + 38px), calc(-50% - 18px))',
+              transform: `translate(-50%, calc(-50% + ${verticalOffset}))`,
             }}
           >
             <div
-              className="flex h-[28px] w-[68px] items-center gap-1 rounded-md border px-1 opacity-80"
+              className="pointer-events-auto flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] cursor-pointer items-center gap-[clamp(3px,0.45vw,7px)] rounded-md border px-[clamp(3px,0.55vw,7px)] opacity-85 shadow-sm transition-opacity hover:opacity-100"
               style={{
                 borderColor: `${clubColor}99`,
                 backgroundColor: `${clubColor}3d`,
               }}
+              onClick={() => onPlayerClick?.(player.id)}
             >
-              <span className="w-5 text-center text-[8px] font-bold leading-none text-zinc-200">
+              <span className="hidden min-[1150px]:block w-[clamp(18px,1.8vw,28px)] text-center text-[clamp(8px,1vw,12px)] font-bold leading-none text-zinc-200">
                 #{player.jerseyNumber}
               </span>
-              <div className="min-w-0 leading-tight">
-                <span className="block truncate text-[8px] text-zinc-100">{surname}</span>
-                <span className="text-[7px] text-zinc-300">{player.position.primary}</span>
-              </div>
-            </div>
+                    <div className="min-w-0 leading-tight">
+                      <span className="block truncate text-[clamp(7px,0.82vw,10px)] text-zinc-100">{displayName}</span>
+                      <span className="block truncate text-[clamp(6px,0.72vw,9px)] text-zinc-300">
+                        <span className={`rounded border px-1 py-0 ${getPositionBadgeStrongClass(player.position.primary)}`}>{player.position.primary}</span> OVR {overall}
+                      </span>
+                    </div>
+                  </div>
           </div>
         )
       })}

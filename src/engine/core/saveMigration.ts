@@ -76,6 +76,40 @@ function inferFromGameplan(gameplan: AnyGameState): TacticalIdentity {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyGameState = any
 
+function hashToUnit(input: string): number {
+  let hash = 2166136261
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0) / 4294967295
+}
+
+function buildLegacyJumperPreference(player: AnyGameState): AnyGameState | undefined {
+  const basis = String(player?.id ?? `${player?.firstName ?? ''}${player?.lastName ?? ''}`)
+  const roll = hashToUnit(`jp:${basis}`)
+  if (roll >= 0.55) return undefined
+
+  const level = roll < 0.16 ? 'demand' : 'want'
+  const preferred = new Set<number>()
+  if (Number.isInteger(player?.jerseyNumber) && player.jerseyNumber >= 1 && player.jerseyNumber <= 50) {
+    preferred.add(player.jerseyNumber)
+  }
+
+  const targetCount = level === 'demand' ? 1 : 2
+  let salt = 0
+  while (preferred.size < targetCount) {
+    const candidate = 1 + Math.floor(hashToUnit(`${basis}:${salt}`) * 50)
+    if (candidate >= 1 && candidate <= 50) preferred.add(candidate)
+    salt++
+  }
+
+  return {
+    level,
+    preferredNumbers: Array.from(preferred).sort((a, b) => a - b),
+  }
+}
+
 /**
  * Migrate an entire game state's player positions from old to new format.
  * Mutates the state in place.
@@ -148,6 +182,10 @@ export function migrateGameState(state: AnyGameState): void {
         newRatings[newKey] = Math.max(newRatings[newKey] ?? 0, value)
       }
       player.position.ratings = newRatings
+    }
+
+    if (!player.jumperPreference) {
+      player.jumperPreference = buildLegacyJumperPreference(player)
     }
   }
 }

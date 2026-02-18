@@ -24,7 +24,7 @@ import type { StaffMember } from '@/types/staff'
 import type { Club } from '@/types/club'
 import type { Fixture, LadderEntry } from '@/types/season'
 import type { GamePhase } from '@/types/game'
-import type { GameEvent, GameEventType, ScheduleSlot, WeekSchedule } from '@/types/calendar'
+import type { GameEvent, GameEventType, ScheduleSlot } from '@/types/calendar'
 import type { TrainingFocus, TrainingSession } from '@/engine/training/trainingEngine'
 import {
   runTrainingSessions,
@@ -48,6 +48,7 @@ import {
   formatOffseasonDateTime,
 } from '@/engine/offseason/offseasonCalendar'
 import { RecommendedActions } from '@/components/dashboard/RecommendedActions'
+import { ClubListNeedsCard } from '@/components/dashboard/ClubListNeedsCard'
 import { OffseasonPhaseCard } from '@/components/dashboard/OffseasonPhaseCard'
 import { PhaseProgressCard } from '@/components/dashboard/PhaseProgressCard'
 import { OffseasonCalendarOverlay } from '@/components/dashboard/OffseasonCalendarOverlay'
@@ -56,7 +57,9 @@ import { selectBestLineup } from '@/engine/ai/lineupSelection'
 import { getLineupSlots } from '@/engine/core/constants'
 import { calculateClubSalaryTotal, calculateLuxuryTax } from '@/engine/contracts/negotiation'
 import { isPlayerSuspended } from '@/engine/players/availability'
+import { canBeSelectedForAfl } from '@/engine/players/contracts'
 import { PLAYER_TRAINING_FOCUS_LABELS } from '@/engine/players/trainingFocus'
+import { applyMediaCoverage, deriveMediaStories } from '@/engine/media/mediaFeedEngine'
 
 // ---------------------------------------------------------------------------
 // Calendar constants
@@ -72,19 +75,6 @@ const EVENT_COLORS: Record<GameEventType, string> = {
   milestone: 'bg-pink-500',
   'special-event': 'bg-amber-500',
   tribunal: 'bg-orange-500',
-}
-
-const EVENT_LABELS: Record<GameEventType, string> = {
-  match: 'Match',
-  training: 'Training',
-  'contract-deadline': 'Contract',
-  'trade-deadline': 'Trade',
-  draft: 'Draft',
-  'preseason-friendly': 'Friendly',
-  bye: 'Bye',
-  milestone: 'Event',
-  'special-event': 'Exhibition',
-  tribunal: 'Tribunal',
 }
 
 const SHORT_DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -147,11 +137,6 @@ const FOCUS_POSITION_GROUPS: Record<TrainingFocus, PositionGroup[]> = {
 const SLOT_FATIGUE: Record<'morning' | 'afternoon', number> = {
   morning: 8,    // moderate intensity
   afternoon: 3,  // light intensity
-}
-
-const SLOT_FITNESS: Record<'morning' | 'afternoon', number> = {
-  morning: 1,    // moderate intensity
-  afternoon: 2,  // light intensity
 }
 
 // Broad skill area that each training focus contributes to
@@ -302,6 +287,7 @@ function sanitizePreviewLineup(
     const player = players[playerId]
     if (!player) continue
     if (player.clubId !== clubId) continue
+    if (!canBeSelectedForAfl(player)) continue
     if (player.injury || isPlayerSuspended(player) || player.fitness < 50) continue
     next[slot] = playerId
     seen.add(playerId)
@@ -314,14 +300,13 @@ function sanitizePreviewLineup(
 // ---------------------------------------------------------------------------
 
 interface ScheduleSlotCellProps {
-  date: string
   slot: ScheduleSlot
   activity: TrainingFocus | 'rest' | null
   isPast: boolean
   onSelect: (activity: TrainingFocus | 'rest' | null) => void
 }
 
-function ScheduleSlotCell({ date, slot, activity, isPast, onSelect }: ScheduleSlotCellProps) {
+function ScheduleSlotCell({ slot, activity, isPast, onSelect }: ScheduleSlotCellProps) {
   const label = slot === 'morning' ? 'AM' : 'PM'
 
   if (isPast) {
@@ -416,11 +401,12 @@ export function DashboardPage() {
   const clearWeekSchedule = useGameStore((s) => s.clearWeekSchedule)
   const clearTrainingWeekPlan = useGameStore((s) => s.clearTrainingWeekPlan)
   const players = useGameStore((s) => s.players)
-  const staff = useGameStore((s) => s.staff)
   const newsLog = useGameStore((s) => s.newsLog)
+  const emailLog = useGameStore((s) => s.emailLog)
   const manager = useGameStore((s) => s.manager)
   const reserves = useGameStore((s) => s.reserves)
   const selectedLineup = useGameStore((s) => s.selectedLineup)
+  const selectedSubstituteId = useGameStore((s) => s.selectedSubstituteId)
   const trainingWeekPlan = useGameStore((s) => s.trainingWeekPlan)
   const currentDate = useGameStore((s) => s.currentDate)
   const simulationActive = useGameStore((s) => s.simulation.active)
@@ -450,7 +436,10 @@ export function DashboardPage() {
     setWeekStart(getWeekStart(effectiveDate))
   }, [effectiveDate])
 
-  const unreadCount = useMemo(() => newsLog.filter((n) => !n.read).length, [newsLog])
+  const unreadCount = useMemo(
+    () => newsLog.filter((n) => !n.read).length + emailLog.filter((n) => !n.read).length,
+    [newsLog, emailLog],
+  )
 
   const club = clubs[playerClubId]
   const ladderEntry = ladder.find((e) => e.clubId === playerClubId)
@@ -701,7 +690,7 @@ export function DashboardPage() {
             targetLabel = PLAYER_TRAINING_FOCUS_LABELS[completion.targetLabel as keyof typeof PLAYER_TRAINING_FOCUS_LABELS] ?? completion.targetLabel
           }
 
-          s.newsLog.push({
+          const baseNews = applyMediaCoverage({
             id: crypto.randomUUID(),
             date: s.currentDate,
             headline: `${player.firstName} ${player.lastName} completed ${targetLabel} upskilling`,
@@ -712,6 +701,14 @@ export function DashboardPage() {
             clubIds: [s.playerClubId],
             playerIds: [player.id],
           })
+          if (!s.newsLog.some((item) => item.id === baseNews.id)) {
+            s.newsLog.push(baseNews)
+          }
+          for (const derived of deriveMediaStories(baseNews)) {
+            if (!s.newsLog.some((item) => item.id === derived.id)) {
+              s.newsLog.push(derived)
+            }
+          }
         }
       })
     }
@@ -1274,14 +1271,12 @@ export function DashboardPage() {
                     /* Non-match day: morning/afternoon slots */
                     <div className="flex flex-col flex-1 gap-0.5 px-1.5 pb-1.5 mt-1">
                       <ScheduleSlotCell
-                        date={day.date}
                         slot="morning"
                         activity={daySchedule?.morning ?? null}
                         isPast={isPastDay}
                         onSelect={(activity) => setDaySlot(day.date, 'morning', activity)}
                       />
                       <ScheduleSlotCell
-                        date={day.date}
                         slot="afternoon"
                         activity={daySchedule?.afternoon ?? null}
                         isPast={isPastDay}
@@ -1425,7 +1420,9 @@ export function DashboardPage() {
               players={players}
               clubs={clubs}
               selectedLineup={selectedLineup}
+              selectedSubstituteId={selectedSubstituteId}
               interchangePlayers={settings.matchRules.interchangePlayers}
+              substitutesEnabled={settings.matchRules.enableSubstitutes}
               potentialMatchups={potentialMatchups}
             />
           )}
@@ -1462,6 +1459,7 @@ export function DashboardPage() {
             </Card>
           )}
           <RecommendedActions />
+          <ClubListNeedsCard />
         </div>
       </div>
 
@@ -1809,7 +1807,9 @@ interface MatchupCardProps {
   players: Record<string, Player>
   clubs: Record<string, Club>
   selectedLineup: Record<string, string> | null
+  selectedSubstituteId: string | null
   interchangePlayers: number
+  substitutesEnabled: boolean
   potentialMatchups: MatchupOption[]
 }
 
@@ -1864,7 +1864,9 @@ function MatchupCard({
   players,
   clubs,
   selectedLineup,
+  selectedSubstituteId,
   interchangePlayers,
+  substitutesEnabled,
   potentialMatchups,
 }: MatchupCardProps) {
   const [showStrategies, setShowStrategies] = useState(false)
@@ -1879,13 +1881,21 @@ function MatchupCard({
     return potentialMatchups[0]
   }, [potentialMatchups, selectedPotentialKey])
   const userPreviewLineup = useMemo(() => {
-    const fallback = selectBestLineup(Object.values(players), playerClubId).lineup
+    const fallback = selectBestLineup(
+      Object.values(players),
+      playerClubId,
+      { interchangePlayers, club: clubs[playerClubId] },
+    ).lineup
     return sanitizePreviewLineup(selectedLineup ?? fallback, players, playerClubId, interchangePlayers)
-  }, [players, playerClubId, selectedLineup, interchangePlayers])
+  }, [players, playerClubId, selectedLineup, interchangePlayers, clubs])
   const oppositionPreviewLineup = useMemo(() => {
     if (!selectedPotential || selectedPotential.kind !== 'match') return {}
-    return selectBestLineup(Object.values(players), selectedPotential.opponentId).lineup
-  }, [players, selectedPotential])
+    return selectBestLineup(
+      Object.values(players),
+      selectedPotential.opponentId,
+      { interchangePlayers, club: clubs[selectedPotential.opponentId] },
+    ).lineup
+  }, [players, selectedPotential, interchangePlayers, clubs])
   const previewCountdown = useMemo(() => {
     if (!selectedPotential) return null
     const now = new Date(currentDate + 'T00:00:00').getTime()
@@ -2110,6 +2120,8 @@ function MatchupCard({
                       userClub={clubs[playerClubId]}
                       opponentClub={clubs[selectedPotential.opponentId]}
                       interchangeCount={interchangePlayers}
+                      substitutesEnabled={substitutesEnabled}
+                      userSubstituteId={selectedSubstituteId}
                     />
                   </div>
                 )}

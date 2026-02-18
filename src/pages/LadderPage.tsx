@@ -116,6 +116,7 @@ function CareerLeadersTable({
                     {players[entry.playerId] && (
                       <PlayerStarRating
                         stars={getPlayerStarRating(players[entry.playerId])}
+                        player={players[entry.playerId]}
                         className="scale-[0.75] origin-left"
                       />
                     )}
@@ -600,6 +601,7 @@ export function LadderPage() {
                           {players[r.playerId] && (
                             <PlayerStarRating
                               stars={getPlayerStarRating(players[r.playerId])}
+                              player={players[r.playerId]}
                               className="scale-[0.75] origin-left"
                             />
                           )}
@@ -689,6 +691,7 @@ export function LadderPage() {
                                   {p && (
                                     <PlayerStarRating
                                       stars={getPlayerStarRating(p)}
+                                      player={p}
                                       className="scale-[0.75] origin-left"
                                     />
                                   )}
@@ -753,6 +756,7 @@ export function LadderPage() {
                                 {p && (
                                   <PlayerStarRating
                                     stars={getPlayerStarRating(p)}
+                                    player={p}
                                     className="scale-[0.75] origin-left"
                                   />
                                 )}
@@ -796,7 +800,7 @@ export function LadderPage() {
                           >
                             {p.firstName} {p.lastName} ({clubs[p.clubId]?.abbreviation})
                           </Link>
-                          <PlayerStarRating stars={getPlayerStarRating(p)} className="scale-[0.75] origin-left" />
+                          <PlayerStarRating stars={getPlayerStarRating(p)} player={p} className="scale-[0.75] origin-left" />
                         </div>
                       ) : (
                         <span className="text-muted-foreground">Unknown</span>

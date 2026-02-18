@@ -158,7 +158,7 @@ function ListingRow({
               <p className="font-medium text-sm truncate">
                 {listing.playerName}
               </p>
-              <PlayerStarRating stars={stars} className="scale-[0.85] origin-left" />
+              <PlayerStarRating stars={stars} player={player} overall={listing.overall} className="scale-[0.85] origin-left" />
               <span className={cn('text-xs font-semibold tabular-nums', tierColor(tier))}>
                 {listing.overall}
               </span>

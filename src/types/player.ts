@@ -204,6 +204,19 @@ export interface PlayerTradeRequest {
   reason: 'unhappy' | 'role' | 'contender' | 'home-state' | 'money'
 }
 
+export interface PlayerJumperHistoryEntry {
+  year: number
+  clubId: string
+  jumperNumber: number
+}
+
+export type PlayerJumperPreferenceLevel = 'none' | 'want' | 'demand'
+
+export interface PlayerJumperPreference {
+  preferredNumbers: number[]
+  level: PlayerJumperPreferenceLevel
+}
+
 export interface PlayerContract {
   yearsRemaining: number
   aav: number                    // Average annual value ($)
@@ -212,6 +225,21 @@ export interface PlayerContract {
   clauses?: import('./contract').ContractClause[]
   structure?: import('./contract').ContractStructure
   incentiveTotal?: number
+}
+
+export type PlayerContractTier = 'afl-listed' | 'state-league'
+
+export interface StateLeagueContract {
+  yearsRemaining: number
+  annualValue: number
+  signedDate: string
+  source: 'affiliate' | 'recruitment' | 'renewal'
+}
+
+export interface PlayerContractHistoryEntry {
+  date: string
+  type: 'state-sign' | 'state-renew' | 'state-delist' | 'afl-sign'
+  note: string
 }
 
 export interface PlayerInjury {
@@ -294,6 +322,8 @@ export interface MoraleFactors {
   contractStatus: number
   underpayment: number
   roleSatisfaction: number
+  contractTerms: number
+  jumperPreference: number
   culture: number
   meanReversion: number
 }
@@ -306,6 +336,8 @@ export interface Player {
   dateOfBirth: string            // YYYY-MM-DD
   clubId: string
   jerseyNumber: number
+  jumperHistory: PlayerJumperHistoryEntry[]
+  jumperPreference?: PlayerJumperPreference
   height: number                 // cm
   weight: number                 // kg
   position: PlayerPosition
@@ -335,4 +367,7 @@ export interface Player {
   tradeRequest?: PlayerTradeRequest | null
   trainingFocus?: PlayerTrainingFocus | null
   upskillPlans?: PlayerUpskillPlan[]
+  contractTier?: PlayerContractTier
+  stateLeagueContract?: StateLeagueContract | null
+  contractHistory?: PlayerContractHistoryEntry[]
 }

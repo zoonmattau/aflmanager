@@ -18,7 +18,7 @@ import { getLeadershipScore } from '@/engine/leadership/leadershipEngine'
 // ---------------------------------------------------------------------------
 
 export function computeMomentum(
-  ladderEntry: LadderEntry | undefined,
+  _ladderEntry: LadderEntry | undefined,
   ladderPosition: number,
   teamCount: number,
   recentResults: ('W' | 'L' | 'D')[],

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -7,10 +7,12 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ArrowLeft, Heart, Zap, TrendingUp, Shield, AlertTriangle, Trophy, Info } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import type { Player, PlayerAttributes, PlayerPositionType } from '@/types/player'
+import type { Player, PlayerAttributes, PlayerJumperPreferenceLevel, PlayerPositionType } from '@/types/player'
 import { getPlayerEligiblePositionTypes } from '@/engine/player/positionEligibility'
 import { getOverallRating, getPlayerStarRating } from '@/engine/player/playerRating'
 import { PlayerStarRating } from '@/components/player/PlayerStarRating'
+import { getPositionBadgeClass } from '@/lib/positionColor'
+import { ShortlistAssignMenu } from '@/components/shortlists/ShortlistManager'
 
 const ATTR_CATEGORIES: { label: string; attrs: { key: keyof PlayerAttributes; label: string }[] }[] = [
   {
@@ -147,6 +149,27 @@ function moraleLabel(morale: number): string {
   return 'Furious'
 }
 
+function jumperPreferenceLabel(level: PlayerJumperPreferenceLevel | undefined): string {
+  if (level === 'demand') return 'Demands specific jumper number(s)'
+  if (level === 'want') return 'Prefers specific jumper number(s)'
+  return 'No strong jumper number preference'
+}
+
+function formatSignedDelta(value: number): string {
+  return value > 0 ? `+${value}` : `${value}`
+}
+
+function getJumperPreferenceMoraleImpact(player: Player): number {
+  const preference = player.jumperPreference
+  if (!preference || preference.level === 'none' || preference.preferredNumbers.length === 0) return 0
+
+  const hasAssignedNumber = player.jerseyNumber > 0
+  const hasPreferredNumber = hasAssignedNumber && preference.preferredNumbers.includes(player.jerseyNumber)
+  if (hasPreferredNumber) return preference.level === 'demand' ? 2 : 1
+  if (!hasAssignedNumber) return preference.level === 'demand' ? -1 : 0
+  return preference.level === 'demand' ? -2 : -1
+}
+
 const FIELD_POSITION_COORDS: Record<PlayerPositionType, { x: number; y: number }> = {
   BP: { x: 20, y: 86 },
   FB: { x: 50, y: 90 },
@@ -169,9 +192,10 @@ function PositionHeatMapCard({ player }: { player: Player }) {
   )
 
   function getChipStyle(pos: PlayerPositionType): string {
-    if (pos === player.position.primary) return 'bg-green-500/90 text-white border-green-300'
-    if (secondary.has(pos)) return 'bg-yellow-500/90 text-black border-yellow-300'
-    return 'bg-red-500/90 text-white border-red-300'
+    const base = getPositionBadgeClass(pos)
+    if (pos === player.position.primary) return `${base} ring-1 ring-white/60`
+    if (secondary.has(pos)) return base
+    return `${base} opacity-85`
   }
 
   return (
@@ -205,9 +229,10 @@ function PositionHeatMapCard({ player }: { player: Player }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="rounded border border-green-300 bg-green-500/90 px-2 py-0.5 text-white">Primary</span>
-          <span className="rounded border border-yellow-300 bg-yellow-500/90 px-2 py-0.5 text-black">Secondary</span>
-          <span className="rounded border border-red-300 bg-red-500/90 px-2 py-0.5 text-white">Tertiary</span>
+          <span className={`rounded border px-2 py-0.5 ${getPositionBadgeClass('DEF')}`}>Defenders</span>
+          <span className={`rounded border px-2 py-0.5 ${getPositionBadgeClass('MID')}`}>Midfielders</span>
+          <span className={`rounded border px-2 py-0.5 ${getPositionBadgeClass('FWD')}`}>Forwards</span>
+          <span className={`rounded border px-2 py-0.5 ${getPositionBadgeClass('RK')}`}>Rucks</span>
         </div>
       </CardContent>
     </Card>
@@ -215,11 +240,13 @@ function PositionHeatMapCard({ player }: { player: Player }) {
 }
 
 export function PlayerProfilePage() {
-  const { playerId } = useParams<{ playerId: string }>()
+  const { playerId: playerIdParam } = useParams<{ playerId?: string }>()
+  const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const players = useGameStore((s) => s.players)
   const clubs = useGameStore((s) => s.clubs)
   const history = useGameStore((s) => s.history)
+  const currentYear = useGameStore((s) => s.currentYear)
   const awards = useGameStore((s) => s.awards)
   const brownlowTracker = useGameStore((s) => s.brownlowTracker)
   const playerClubId = useGameStore((s) => s.playerClubId)
@@ -233,6 +260,26 @@ export function PlayerProfilePage() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [actionSuccess, setActionSuccess] = useState<string | null>(null)
 
+  const playerId = useMemo(() => {
+    const candidates = [
+      playerIdParam,
+      searchParams.get('playerId'),
+      searchParams.get('id'),
+    ]
+    for (const raw of candidates) {
+      if (!raw) continue
+      const trimmed = raw.trim()
+      if (!trimmed) continue
+      try {
+        return decodeURIComponent(trimmed)
+      } catch {
+        return trimmed
+      }
+    }
+    return null
+  }, [playerIdParam, searchParams])
+
+  const hasAnyPlayers = useMemo(() => Object.keys(players).length > 0, [players])
   const player = playerId ? players[playerId] : null
 
   // Find draft info from history
@@ -265,13 +312,35 @@ export function PlayerProfilePage() {
     return { brownlowVotes, brownlowWins, colemanWins, risingStarWins, allAustralianCount, bnfWins }
   }, [playerId, brownlowTracker, awards])
 
+  if (!playerId) {
+    return (
+      <div className="space-y-4">
+        <Button variant="ghost" onClick={() => navigate(-1)}>
+          <ArrowLeft className="mr-2 h-4 w-4" /> Back
+        </Button>
+        <p className="text-muted-foreground">No player id was provided.</p>
+      </div>
+    )
+  }
+
+  if (!hasAnyPlayers) {
+    return (
+      <div className="space-y-4">
+        <Button variant="ghost" onClick={() => navigate(-1)}>
+          <ArrowLeft className="mr-2 h-4 w-4" /> Back
+        </Button>
+        <p className="text-muted-foreground">Loading player profile...</p>
+      </div>
+    )
+  }
+
   if (!player) {
     return (
       <div className="space-y-4">
         <Button variant="ghost" onClick={() => navigate(-1)}>
           <ArrowLeft className="mr-2 h-4 w-4" /> Back
         </Button>
-        <p className="text-muted-foreground">Player not found.</p>
+        <p className="text-muted-foreground">Player not found for id: {playerId}</p>
       </div>
     )
   }
@@ -280,10 +349,42 @@ export function PlayerProfilePage() {
   const overall = getOverallRating(player)
   const ss = player.seasonStats
   const cs = player.careerStats
+  const historicalSeasonRows = [...(history.playerSeasonStats ?? [])]
+    .filter((entry) => entry.playerId === player.id)
+    .sort((a, b) => b.year - a.year)
+  const hasCurrentSeasonSnapshot = historicalSeasonRows.some((entry) => entry.year === currentYear)
+  const yearByYearRows = hasCurrentSeasonSnapshot
+    ? historicalSeasonRows.map((entry) => ({ ...entry, inProgress: false }))
+    : [
+        {
+          playerId: player.id,
+          playerName: `${player.firstName} ${player.lastName}`,
+          year: currentYear,
+          clubId: player.clubId,
+          age: player.age,
+          position: player.position.primary,
+          overall,
+          stats: { ...ss },
+          inProgress: true,
+        },
+        ...historicalSeasonRows.map((entry) => ({ ...entry, inProgress: false })),
+      ]
+  const ratingProgressionRows = [...yearByYearRows]
+    .sort((a, b) => a.year - b.year)
+    .map((entry, index, list) => {
+      const prev = index > 0 ? list[index - 1] : null
+      return {
+        ...entry,
+        overallDelta: prev ? entry.overall - prev.overall : null,
+      }
+    })
+    .reverse()
   const secondaryPositions = new Set(player.position.secondary)
   const alternatePositions = getPlayerEligiblePositionTypes(player).filter(
     (pos) => pos !== player.position.primary,
   )
+  const jumperPreferenceImpact = getJumperPreferenceMoraleImpact(player)
+  const jumperHistory = [...player.jumperHistory].sort((a, b) => b.year - a.year)
   const isUserClubPlayer = player.clubId === playerClubId
   const tradeListing = tradeBlock.listings[player.id]
   const inDelistingsPhase = phase === 'offseason' && offseasonState?.currentPhase === 'delistings'
@@ -354,12 +455,12 @@ export function PlayerProfilePage() {
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <span>{club?.name}</span>
             <span>&middot;</span>
-            <Badge variant="outline">{player.position.primary}</Badge>
+            <Badge variant="outline" className={getPositionBadgeClass(player.position.primary)}>{player.position.primary}</Badge>
             {alternatePositions.map((pos) => (
               <Badge
                 key={pos}
-                variant={secondaryPositions.has(pos) ? 'secondary' : 'outline'}
-                className="text-xs"
+                variant="outline"
+                className={`text-xs ${getPositionBadgeClass(pos)} ${secondaryPositions.has(pos) ? '' : 'opacity-85'}`}
               >
                 {pos}
               </Badge>
@@ -386,7 +487,7 @@ export function PlayerProfilePage() {
         </div>
         <div className="ml-auto text-right">
           <div className="text-3xl font-bold">{overall}</div>
-          <PlayerStarRating stars={getPlayerStarRating(player, overall)} className="justify-end" />
+          <PlayerStarRating stars={getPlayerStarRating(player, overall)} player={player} overall={overall} className="justify-end" />
           <p className="text-xs text-muted-foreground">Overall</p>
         </div>
       </div>
@@ -443,6 +544,9 @@ export function PlayerProfilePage() {
           {isUserClubPlayer ? (
             <>
               <div className="flex flex-wrap gap-2">
+                <ShortlistAssignMenu targetType="player" targetId={player.id} buttonLabel="Add to Shortlist" buttonVariant="outline" />
+              </div>
+              <div className="flex flex-wrap gap-2">
                 <Button size="sm" onClick={handleStartNegotiation}>Start Contract Negotiation</Button>
                 <Button size="sm" variant="outline" onClick={() => navigate('/contracts')}>Open Contracts</Button>
               </div>
@@ -486,7 +590,10 @@ export function PlayerProfilePage() {
               {actionSuccess ? <p className="text-sm text-green-600">{actionSuccess}</p> : null}
             </>
           ) : (
-            <p className="text-sm text-muted-foreground">Actions are available for players at your club only.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <ShortlistAssignMenu targetType="player" targetId={player.id} buttonLabel="Add to Shortlist" buttonVariant="outline" />
+              <p className="text-sm text-muted-foreground">Club actions are only available for players at your club.</p>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -604,6 +711,63 @@ export function PlayerProfilePage() {
         </TabsContent>
 
         <TabsContent value="history" className="space-y-4">
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-sm">Year-by-Year Stats</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {yearByYearRows.length === 0 ? (
+                <p className="text-muted-foreground">No season history recorded yet.</p>
+              ) : (
+                yearByYearRows.map((entry) => (
+                  <div key={`${entry.year}-${entry.playerId}`} className="rounded border border-border/60 p-2">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold">{entry.year}</span>
+                        <Badge variant="outline">{clubs[entry.clubId]?.abbreviation ?? entry.clubId}</Badge>
+                        {entry.inProgress ? <Badge variant="secondary">In Progress</Badge> : null}
+                      </div>
+                      <span className="font-mono text-xs">OVR {entry.overall}</span>
+                    </div>
+                    <div className="grid grid-cols-5 gap-2 text-xs">
+                      <span className="text-muted-foreground">GP: <span className="font-mono text-foreground">{entry.stats.gamesPlayed}</span></span>
+                      <span className="text-muted-foreground">G: <span className="font-mono text-foreground">{entry.stats.goals}</span></span>
+                      <span className="text-muted-foreground">D: <span className="font-mono text-foreground">{entry.stats.disposals}</span></span>
+                      <span className="text-muted-foreground">M: <span className="font-mono text-foreground">{entry.stats.marks}</span></span>
+                      <span className="text-muted-foreground">T: <span className="font-mono text-foreground">{entry.stats.tackles}</span></span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-sm">Rating Progression</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {ratingProgressionRows.length === 0 ? (
+                <p className="text-muted-foreground">No rating progression recorded yet.</p>
+              ) : (
+                ratingProgressionRows.map((entry) => (
+                  <div key={`rating-${entry.year}-${entry.playerId}`} className="flex items-center justify-between border-b border-border/40 pb-1 last:border-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{entry.year}</span>
+                      {entry.inProgress ? <Badge variant="secondary">In Progress</Badge> : null}
+                    </div>
+                    <div className="text-right">
+                      <p className="font-mono font-medium">{entry.overall}</p>
+                      <p className={`text-xs ${entry.overallDelta == null ? 'text-muted-foreground' : entry.overallDelta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                        {entry.overallDelta == null ? 'Baseline' : formatSignedDelta(entry.overallDelta)}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
           {(draftInfo || cs.gamesPlayed > 0) ? (
             <Card>
               <CardHeader className="py-3">
@@ -670,6 +834,27 @@ export function PlayerProfilePage() {
               )}
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-sm">Jumper Number History</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {jumperHistory.length === 0 ? (
+                <p className="text-muted-foreground">No jumper history recorded yet.</p>
+              ) : (
+                jumperHistory.map((entry, idx) => (
+                  <div key={`${entry.year}-${entry.clubId}-${idx}`} className="flex items-center justify-between border-b border-border/40 pb-1 last:border-0">
+                    <div>
+                      <p className="font-medium">{entry.year}</p>
+                      <p className="text-xs text-muted-foreground">{clubs[entry.clubId]?.name ?? entry.clubId}</p>
+                    </div>
+                    <Badge variant="outline" className="font-mono">#{entry.jumperNumber}</Badge>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="awards">
@@ -728,6 +913,40 @@ export function PlayerProfilePage() {
         </TabsContent>
 
         <TabsContent value="personality" className="space-y-4">
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-sm">Jumper Number Preference</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Preference</span>
+                <span className="font-medium">{jumperPreferenceLabel(player.jumperPreference?.level)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Preferred Numbers</span>
+                <span className="font-medium font-mono">
+                  {player.jumperPreference?.preferredNumbers?.length
+                    ? player.jumperPreference.preferredNumbers.map((n) => `#${n}`).join(', ')
+                    : 'None'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Current Number</span>
+                <span className="font-medium font-mono">
+                  {player.jerseyNumber > 0 ? `#${player.jerseyNumber}` : 'Unassigned'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Current Morale Impact</span>
+                <span className={`font-medium ${attrColor(50 + jumperPreferenceImpact * 15)}`}>
+                  {jumperPreferenceImpact === 0
+                    ? 'Neutral'
+                    : `${jumperPreferenceImpact > 0 ? '+' : ''}${jumperPreferenceImpact}`}
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader className="py-3">
               <CardTitle className="text-sm">Personality Profile</CardTitle>
