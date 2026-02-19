@@ -12,7 +12,14 @@ export interface SeasonAwardRecord {
   colemanMedal: { playerId: string; playerName: string; clubId: string; goals: number } | null
   risingStar: { playerId: string; playerName: string; clubId: string } | null
   allAustralian: Array<{ playerId: string; playerName: string; clubId: string }>
-  clubBestAndFairest: Record<string, { playerId: string; playerName: string }>
+  clubBestAndFairest: Record<string, {
+    playerId: string
+    playerName: string
+    votes?: number
+    runnerUpId?: string | null
+    runnerUpName?: string | null
+    runnerUpVotes?: number | null
+  }>
 }
 
 export type MilestoneType =
@@ -200,6 +207,7 @@ export interface MatchReportBestPlayer {
   marks: number
   tackles: number
   fantasyPoints: number
+  matchRating?: number
 }
 
 export interface MatchReportQuarterSummary {
@@ -242,6 +250,20 @@ export interface MatchReportTribunalIncident {
   severity: string
 }
 
+export interface MatchReportPlayerStat {
+  playerId: string
+  playerName: string
+  position: string
+  matchRating: number
+  disposals: number
+  goals: number
+  marks: number
+  tackles: number
+  clearances: number
+  hitouts: number
+  intercepts: number
+}
+
 export interface MatchReport {
   id: string
   matchId: string
@@ -277,6 +299,9 @@ export interface MatchReport {
     implication: string
   } | null
   narrativeBody: string
+  /** Full player stats for both teams, sorted by rating descending. Optional (absent on old saves). */
+  homeBoxScore?: MatchReportPlayerStat[]
+  awayBoxScore?: MatchReportPlayerStat[]
 }
 
 export interface GameHistory {

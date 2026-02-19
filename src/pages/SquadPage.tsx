@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import {
   useReactTable,
   getCoreRowModel,
@@ -42,9 +42,13 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AlertTriangle, ArrowUpDown, Shield } from 'lucide-react'
 import { PlayerStarRating } from '@/components/player/PlayerStarRating'
 import { getPositionBadgeClass, getPositionFilterButtonClass } from '@/lib/positionColor'
+import { calcDisposalEfficiency, calcKickingAccuracy, calcContestedPossessionPct, fmtPct } from '@/lib/efficiencyStats'
+import { matchRatingColorClass } from '@/engine/match/matchRatings'
+import { ClubBFLeaderboardWidget } from '@/components/squad/ClubBFLeaderboardWidget'
 
 const columnHelper = createColumnHelper<Player>()
 
@@ -295,6 +299,20 @@ function buildColumns(
   if (view === 'stats') {
     return [
       ...base,
+      columnHelper.accessor((row) => row.lastMatchRating ?? -1, {
+        id: 'last_game_rating',
+        header: 'Last Game',
+        cell: (i) => {
+          const rating = i.row.original.lastMatchRating
+          if (rating === undefined) return <span className="text-xs text-muted-foreground">—</span>
+          return (
+            <span className={`text-xs font-mono font-bold tabular-nums ${matchRatingColorClass(rating)}`}>
+              {rating.toFixed(1)}
+            </span>
+          )
+        },
+        size: 80,
+      }),
       columnHelper.accessor((row) => row.seasonStats.gamesPlayed, {
         id: 'gp_sc',
         header: 'GP S/C',
@@ -343,6 +361,39 @@ function buildColumns(
         cell: (i) => {
           const p = i.row.original
           return <span className="text-xs tabular-nums">{safeAvg(p.seasonStats.superCoachPoints, p.seasonStats.gamesPlayed)} / {safeAvg(p.careerStats.superCoachPoints, p.careerStats.gamesPlayed)}</span>
+        },
+        size: 108,
+      }),
+      columnHelper.accessor((row) => calcDisposalEfficiency(row.seasonStats.disposals, row.seasonStats.clangers) ?? 0, {
+        id: 'de_pct',
+        header: 'DE% S/C',
+        cell: (i) => {
+          const p = i.row.original
+          const s = fmtPct(calcDisposalEfficiency(p.seasonStats.disposals, p.seasonStats.clangers))
+          const c = fmtPct(calcDisposalEfficiency(p.careerStats.disposals, p.careerStats.clangers))
+          return <span className="text-xs tabular-nums">{s} / {c}</span>
+        },
+        size: 112,
+      }),
+      columnHelper.accessor((row) => calcKickingAccuracy(row.seasonStats.goals, row.seasonStats.behinds) ?? 0, {
+        id: 'ka_pct',
+        header: 'KAcc% S/C',
+        cell: (i) => {
+          const p = i.row.original
+          const s = fmtPct(calcKickingAccuracy(p.seasonStats.goals, p.seasonStats.behinds))
+          const c = fmtPct(calcKickingAccuracy(p.careerStats.goals, p.careerStats.behinds))
+          return <span className="text-xs tabular-nums">{s} / {c}</span>
+        },
+        size: 116,
+      }),
+      columnHelper.accessor((row) => calcContestedPossessionPct(row.seasonStats.contestedPossessions, row.seasonStats.uncontestedPossessions) ?? 0, {
+        id: 'cp_pct',
+        header: 'CP% S/C',
+        cell: (i) => {
+          const p = i.row.original
+          const s = fmtPct(calcContestedPossessionPct(p.seasonStats.contestedPossessions, p.seasonStats.uncontestedPossessions))
+          const c = fmtPct(calcContestedPossessionPct(p.careerStats.contestedPossessions, p.careerStats.uncontestedPossessions))
+          return <span className="text-xs tabular-nums">{s} / {c}</span>
         },
         size: 108,
       }),
@@ -475,7 +526,14 @@ export function SquadPage() {
     return { captain, vc, group, teamRating: getTeamLeadershipRating(clubPlayers, leadership) }
   }, [leadership, players, clubPlayers])
 
-  const [view, setView] = useState<SquadView>('ratings')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const view: SquadView = (() => {
+    const v = searchParams.get('view')
+    return VIEW_OPTIONS.some((o) => o.key === v) ? (v as SquadView) : 'ratings'
+  })()
+  const setView = (v: SquadView) => {
+    setSearchParams((prev) => { prev.set('view', v); return prev }, { replace: true })
+  }
   const [search, setSearch] = useState('')
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('all')
 
@@ -972,19 +1030,22 @@ export function SquadPage() {
             {filteredPlayers.length} players{filteredPlayers.length !== clubPlayers.length ? ` (of ${clubPlayers.length})` : ''}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {clubId === playerClubId && (
-            <Button size="sm" variant="outline" onClick={handleAutoAssignUnassigned}>
-              Auto Assign Unassigned
-            </Button>
-          )}
-          {VIEW_OPTIONS.map((v) => (
-            <Button key={v.key} size="sm" variant={view === v.key ? 'default' : 'outline'} onClick={() => setView(v.key)}>
-              {v.label}
-            </Button>
-          ))}
-        </div>
+        {clubId === playerClubId && (
+          <Button size="sm" variant="outline" onClick={handleAutoAssignUnassigned}>
+            Auto Assign Unassigned
+          </Button>
+        )}
       </div>
+
+      <Tabs value={view} onValueChange={(v) => setView(v as SquadView)}>
+        <TabsList>
+          {VIEW_OPTIONS.map((v) => (
+            <TabsTrigger key={v.key} value={v.key}>
+              {v.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
       {clubId === playerClubId && unassignedErrorPlayerIds.size > 0 && (
         <div className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2">
@@ -998,7 +1059,8 @@ export function SquadPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {clubId === playerClubId && <ClubBFLeaderboardWidget />}
         <Card>
           <CardContent className="p-4">
             <div className="mb-3 flex items-center gap-2">

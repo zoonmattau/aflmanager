@@ -84,6 +84,7 @@ import {
   getCoachingImpact,
   getMedicalStaffImpact,
   processCoachingCarousel,
+  getReservesStaffImpact,
 } from '@/engine/staff/staffEngine'
 import {
   awardBrownlowVotes,
@@ -91,6 +92,7 @@ import {
   buildSeasonAwardRecord,
   detectCareerMilestones,
 } from '@/engine/awards/awardsEngine'
+import { awardClubBFVotes } from '@/engine/awards/clubBFEngine'
 import { addDays, buildSeasonCalendar, computeDefaultGameStartDate, getYear } from '@/engine/calendar/calendarEngine'
 import {
   initializeStateLeagues,
@@ -98,7 +100,18 @@ import {
   simStateLeagueRound,
   applyStateLeagueAffiliationSettings,
 } from '@/engine/stateLeague/stateLeagueEngine'
+import {
+  buildYouthCompetitions,
+  generateAllYouthPlayers,
+  buildInitialLadder,
+  rollNewCohort,
+} from '@/engine/youth/youthPlayerGenerator'
+import { simYouthCompRound } from '@/engine/youth/youthCompSimulator'
+import { selectStateTeams, simulateNationalTournaments } from '@/engine/youth/tournamentSimulator'
+import { convertYouthPlayersToDraftProspects, processYouthScoutAssignment } from '@/engine/youth/draftConversion'
+import type { YouthCompId } from '@/types/youthPathway'
 import { simulateReservesRound } from '@/engine/stateLeague/reservesSimulation'
+import { buildUserStateLeagueContext } from '@/engine/stateLeague/reservesManagement'
 import { createDefaultSettings, DEFAULT_REALISM } from '@/engine/core/defaultSettings'
 import { autoSelectLeadership, getTeamLeadershipRating, getLeadershipMoraleBonus } from '@/engine/leadership/leadershipEngine'
 import { updateClubCulture, getCultureMoraleBuffer, createDefaultCulture } from '@/engine/culture/cultureEngine'
@@ -848,8 +861,11 @@ const createDefaultState = (): GameState => ({
   trainingWeekPlan: null,
   awards: [],
   brownlowTracker: [],
+  bfTracker: [],
   brownlowRevealed: false,
+  awardsNightCompleted: false,
   stateLeagues: null,
+  youthPathway: null,
   offseasonState: null,
   venueState: null,
   negotiations: null,
@@ -1446,6 +1462,8 @@ interface GameActions {
   clearWeeklyMatchupTactics: () => void
   hireStaffMember: (staffId: string, contractYears: number) => { success: boolean; error?: string }
   fireStaffMember: (staffId: string) => void
+  previewApproachChance: (staffId: string, salaryMultiplier: number) => number
+  approachStaffMember: (staffId: string, contractYears: number, salaryMultiplier: number) => { accepted: boolean; reason: string; acceptanceChance: number }
   previewBoardApproval: (category: 'contract' | 'trade' | 'staff-hire', params: { aav?: number; userSalaryRetention?: number; salary?: number }) => BoardApprovalResult
   saveGame: () => void
   sendToReserves: (playerId: string) => void
@@ -1460,6 +1478,7 @@ interface GameActions {
     leadershipGroupIds: string[]
   }) => void
   setReservesTactics: (updates: Partial<GameState['reserves']['tactics']>) => void
+  applyReservesCoachTactics: () => void
   autoPickManagedReservesLineup: () => void
   setStateLeagueContractDelegation: (enabled: boolean) => void
   setStateLeagueContractTargetCount: (count: number) => void
@@ -1559,8 +1578,13 @@ interface GameActions {
   suggestNextDraftPickAction: () => import('@/engine/draft/draftEngine').SuggestNextPickResult | null
   runDelegatedDraftAction: () => { success: boolean; error?: string; records: import('@/engine/draft/draftEngine').DelegatedPickRecord[] }
 
-  // Brownlow
+  // Youth Pathway
+  assignScoutToYouthComp: (scoutId: string, compId: YouthCompId) => { success: boolean; error?: string }
+  unassignScoutFromYouthComp: (scoutId: string) => { success: boolean; error?: string }
+
+  // Awards Night
   revealBrownlow: () => void
+  completeAwardsNight: () => void
 
   // Computed / derived
   getPlayersByClub: (clubId: string) => Player[]
@@ -1722,6 +1746,9 @@ export const useGameStore = create<GameStore>()(
         set((state) => {
           const defaults = createDefaultState()
           Object.assign(state, defaults)
+          // Ensure inbox starts completely empty for a new game
+          state.newsLog = []
+          state.emailLog = []
 
           state.meta = {
             id: gameId,
@@ -1795,6 +1822,14 @@ export const useGameStore = create<GameStore>()(
 
           state.players = playersRecord
           normalizeAllClubJumperNumbers(state)
+          // Auto-assign best lineup for the user's club at game start
+          if (initialClubId) {
+            const autoLineup = selectBestLineup(Object.values(playersRecord), initialClubId, {
+              interchangePlayers: gameSettings.matchRules?.interchangePlayers ?? 4,
+              club: clubsWithPicks[initialClubId],
+            })
+            state.selectedLineup = autoLineup.lineup
+          }
           state.staff = staffRecord
           state.scouts = scoutPool
           state.season = season
@@ -1856,6 +1891,19 @@ export const useGameStore = create<GameStore>()(
             initializedStateLeagues,
             gameSettings.stateLeagueAffiliations,
           )
+
+          // Initialize youth pathway (U16/U18 competitions)
+          if (gameSettings.includePathwayLeagues) {
+            const youthRng = new SeededRNG(seed + 77777)
+            const youthComps = buildYouthCompetitions(2026)
+            state.youthPathway = {
+              competitions: Object.fromEntries(youthComps.map((c) => [c.id, c])),
+              players: generateAllYouthPlayers(youthComps, 2026, youthRng),
+              tournaments: { u16: null, u18: null },
+              scoutAssignments: [],
+              convertedProspectIds: {},
+            }
+          }
 
           // Initialize venue system for the first season
           if (gameSettings.realism.venueScheduling) {
@@ -3569,6 +3617,45 @@ export const useGameStore = create<GameStore>()(
           if (idx >= 0) {
             s.scouts[idx] = assignScoutToRegion(s.scouts[idx], region)
           }
+        })
+        return { success: true }
+      },
+
+      assignScoutToYouthComp: (scoutId: string, compId: YouthCompId) => {
+        const state = get()
+        if (!state.youthPathway) return { success: false, error: 'Youth pathway not enabled' }
+        const scout = state.scouts.find((s) => s.id === scoutId)
+        if (!scout) return { success: false, error: 'Scout not found' }
+        if (scout.clubId !== state.playerClubId) return { success: false, error: 'Can only manage your own scouts' }
+        const comp = state.youthPathway.competitions[compId]
+        if (!comp) return { success: false, error: 'Competition not found' }
+
+        set((s) => {
+          if (!s.youthPathway) return
+          // Remove any existing assignment for this scout
+          s.youthPathway.scoutAssignments = s.youthPathway.scoutAssignments.filter(
+            (a) => a.scoutId !== scoutId,
+          )
+          // Add new assignment
+          s.youthPathway.scoutAssignments.push({
+            scoutId,
+            compId,
+            assignedRound: s.currentRound + 1,
+            discoveryCount: 0,
+          })
+        })
+        return { success: true }
+      },
+
+      unassignScoutFromYouthComp: (scoutId: string) => {
+        const state = get()
+        if (!state.youthPathway) return { success: false, error: 'Youth pathway not enabled' }
+
+        set((s) => {
+          if (!s.youthPathway) return
+          s.youthPathway.scoutAssignments = s.youthPathway.scoutAssignments.filter(
+            (a) => a.scoutId !== scoutId,
+          )
         })
         return { success: true }
       },
@@ -5874,7 +5961,9 @@ export const useGameStore = create<GameStore>()(
             s.matchResults = []
             s.powerRankings = []
             s.brownlowTracker = []
+            s.bfTracker = []
             s.brownlowRevealed = false
+            s.awardsNightCompleted = false
             s.selectedLineup = null
             s.selectedSubstituteId = null
             s.reserves = {
@@ -6547,6 +6636,13 @@ export const useGameStore = create<GameStore>()(
         })
       },
 
+      completeAwardsNight: () => {
+        set((s) => {
+          s.awardsNightCompleted = true
+          s.brownlowRevealed = true
+        })
+      },
+
       getPlayersByClub: (clubId: string): Player[] => {
         const state = get()
         return Object.values(state.players).filter(
@@ -6916,6 +7012,138 @@ export const useGameStore = create<GameStore>()(
         })
       },
 
+      previewApproachChance: (staffId: string, salaryMultiplier: number) => {
+        const state = get()
+        const member = state.staff[staffId]
+        if (!member || member.clubId === '' || member.clubId === state.playerClubId) return 0
+
+        const userLadderPos = Math.max(1, state.ladder.findIndex((e) => e.clubId === state.playerClubId) + 1)
+        const targetLadderPos = Math.max(1, state.ladder.findIndex((e) => e.clubId === member.clubId) + 1)
+
+        let chance = 0.30
+        // Manager reputation (+/- up to 0.25)
+        chance += (state.manager.reputation - 50) / 200
+        // Salary offer
+        if (salaryMultiplier >= 0.30) chance += 0.20
+        else if (salaryMultiplier >= 0.15) chance += 0.12
+        // Ladder advantage: positive when user's club is higher (lower position number)
+        chance += (targetLadderPos - userLadderPos) / 18 * 0.20
+        // Contract vulnerability
+        if (member.contractYears <= 0) chance += 0.22
+        else if (member.contractYears === 1) chance += 0.12
+        else if (member.contractYears >= 3) chance -= 0.10
+        // Target club stability
+        if (targetLadderPos <= 4) chance -= 0.10
+        if (targetLadderPos >= 15) chance += 0.10
+
+        return Math.max(0.08, Math.min(0.88, chance))
+      },
+
+      approachStaffMember: (staffId: string, contractYears: number, salaryMultiplier: number) => {
+        const state = get()
+        const member = state.staff[staffId]
+        if (!member) return { accepted: false, reason: 'Staff member not found', acceptanceChance: 0 }
+        if (member.clubId === state.playerClubId) return { accepted: false, reason: 'Already on your staff', acceptanceChance: 0 }
+        if (member.clubId === '') return { accepted: false, reason: 'Use standard hiring for free agents', acceptanceChance: 0 }
+
+        const userLadderPos = Math.max(1, state.ladder.findIndex((e) => e.clubId === state.playerClubId) + 1)
+        const targetLadderPos = Math.max(1, state.ladder.findIndex((e) => e.clubId === member.clubId) + 1)
+
+        let chance = 0.30
+        chance += (state.manager.reputation - 50) / 200
+        if (salaryMultiplier >= 0.30) chance += 0.20
+        else if (salaryMultiplier >= 0.15) chance += 0.12
+        chance += (targetLadderPos - userLadderPos) / 18 * 0.20
+        if (member.contractYears <= 0) chance += 0.22
+        else if (member.contractYears === 1) chance += 0.12
+        else if (member.contractYears >= 3) chance -= 0.10
+        if (targetLadderPos <= 4) chance -= 0.10
+        if (targetLadderPos >= 15) chance += 0.10
+        chance = Math.max(0.08, Math.min(0.88, chance))
+
+        const rng = new SeededRNG(
+          state.rngSeed + staffId.length * 7919 + state.currentRound * 3571 + Math.round(salaryMultiplier * 100),
+        )
+        const accepted = rng.chance(chance)
+
+        if (!accepted) {
+          const fromClubName = state.clubs[member.clubId]?.abbreviation ?? member.clubId
+          let reason: string
+          if (member.contractYears >= 2 && targetLadderPos <= 8) {
+            reason = `${member.firstName} ${member.lastName} is settled and committed at ${fromClubName}.`
+          } else if (chance < 0.35) {
+            reason = `${member.firstName} ${member.lastName} has no interest in leaving ${fromClubName} at this time.`
+          } else {
+            reason = `${member.firstName} ${member.lastName} chose to remain with ${fromClubName}.`
+          }
+          return { accepted: false, reason, acceptanceChance: chance }
+        }
+
+        // Board approval check
+        const offeredSalary = Math.round(member.salary * (1 + salaryMultiplier))
+        if (needsBoardApproval({ category: 'staff-hire', params: { salary: offeredSalary } }, state.settings)) {
+          const club = state.clubs[state.playerClubId]
+          if (!club) return { accepted: false, reason: 'Club not found', acceptanceChance: chance }
+          const tracker = state.boardApprovals ?? { records: [], denialCooldowns: {} }
+          if (isApprovalOnCooldown(tracker, 'staff-hire', staffId, state.currentDate)) {
+            return { accepted: false, reason: 'The board recently denied this hire. Please wait before trying again.', acceptanceChance: chance }
+          }
+          const approvalResult = computeBoardApproval({
+            category: 'staff-hire',
+            club,
+            jobSecurity: state.manager.jobSecurity,
+            ladderPosition: userLadderPos,
+            settings: state.settings,
+            staffParams: { salary: offeredSalary },
+          })
+          const boardRng = new SeededRNG(state.rngSeed + staffId.length * 7907 + state.currentRound * 3559)
+          const { updatedTracker, approved } = rollBoardApproval(
+            tracker, approvalResult, boardRng, state.currentDate,
+            `Approach ${member.firstName} ${member.lastName} from ${state.clubs[member.clubId]?.abbreviation ?? member.clubId}`,
+            state.playerClubId, staffId,
+          )
+          set((s) => { s.boardApprovals = updatedTracker })
+          if (!approved) {
+            set((s) => {
+              appendNewsItem(s, {
+                id: crypto.randomUUID(),
+                date: s.currentDate,
+                headline: `Board blocks approach for ${member.firstName} ${member.lastName}`,
+                body: `The board has blocked the approach for ${member.firstName} ${member.lastName}. The offered salary of $${offeredSalary.toLocaleString()} per year was not approved.`,
+                category: 'general',
+                clubIds: [s.playerClubId],
+                playerIds: [],
+              })
+            })
+            return { accepted: false, reason: 'The board has blocked this approach.', acceptanceChance: chance }
+          }
+        }
+
+        const offeredSalaryFinal = Math.round(member.salary * (1 + salaryMultiplier))
+        const fromClubId = member.clubId
+        const fromClubAbbr = state.clubs[fromClubId]?.abbreviation ?? fromClubId
+
+        set((s) => {
+          const m = s.staff[staffId]
+          if (m) {
+            m.clubId = s.playerClubId
+            m.contractYears = contractYears
+            m.salary = offeredSalaryFinal
+          }
+          const userClubName = s.clubs[s.playerClubId]?.abbreviation ?? 'your club'
+          appendNewsItem(s, {
+            id: crypto.randomUUID(),
+            date: s.currentDate,
+            headline: `${member.firstName} ${member.lastName} joins ${userClubName}`,
+            body: `${member.firstName} ${member.lastName} has left ${fromClubAbbr} to join ${userClubName} on a ${contractYears}-year contract worth $${offeredSalaryFinal.toLocaleString()} per year.`,
+            category: 'general',
+            clubIds: [s.playerClubId, fromClubId],
+            playerIds: [],
+          })
+        })
+        return { accepted: true, reason: `${member.firstName} ${member.lastName} has accepted your offer!`, acceptanceChance: chance }
+      },
+
       previewBoardApproval: (category, params) => {
         const state = get()
         const club = state.clubs[state.playerClubId]
@@ -7068,6 +7296,15 @@ export const useGameStore = create<GameStore>()(
       setReservesTactics: (updates: Partial<GameState['reserves']['tactics']>) => {
         set((state) => {
           state.reserves.tactics = { ...state.reserves.tactics, ...updates }
+        })
+      },
+
+      applyReservesCoachTactics: () => {
+        const state = get()
+        const impact = getReservesStaffImpact(Object.values(state.staff), state.playerClubId)
+        if (!impact.philosophyDriven) return
+        set((s) => {
+          s.reserves.tactics = impact.suggestedTactics
         })
       },
 
@@ -8143,12 +8380,14 @@ export const useGameStore = create<GameStore>()(
             }
           }
 
-          // Award Brownlow votes for each match
+          // Award Brownlow and Club B&F votes for each match
           for (const m of result.matches) {
             if (!m.result) continue
             const allPlayerStats = [...m.result.homePlayerStats, ...m.result.awayPlayerStats]
             const brownlowRound = awardBrownlowVotes(m.id, s.currentRound, allPlayerStats)
             s.brownlowTracker.push(brownlowRound)
+            const bfRounds = awardClubBFVotes(m.id, s.currentRound, allPlayerStats, s.players)
+            for (const r of bfRounds) s.bfTracker.push(r)
           }
 
           // Record and announce career milestones reached this round.
@@ -8340,6 +8579,7 @@ export const useGameStore = create<GameStore>()(
 
           // Simulate reserves/VFL performances for non-selected players
           const reservesRng = new SeededRNG(s.rngSeed + s.currentRound * 1777 + 19)
+          const slContext = buildUserStateLeagueContext(s)
           const reservesResult = simulateReservesRound({
             players: s.players,
             clubs: s.clubs,
@@ -8349,6 +8589,8 @@ export const useGameStore = create<GameStore>()(
             userClubId: s.playerClubId,
             reserves: s.reserves,
             rng: reservesRng,
+            opponentAflClubId: slContext?.opponent?.aflAffiliateId ?? undefined,
+            staffImpact: getReservesStaffImpact(Object.values(s.staff), s.playerClubId),
           })
           s.reserves = reservesResult.reserves
           for (const n of reservesResult.news) {
@@ -8990,6 +9232,7 @@ export const useGameStore = create<GameStore>()(
                 s.ladder,
                 s.brownlowTracker,
                 Object.keys(s.clubs),
+                s.bfTracker,
               )
               s.awards.push(seasonAwards)
               s.history.awards.push(buildSeasonAwardRecord(seasonAwards, s.players, s.clubs))
@@ -9055,18 +9298,28 @@ export const useGameStore = create<GameStore>()(
                 })
               }
 
-              for (const [clubId, playerId] of Object.entries(seasonAwards.clubBestAndFairest)) {
+              // Club B&F nights are staggered across days 2-19 (never on the same night as the main Awards Night)
+              const sortedClubBFEntries = Object.entries(seasonAwards.clubBestAndFairest).sort((a, b) => {
+                const rankA = s.ladder.findIndex(e => e.clubId === a[0])
+                const rankB = s.ladder.findIndex(e => e.clubId === b[0])
+                // Worst-ranked club holds their night first (days 2+)
+                return (rankB === -1 ? -1 : rankB) - (rankA === -1 ? -1 : rankA)
+              })
+              for (let i = 0; i < sortedClubBFEntries.length; i++) {
+                const [clubId, winnerRaw] = sortedClubBFEntries[i]!
+                const winnerId = typeof winnerRaw === 'string' ? winnerRaw : winnerRaw.winnerId
                 const club = s.clubs[clubId]
-                const player = s.players[playerId]
+                const player = s.players[winnerId]
                 if (!club || !player) continue
+                const clubNightDate = addDays(s.currentDate, 2 + i)
                 appendNewsItem(s, {
                   id: crypto.randomUUID(),
-                  date: s.currentDate,
+                  date: clubNightDate,
                   headline: `${player.firstName} ${player.lastName} wins ${club.name}'s Best and Fairest`,
                   body: `${player.firstName} ${player.lastName} has been named ${club.fullName}'s Best and Fairest for ${s.currentYear}.`,
                   category: 'milestone',
                   clubIds: [clubId],
-                  playerIds: [playerId],
+                  playerIds: [winnerId],
                 })
               }
 
@@ -9268,6 +9521,9 @@ export const useGameStore = create<GameStore>()(
         }
         if (merged.settings && merged.settings.includePathwayLeagues === undefined) {
           merged.settings.includePathwayLeagues = true
+        }
+        if ((merged as Record<string, unknown>).youthPathway === undefined) {
+          ;(merged as Record<string, unknown>).youthPathway = null
         }
         const matchRulesSettingsObj = merged.settings?.matchRules as unknown as Record<string, unknown> | undefined
         if (matchRulesSettingsObj && matchRulesSettingsObj.enableSubstitutes === undefined) {
@@ -9501,6 +9757,11 @@ export const useGameStore = create<GameStore>()(
         // Migrate brownlowRevealed
         if ((merged as Record<string, unknown>).brownlowRevealed === undefined) {
           (merged as Record<string, unknown>).brownlowRevealed = false
+        }
+        // Migrate awardsNightCompleted (treat old brownlowRevealed as equivalent)
+        if ((merged as Record<string, unknown>).awardsNightCompleted === undefined) {
+          (merged as Record<string, unknown>).awardsNightCompleted =
+            (merged as Record<string, unknown>).brownlowRevealed ?? false
         }
         if ((merged as Record<string, unknown>).tradeInbox === undefined) {
           (merged as Record<string, unknown>).tradeInbox = []
@@ -9898,6 +10159,19 @@ export const useGameStore = create<GameStore>()(
                 ruck: 50,
                 character: 50,
               }
+            }
+            // Backfill new scout specialization attributes added in this version
+            const scoutObj = scout as unknown as Record<string, unknown>
+            if (scoutObj.youthFocus === undefined) scoutObj.youthFocus = 50
+            if (scoutObj.currentRatingAccuracy === undefined) scoutObj.currentRatingAccuracy = 60
+            if (scoutObj.projectionAccuracy === undefined) scoutObj.projectionAccuracy = 60
+            if (!scoutObj.preferenceWeights) {
+              scoutObj.preferenceWeights = { physicality: 0, skill: 0, upside: 0 }
+            } else {
+              const pw = scoutObj.preferenceWeights as Record<string, unknown>
+              if (pw.physicality === undefined) pw.physicality = 0
+              if (pw.skill === undefined) pw.skill = 0
+              if (pw.upside === undefined) pw.upside = 0
             }
           }
         }

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Table,
@@ -178,9 +178,36 @@ function LeaderboardItem({
 export function RecordsPage() {
   const history = useGameStore((s) => s.history)
   const clubs = useGameStore((s) => s.clubs)
+  const players = useGameStore((s) => s.players)
   const currentYear = useGameStore((s) => s.currentYear)
   const recordsBook = history.recordsBook
   const matchRecords = recordsBook.match
+
+  // Build Club Awards: count how many times each player has won a club B&F
+  const bfWinCounts = useMemo(() => {
+    const counts: Record<string, { playerName: string; clubId: string; wins: number; latestYear: number }> = {}
+    for (const award of history.awards ?? []) {
+      for (const [, winner] of Object.entries(award.clubBestAndFairest)) {
+        const pid = winner.playerId
+        const existing = counts[pid]
+        if (existing) {
+          existing.wins++
+          if (award.year > existing.latestYear) existing.latestYear = award.year
+        } else {
+          const p = players[pid]
+          counts[pid] = {
+            playerName: winner.playerName,
+            clubId: p?.clubId ?? '',
+            wins: 1,
+            latestYear: award.year,
+          }
+        }
+      }
+    }
+    return Object.entries(counts)
+      .sort((a, b) => b[1].wins - a[1].wins || b[1].latestYear - a[1].latestYear)
+      .slice(0, 10)
+  }, [history.awards, players])
 
   const statKeys = useMemo(() => Object.keys(STAT_LABELS) as RecordsLeaderboardStat[], [])
 
@@ -427,6 +454,43 @@ export function RecordsPage() {
               : undefined
           }
         />
+      </Section>
+
+      {/* Club Awards */}
+      <Section title="Club Awards">
+        <div className="px-4 py-3">
+          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Most Club B&amp;F Awards</h4>
+          {bfWinCounts.length === 0 ? (
+            <p className="text-sm text-muted-foreground italic">No awards yet — complete a season to see winners.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-8 pl-0">#</TableHead>
+                  <TableHead>Player</TableHead>
+                  <TableHead>Club</TableHead>
+                  <TableHead className="text-right">B&amp;F Awards</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {bfWinCounts.map(([pid, data], idx) => (
+                  <TableRow key={pid}>
+                    <TableCell className="pl-0 text-muted-foreground">{idx + 1}</TableCell>
+                    <TableCell>
+                      <Link to={`/player/${pid}`} className="font-medium hover:underline">
+                        {data.playerName}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {clubs[data.clubId]?.abbreviation ?? data.clubId}
+                    </TableCell>
+                    <TableCell className="text-right font-mono font-semibold">{data.wins}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
       </Section>
 
       {/* Statistical Leaderboards */}

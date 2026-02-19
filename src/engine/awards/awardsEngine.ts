@@ -1,9 +1,10 @@
 import type { MatchPlayerStats } from '@/types/match'
 import type { Player } from '@/types/player'
 import type { LadderEntry } from '@/types/season'
-import type { BrownlowRound, SeasonAwards } from '@/types/awards'
+import type { BrownlowRound, ClubBFRound, SeasonAwards } from '@/types/awards'
 import type { Club } from '@/types/club'
 import type { MilestoneRecord, MilestoneType, SeasonAwardRecord } from '@/types/history'
+import { calculateClubBFWinners } from './clubBFEngine'
 
 /**
  * Award Brownlow votes (3-2-1) for a single match.
@@ -255,6 +256,8 @@ export function calculateClubBestAndFairest(
 
 /**
  * Compute all end-of-season awards.
+ * If bfTracker is provided and non-empty, Club B&F is vote-based.
+ * Otherwise falls back to per-game season stat calculation.
  */
 export function computeSeasonAwards(
   year: number,
@@ -262,14 +265,20 @@ export function computeSeasonAwards(
   ladder: LadderEntry[],
   brownlowTracker: BrownlowRound[],
   clubIds: string[],
+  bfTracker?: ClubBFRound[],
 ): SeasonAwards {
+  const clubBestAndFairest =
+    bfTracker && bfTracker.length > 0
+      ? calculateClubBFWinners(bfTracker, clubIds)
+      : calculateClubBestAndFairest(players, clubIds)
+
   return {
     year,
     brownlowMedal: calculateBrownlowWinner(brownlowTracker),
     colemanMedal: calculateColemanMedal(players),
     risingStar: calculateRisingStar(players),
     allAustralian: selectAllAustralian(players, ladder),
-    clubBestAndFairest: calculateClubBestAndFairest(players, clubIds),
+    clubBestAndFairest,
   }
 }
 
@@ -288,12 +297,22 @@ export function buildSeasonAwardRecord(
     }
   }
 
-  const clubBestAndFairest: Record<string, { playerId: string; playerName: string }> = {}
-  for (const [clubId, playerId] of Object.entries(seasonAwards.clubBestAndFairest)) {
-    const p = players[playerId]
+  const clubBestAndFairest: SeasonAwardRecord['clubBestAndFairest'] = {}
+  for (const [clubId, winner] of Object.entries(seasonAwards.clubBestAndFairest)) {
+    // winner is ClubBFWinner (new saves) or string playerId (old saves)
+    const winnerId = typeof winner === 'string' ? winner : winner.winnerId
+    const votes = typeof winner === 'string' ? undefined : winner.votes
+    const runnerUpId = typeof winner === 'string' ? null : winner.runnerUpId
+    const runnerUpVotes = typeof winner === 'string' ? null : winner.runnerUpVotes
+    const p = players[winnerId]
+    const ru = runnerUpId ? players[runnerUpId] : null
     clubBestAndFairest[clubId] = {
-      playerId,
-      playerName: p ? `${p.firstName} ${p.lastName}` : playerId,
+      playerId: winnerId,
+      playerName: p ? `${p.firstName} ${p.lastName}` : winnerId,
+      votes,
+      runnerUpId,
+      runnerUpName: ru ? `${ru.firstName} ${ru.lastName}` : runnerUpId ?? null,
+      runnerUpVotes,
     }
   }
 

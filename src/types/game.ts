@@ -9,7 +9,7 @@ import type { LeagueConfig } from './expansion'
 import type { GameHistory } from './history'
 import type { GameCalendar, WeekSchedule } from './calendar'
 import type { TrainingWeekPlan } from '@/engine/training/trainingEngine'
-import type { SeasonAwards, BrownlowRound } from './awards'
+import type { SeasonAwards, BrownlowRound, ClubBFRound } from './awards'
 import type { StateLeague, StateLeagueId, StateLeagueAffiliationSettings } from './stateLeague'
 import type { OffseasonState } from '@/engine/season/offseasonFlow'
 import type { FinalsFormat } from './finals'
@@ -24,6 +24,7 @@ import type { SpecialEventsSettings, SpecialEventsState } from './specialEvents'
 import type { FacilityUpgradeTracker } from './facilityUpgrade'
 import type { BoardApprovalTracker } from './boardApproval'
 import type { AgentRelationship } from './agent'
+import type { YouthPathwayState } from './youthPathway'
 
 export type GamePhase =
   | 'setup'           // Choosing club
@@ -452,10 +453,15 @@ export interface GameState {
   // Awards
   awards: SeasonAwards[]
   brownlowTracker: BrownlowRound[]
+  bfTracker: ClubBFRound[]
   brownlowRevealed: boolean        // Whether Brownlow votes have been revealed this season
+  awardsNightCompleted: boolean    // Whether the full Awards Night ceremony has been completed
 
   // State leagues
   stateLeagues: Record<StateLeagueId, StateLeague> | null
+
+  // Youth pathway (U16/U18 competitions, player generation, tournaments)
+  youthPathway: YouthPathwayState | null
 
   // Offseason pipeline
   offseasonState: OffseasonState | null

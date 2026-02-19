@@ -559,6 +559,8 @@ export function LeagueHistoryPage() {
                       <TableRow>
                         <TableHead>Club</TableHead>
                         <TableHead>Winner</TableHead>
+                        <TableHead className="text-right">Votes</TableHead>
+                        <TableHead>Runner-Up</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -575,6 +577,17 @@ export function LeagueHistoryPage() {
                               <Link to={`/player/${winner.playerId}`} className="hover:underline">
                                 {winner.playerName}
                               </Link>
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-sm">
+                              {winner.votes ?? '—'}
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {winner.runnerUpId ? (
+                                <Link to={`/player/${winner.runnerUpId}`} className="hover:underline">
+                                  {winner.runnerUpName ?? winner.runnerUpId}
+                                  {winner.runnerUpVotes != null ? ` (${winner.runnerUpVotes}v)` : ''}
+                                </Link>
+                              ) : '—'}
                             </TableCell>
                           </TableRow>
                         ))}
