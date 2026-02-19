@@ -5,6 +5,9 @@ import {
   DollarSign,
   Building2,
   Settings,
+  Handshake,
+  Globe,
+  BookOpen,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -36,7 +39,6 @@ export const navGroups: NavGroup[] = [
     matchPaths: ['/squad', '/lineup', '/gameplan', '/training', '/reserves', '/reserves/match-preview', '/injury-report', '/jumper-management', '/compare'],
     items: [
       { to: '/squad', label: 'Squad' },
-      { to: '/jumper-management', label: 'Jumper Numbers' },
       { to: '/lineup', label: 'Lineup' },
       { to: '/gameplan', label: 'Gameplan' },
       { to: '/training', label: 'Training' },
@@ -44,6 +46,7 @@ export const navGroups: NavGroup[] = [
       { to: '/reserves/match-preview', label: 'Reserves Preview' },
       { to: '/injury-report', label: 'Injuries' },
       { to: '/compare', label: 'Compare' },
+      { to: '/jumper-management', label: 'Jumper Numbers' },
     ],
   },
   {
@@ -51,20 +54,14 @@ export const navGroups: NavGroup[] = [
     label: 'Season',
     icon: Swords,
     defaultTo: '/fixture',
-    matchPaths: ['/fixture', '/match', '/ladder', '/league', '/records', '/history', '/calendar', '/state-leagues', '/offseason', '/development-report', '/tribunal', '/preseason-preview', '/rules'],
+    matchPaths: ['/fixture', '/match', '/ladder', '/calendar', '/tribunal', '/preseason-preview', '/offseason'],
     items: [
       { to: '/fixture', label: 'Fixture' },
       { to: '/ladder', label: 'Ladder' },
-      { to: '/league', label: 'League' },
-      { to: '/records', label: 'Records' },
-      { to: '/history', label: 'History' },
       { to: '/calendar', label: 'Calendar' },
       { to: '/tribunal', label: 'Tribunal' },
-      { to: '/state-leagues', label: 'State Leagues' },
       { to: '/preseason-preview', label: 'Season Preview' },
       { to: '/offseason', label: 'Offseason' },
-      { to: '/development-report', label: 'Dev Report' },
-      { to: '/rules', label: 'Rulebook' },
     ],
   },
   {
@@ -72,14 +69,17 @@ export const navGroups: NavGroup[] = [
     label: 'Management',
     icon: DollarSign,
     defaultTo: '/salary-cap',
-    matchPaths: ['/salary-cap', '/contracts', '/trades', '/draft', '/scouting', '/staff'],
+    matchPaths: ['/salary-cap', '/contracts', '/trades', '/draft', '/scouting', '/staff', '/agent-relationships', '/sponsorship', '/finances'],
     items: [
+      { to: '/finances', label: 'Finances' },
       { to: '/salary-cap', label: 'Cap Dashboard' },
       { to: '/contracts', label: 'Contracts' },
       { to: '/trades', label: 'Trades' },
       { to: '/draft', label: 'Draft' },
       { to: '/scouting', label: 'Scouting' },
       { to: '/staff', label: 'Staff' },
+      { to: '/agent-relationships', label: 'Agents' },
+      { to: '/sponsorship', label: 'Sponsorship', icon: Handshake },
     ],
   },
   {
@@ -87,10 +87,36 @@ export const navGroups: NavGroup[] = [
     label: 'Club',
     icon: Building2,
     defaultTo: '/club',
-    matchPaths: ['/club', '/expansion'],
+    matchPaths: ['/club', '/expansion', '/membership'],
     items: [
       { to: '/club', label: 'Club' },
+      { to: '/membership', label: 'Membership' },
       { to: '/expansion', label: 'Expansion' },
+    ],
+  },
+  {
+    id: 'world',
+    label: 'World',
+    icon: Globe,
+    defaultTo: '/league',
+    matchPaths: ['/league', '/state-leagues', '/development-report'],
+    items: [
+      { to: '/league', label: 'League' },
+      { to: '/state-leagues', label: 'State Leagues' },
+      { to: '/development-report', label: 'Dev Report' },
+    ],
+  },
+  {
+    id: 'history',
+    label: 'History',
+    icon: BookOpen,
+    defaultTo: '/records',
+    matchPaths: ['/records', '/history', '/rules', '/glossary'],
+    items: [
+      { to: '/records', label: 'Records' },
+      { to: '/history', label: 'History' },
+      { to: '/rules', label: 'Rulebook' },
+      { to: '/glossary', label: 'Glossary' },
     ],
   },
   {

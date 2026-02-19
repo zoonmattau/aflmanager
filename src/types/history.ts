@@ -191,6 +191,94 @@ export interface AFLRecordsBook {
   lastUpdatedYear: number | null
 }
 
+export interface MatchReportBestPlayer {
+  playerId: string
+  playerName: string
+  clubId: string
+  disposals: number
+  goals: number
+  marks: number
+  tackles: number
+  fantasyPoints: number
+}
+
+export interface MatchReportQuarterSummary {
+  quarter: number
+  homeGoals: number
+  homeBehinds: number
+  homeScore: number
+  awayGoals: number
+  awayBehinds: number
+  awayScore: number
+  homeCumulative: number
+  awayCumulative: number
+  dominatingClubId: string | null
+  momentumShift: boolean
+}
+
+export interface MatchReportTurningPoint {
+  quarter: number
+  minute: number
+  description: string
+  type: 'goal-burst' | 'injury' | 'tactical-change' | 'comeback'
+}
+
+export interface MatchReportInjury {
+  playerId: string
+  playerName: string
+  clubId: string
+  injuryType: string
+  weeksOut: number
+  severity: 'minor' | 'moderate' | 'major' | 'severe'
+}
+
+export interface MatchReportTribunalIncident {
+  playerId: string
+  playerName: string
+  clubId: string
+  incidentType: string
+  incidentSummary: string
+  recommendedWeeks: number
+  severity: string
+}
+
+export interface MatchReport {
+  id: string
+  matchId: string
+  year: number
+  round: number
+  isFinal: boolean
+  finalType?: 'QF' | 'EF' | 'PF' | 'SF' | 'GF'
+  homeClubId: string
+  awayClubId: string
+  homeScore: number
+  awayScore: number
+  venue: string
+  date: string
+  quarterSummaries: MatchReportQuarterSummary[]
+  homeBestPlayers: MatchReportBestPlayer[]
+  awayBestPlayers: MatchReportBestPlayer[]
+  turningPoints: MatchReportTurningPoint[]
+  injuries: MatchReportInjury[]
+  tribunalIncidents: MatchReportTribunalIncident[]
+  coachQuotes: { winningCoachQuote: string; losingCoachQuote: string } | null
+  crowd: {
+    attendance: number
+    capacityPct: number
+    weather: string
+    groundCondition: string
+    atmosphereRating: 'electric' | 'lively' | 'moderate' | 'subdued'
+  } | null
+  ladderContext: {
+    homePositionBefore: number
+    homePositionAfter: number
+    awayPositionBefore: number
+    awayPositionAfter: number
+    implication: string
+  } | null
+  narrativeBody: string
+}
+
 export interface GameHistory {
   seasons: SeasonRecord[]
   draftHistory: DraftHistoryEntry[]
@@ -202,4 +290,6 @@ export interface GameHistory {
   originHistory: import('@/types/specialEvents').OriginHistoryRecord[]
   recordsBook: AFLRecordsBook
   seasonArchives: import('@/types/historyArchive').SeasonArchive[]
+  matchReports: MatchReport[]
+  financialHistory?: import('@/types/historyArchive').FinancialSeasonRecord[]
 }

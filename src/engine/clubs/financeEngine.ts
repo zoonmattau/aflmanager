@@ -8,6 +8,11 @@ import {
   type RevenueBreakdown,
   type ExpenseBreakdown,
 } from '@/engine/clubs/clubManagement'
+import {
+  calculateDistribution,
+  DEFAULT_DISTRIBUTION_CONFIG,
+} from '@/engine/clubs/distributionEngine'
+import type { AflDistributionConfig, DistributionBreakdown } from '@/types/distributions'
 
 // ---------------------------------------------------------------------------
 // Momentum modifier from recent form
@@ -54,12 +59,13 @@ export interface SeasonEndFinanceResult {
   luxuryTax: number
   pnl: number
   newBalance: number
+  distributionBreakdown?: DistributionBreakdown
 }
 
 /**
  * Process season-end finances for a single club.
  *
- * Calls the existing `calculateRevenue()` and `calculateExpenses()`,
+ * Calls the updated `calculateRevenue()` and `calculateExpenses()`,
  * applies the momentum modifier to membership/sponsorship, computes
  * luxury tax if applicable, and returns the full financial picture.
  */
@@ -68,11 +74,23 @@ export function processSeasonEndFinances(
   players: Player[],
   staff: StaffMember[],
   ladderPosition: number,
-  isFinalist: boolean,
+  isTop4: boolean,
   rng: SeededRNG,
   salaryCapAmount: number,
   softCapEnabled: boolean,
+  awayGamesPlayed = 11,
+  injuryWeeksTotal = 0,
+  accumulatedGate?: number,
+  accumulatedBroadcast?: number,
+  finalsGate?: number,
+  specialEvents?: number,
   inflationIndex = 1.0,
+  totalTeams = 18,
+  finalsWins = 0,
+  isPremier = false,
+  isRunnerUp = false,
+  receivesPerformanceGrant = false,
+  distributionConfig?: AflDistributionConfig,
 ): SeasonEndFinanceResult {
   // Player wage bill = sum of year-1 salaries for club players
   const clubPlayers = players.filter((p) => p.clubId === club.id)
@@ -85,13 +103,34 @@ export function processSeasonEndFinances(
   const clubStaff = staff.filter((s) => s.clubId === club.id)
   const staffWageBill = clubStaff.reduce((sum, s) => sum + s.salary, 0)
 
-  // Calculate base revenue (already nominal if matchDayAccumulated was collected with inflationIndex)
+  const scoutingBudgetPct = club.budgetAllocation?.scouting ?? 20
+
+  // Compute AFL distribution breakdown using configurable rules
+  const distConfig = distributionConfig ?? DEFAULT_DISTRIBUTION_CONFIG
+  const distributionBreakdown = calculateDistribution(
+    distConfig,
+    ladderPosition,
+    totalTeams,
+    finalsWins,
+    isPremier,
+    isRunnerUp,
+    awayGamesPlayed,
+    receivesPerformanceGrant,
+    inflationIndex,
+  )
+
+  // Calculate base revenue (use distribution total as aflDistribution override)
   const revenue = calculateRevenue(
     club,
     ladderPosition,
-    isFinalist,
+    isTop4,
     rng,
-    club.finances.matchDayAccumulated,
+    // For old saves: matchDayAccumulated combined gate+broadcast; use as gate fallback
+    accumulatedGate ?? club.finances.matchDayAccumulated,
+    accumulatedBroadcast ?? club.finances.broadcastAccumulated,
+    finalsGate ?? club.finances.finalsRevenueAccumulated,
+    specialEvents ?? club.finances.specialEventsAccumulated,
+    distributionBreakdown.total,
     inflationIndex,
   )
 
@@ -105,11 +144,23 @@ export function processSeasonEndFinances(
       revenue.membership +
       revenue.sponsorship +
       revenue.broadcasting +
-      revenue.merchandise
+      revenue.merchandise +
+      revenue.aflDistribution +
+      revenue.finalsRevenue +
+      revenue.specialEvents
   }
 
-  // Calculate expenses (facility maintenance + ops scaled by inflation)
-  const expenses = calculateExpenses(club, staffWageBill, playerWageBill, inflationIndex)
+  // Calculate expenses with new params
+  const expenses = calculateExpenses(
+    club,
+    staffWageBill,
+    playerWageBill,
+    awayGamesPlayed,
+    injuryWeeksTotal,
+    scoutingBudgetPct,
+    revenue.total,
+    inflationIndex,
+  )
 
   // Luxury tax: 50% of amount over cap (only if soft cap enabled)
   let luxuryTax = 0
@@ -120,7 +171,7 @@ export function processSeasonEndFinances(
   const pnl = revenue.total - expenses.total - luxuryTax
   const newBalance = club.finances.balance + pnl
 
-  return { revenue, expenses, luxuryTax, pnl, newBalance }
+  return { revenue, expenses, luxuryTax, pnl, newBalance, distributionBreakdown }
 }
 
 // ---------------------------------------------------------------------------

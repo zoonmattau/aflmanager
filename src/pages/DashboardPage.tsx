@@ -1401,7 +1401,7 @@ export function DashboardPage() {
       </Card>
 
       {/* Priority Row: Match Focus + Decision Support */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
         <div className="xl:col-span-8">
           {isOffseason ? (
             <OffseasonPhaseCard />
@@ -1442,7 +1442,7 @@ export function DashboardPage() {
             />
           )}
         </div>
-        <div className="xl:col-span-4 space-y-4">
+        <div className="xl:col-span-4">
           {isOffseason ? (
             <PhaseProgressCard />
           ) : (
@@ -1473,110 +1473,11 @@ export function DashboardPage() {
               </CardContent>
             </Card>
           )}
-          <RecommendedActions />
-          {/* Club Finances Card */}
-          {club && (
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Club Finances</CardTitle>
-                <DollarSign className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Balance</span>
-                    <span className={`font-semibold ${club.finances.balance < 0 ? 'text-red-500' : ''}`}>
-                      {formatMoneyShort(club.finances.balance)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Season P&L</span>
-                    <span className={`font-semibold ${
-                      club.finances.seasonPnL != null
-                        ? club.finances.seasonPnL >= 0
-                          ? 'text-green-500'
-                          : 'text-red-500'
-                        : ''
-                    }`}>
-                      {club.finances.seasonPnL != null
-                        ? `${club.finances.seasonPnL >= 0 ? '+' : ''}${formatMoneyShort(club.finances.seasonPnL)}`
-                        : 'In progress'}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Revenue Trend</span>
-                    <span className="font-semibold">
-                      {(() => {
-                        const m = club.finances.momentumModifier ?? 0
-                        if (m > 0.05) return 'Rising'
-                        if (m < -0.03) return 'Declining'
-                        return 'Stable'
-                      })()}
-                    </span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-          {/* Media Pressure Card */}
-          {club && (() => {
-            const pressure = club.mediaPressure
-            const score = pressure?.score ?? 0
-            const label = getMediaPressureLabel(score)
-            const barColor = getPressureBarColor(label)
-            const textColor = getPressureLabelColor(label)
-            const trend = pressure ? getPressureTrend(pressure) : 'stable'
-            const moraleEffect = getMediaPressureMoraleEffect(score)
-            const TrendIcon = trend === 'rising' ? TrendingUp : trend === 'falling' ? TrendingDown : Minus
-            const stories = pressure?.activeStories ?? []
-            const recentStories = [...stories].reverse().slice(0, 3)
-
-            return (
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-sm font-medium">Media Pressure</CardTitle>
-                  <Newspaper className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className={`text-sm font-bold ${textColor}`}>{label}</span>
-                    <div className="flex items-center gap-1">
-                      <TrendIcon className={`h-3.5 w-3.5 ${trend === 'rising' ? 'text-red-500' : trend === 'falling' ? 'text-green-500' : 'text-muted-foreground'}`} />
-                      <span className="text-xs font-mono text-muted-foreground">{score}/100</span>
-                    </div>
-                  </div>
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                    <div
-                      className={`h-full rounded-full transition-all ${barColor}`}
-                      style={{ width: `${score}%` }}
-                    />
-                  </div>
-                  {moraleEffect !== 0 && (
-                    <p className="text-[11px] text-red-500">
-                      Squad morale: {moraleEffect}/round
-                    </p>
-                  )}
-                  {recentStories.length > 0 ? (
-                    <div className="space-y-1 pt-1">
-                      {recentStories.map((s) => (
-                        <p key={s.id} className="text-[10px] text-muted-foreground leading-snug truncate">
-                          · {s.headline}
-                        </p>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-[11px] text-muted-foreground">No active stories</p>
-                  )}
-                </CardContent>
-              </Card>
-            )
-          })()}
-          <ClubListNeedsCard />
         </div>
       </div>
 
       {/* Secondary: Ladder + Hub */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
         <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
@@ -1865,6 +1766,110 @@ export function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Info Row: Recommended Actions + Finances + Media + Needs */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 items-start">
+        <RecommendedActions />
+        {/* Club Finances Card */}
+        {club && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Club Finances</CardTitle>
+              <DollarSign className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Balance</span>
+                  <span className={`font-semibold ${club.finances.balance < 0 ? 'text-red-500' : ''}`}>
+                    {formatMoneyShort(club.finances.balance)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Season P&L</span>
+                  <span className={`font-semibold ${
+                    club.finances.seasonPnL != null
+                      ? club.finances.seasonPnL >= 0
+                        ? 'text-green-500'
+                        : 'text-red-500'
+                      : ''
+                  }`}>
+                    {club.finances.seasonPnL != null
+                      ? `${club.finances.seasonPnL >= 0 ? '+' : ''}${formatMoneyShort(club.finances.seasonPnL)}`
+                      : 'In progress'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Revenue Trend</span>
+                  <span className="font-semibold">
+                    {(() => {
+                      const m = club.finances.momentumModifier ?? 0
+                      if (m > 0.05) return 'Rising'
+                      if (m < -0.03) return 'Declining'
+                      return 'Stable'
+                    })()}
+                  </span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+        {/* Media Pressure Card */}
+        {club && (() => {
+          const pressure = club.mediaPressure
+          const score = pressure?.score ?? 0
+          const label = getMediaPressureLabel(score)
+          const barColor = getPressureBarColor(label)
+          const textColor = getPressureLabelColor(label)
+          const trend = pressure ? getPressureTrend(pressure) : 'stable'
+          const moraleEffect = getMediaPressureMoraleEffect(score)
+          const TrendIcon = trend === 'rising' ? TrendingUp : trend === 'falling' ? TrendingDown : Minus
+          const stories = pressure?.activeStories ?? []
+          const recentStories = [...stories].reverse().slice(0, 3)
+
+          return (
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Media Pressure</CardTitle>
+                <Newspaper className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className={`text-sm font-bold ${textColor}`}>{label}</span>
+                  <div className="flex items-center gap-1">
+                    <TrendIcon className={`h-3.5 w-3.5 ${trend === 'rising' ? 'text-red-500' : trend === 'falling' ? 'text-green-500' : 'text-muted-foreground'}`} />
+                    <span className="text-xs font-mono text-muted-foreground">{score}/100</span>
+                  </div>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className={`h-full rounded-full transition-all ${barColor}`}
+                    style={{ width: `${score}%` }}
+                  />
+                </div>
+                {moraleEffect !== 0 && (
+                  <p className="text-[11px] text-red-500">
+                    Squad morale: {moraleEffect}/round
+                  </p>
+                )}
+                {recentStories.length > 0 ? (
+                  <div className="space-y-1 pt-1">
+                    {recentStories.map((s) => (
+                      <p key={s.id} className="text-[10px] text-muted-foreground leading-snug truncate">
+                        · {s.headline}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">No active stories</p>
+                )}
+              </CardContent>
+            </Card>
+          )
+        })()}
+        <ClubListNeedsCard />
+      </div>
+
       {/* Upcoming Deadlines */}
       {deadlineCountdowns.length > 0 && (
         <Card>

@@ -20,6 +20,7 @@ import { FinalsFormatEditor } from '@/pages/wizard/FinalsFormatEditor'
 import { TeamEditorPanel } from '@/components/teams/TeamEditorPanel'
 import type { TeamEditorData } from '@/components/teams/TeamEditorPanel'
 import { ChevronLeft, Plus, Save, Trash2 } from 'lucide-react'
+import { BrandingPackPicker } from '@/components/league/BrandingPackPicker'
 
 const DEFAULT_FINALS = createDefaultSettings().finals
 const TIE_BREAKER_OPTIONS: LadderTieBreaker[] = [
@@ -524,6 +525,12 @@ export function CustomLeagueBuilderPage() {
     setFinalsSettings(toFinalsSettings(next))
   }
 
+  const handleApplyPack = (template: CustomLeagueTemplate) => {
+    const normalized = normalizeTemplate(template)
+    setActive(normalized)
+    setFinalsSettings(toFinalsSettings(normalized))
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-7xl space-y-4 p-4">
@@ -533,6 +540,7 @@ export function CustomLeagueBuilderPage() {
             Back
           </Button>
           <div className="flex items-center gap-2">
+            <BrandingPackPicker onApply={handleApplyPack} />
             <Button variant="outline" onClick={handleNewTemplate}>
               <Plus className="mr-1 h-4 w-4" />
               New Template

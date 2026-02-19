@@ -206,7 +206,7 @@ export function generateContractDemand(
   player: Player,
   currentClubId: string,
   rng: SeededRNG,
-  options?: { playerLoyaltyEnabled?: boolean; clubIsContender?: boolean; isHomeState?: boolean; inflationIndex?: number },
+  options?: { playerLoyaltyEnabled?: boolean; clubIsContender?: boolean; isHomeState?: boolean; inflationIndex?: number; agentDemandMultiplier?: number },
 ): ContractDemand {
   const baseValue = calculatePlayerValue(player, options?.inflationIndex ?? 1.0)
   const loyaltyEnabled = options?.playerLoyaltyEnabled !== false
@@ -239,10 +239,12 @@ export function generateContractDemand(
       )
     : { salaryMultiplier: 1, yearsAdjust: 0 }
 
+  const agentDemandMultiplier = options?.agentDemandMultiplier ?? 1.0
+
   const aavWanted = roundSalary(
     Math.max(
       MINIMUM_SALARY,
-      baseValue * ambitionMultiplier * loyaltyMultiplier * moralePenalty * archetypeModifiers.salaryMultiplier,
+      baseValue * ambitionMultiplier * loyaltyMultiplier * moralePenalty * archetypeModifiers.salaryMultiplier * agentDemandMultiplier,
     ),
   )
 

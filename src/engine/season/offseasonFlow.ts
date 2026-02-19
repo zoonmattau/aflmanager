@@ -19,7 +19,8 @@ import type { PracticeMatchFixture, PracticeMatchResult } from '@/engine/season/
 import type { WeekSchedule } from '@/types/calendar'
 import type { TrainingFocus } from '@/engine/training/trainingEngine'
 import { recordDraftPick } from '@/engine/history/historyEngine'
-import { getCoachingImpact } from '@/engine/staff/staffEngine'
+import { getCoachingImpact, getMedicalStaffImpact } from '@/engine/staff/staffEngine'
+import { rollPreseasonInjuryBlock, type TrainingInjuryEvent } from '@/engine/players/trainingInjuries'
 import { autoSelectLeadership } from '@/engine/leadership/leadershipEngine'
 import { getCultureDevelopmentModifier } from '@/engine/culture/cultureEngine'
 import { getAISpendingConservatism } from '@/engine/clubs/financeEngine'
@@ -313,9 +314,9 @@ function buildDevelopmentReport(
     position: s.position,
     draftPick: s.draftPick,
     yearsInSystem: s.yearsInSystem,
-    overallBefore: round1(s.overallBefore),
-    overallAfter: round1(s.overallAfter),
-    delta: round1(s.overallAfter - s.overallBefore),
+    overallBefore: Math.round(s.overallBefore),
+    overallAfter: Math.round(s.overallAfter),
+    delta: Math.round(s.overallAfter - s.overallBefore),
     potentialCeiling: s.potentialCeiling,
   }))
 
@@ -370,12 +371,12 @@ function buildDevelopmentReport(
     const topFaller = sorted[sorted.length - 1]
     return {
       clubId,
-      avgDelta: round1(avgDelta),
+      avgDelta: Math.round(avgDelta),
       totalPlayers: arr.length,
       risers: arr.filter((d) => d.delta > 0).length,
       fallers: arr.filter((d) => d.delta < 0).length,
-      youthAvgDelta: round1(youthAvgDelta),
-      veteranAvgDelta: round1(veteranAvgDelta),
+      youthAvgDelta: Math.round(youthAvgDelta),
+      veteranAvgDelta: Math.round(veteranAvgDelta),
       topRiserPlayerId: topRiser?.delta > 0 ? topRiser.playerId : null,
       topFallerPlayerId: topFaller?.delta < 0 ? topFaller.playerId : null,
     }
@@ -1291,6 +1292,8 @@ export function processAIDraft(
     originHistory: [],
     recordsBook: createDefaultRecordsBook(),
     seasonArchives: [],
+    matchReports: [],
+    financialHistory: [],
   }
 
   // Track which prospects have been drafted
@@ -1393,24 +1396,28 @@ export function processAIDraft(
 // 8. processPreseason
 // ---------------------------------------------------------------------------
 
+export interface PreseasonResult {
+  players: Record<string, Player>
+  trainingInjuryEvents: TrainingInjuryEvent[]
+  newsItems: NewsItem[]
+}
+
 /**
  * Run preseason training for all clubs over PRESEASON_WEEKS weeks.
  *
- * For each club:
- * - Run calculatePreseasonTraining with the club's staff and facilities
- * - Reset fitness to 85-95
- * - Reset fatigue to 0-10
- * - Reset form to 40-60
- * - Heal all injuries
+ * Integrates training-specific injury simulation: injuries that persist into
+ * the regular season are applied to players, and news items are generated for
+ * all preseason knocks.
  *
- * Returns the updated players record.
+ * @param currentYear - Used to generate preseason date stamps for news items.
  */
 export function processPreseason(
   players: Record<string, Player>,
   staff: Record<string, StaffMember>,
   clubs: Record<string, Club>,
   rng: SeededRNG,
-): Record<string, Player> {
+  currentYear?: number,
+): PreseasonResult {
   // Clone players (deep enough for mutation by calculatePreseasonTraining)
   const updatedPlayers: Record<string, Player> = {}
   for (const [id, original] of Object.entries(players)) {
@@ -1427,64 +1434,140 @@ export function processPreseason(
       careerStats: { ...original.careerStats },
       seasonStats: { ...original.seasonStats },
       injuryHistory: [...(original.injuryHistory ?? [])],
-      injury: null, // Heal all injuries for preseason
+      injury: null, // Heal all pre-preseason injuries
     }
+  }
+
+  // Build medical staff impact per club for injury rolling
+  const staffList = Object.values(staff)
+  const medicalByClub: Record<string, ReturnType<typeof getMedicalStaffImpact> | null> = {}
+  for (const club of Object.values(clubs)) {
+    medicalByClub[club.id] = getMedicalStaffImpact(staffList, club.id)
   }
 
   // Run preseason training for each club
   for (const club of Object.values(clubs)) {
-    // Get staff for this club
     const clubStaff: Record<string, StaffMember> = {}
     for (const [staffId, member] of Object.entries(staff)) {
-      if (member.clubId === club.id) {
-        clubStaff[staffId] = member
-      }
+      if (member.clubId === club.id) clubStaff[staffId] = member
     }
 
-    // Build a sub-record of only this club's players for training
     const clubPlayers: Record<string, Player> = {}
     for (const [playerId, player] of Object.entries(updatedPlayers)) {
-      if (player.clubId === club.id) {
-        clubPlayers[playerId] = player
-      }
+      if (player.clubId === club.id) clubPlayers[playerId] = player
     }
 
     if (Object.keys(clubPlayers).length === 0) continue
     if (Object.keys(clubStaff).length === 0) continue
 
-    // Run preseason training (mutates players in place)
-    calculatePreseasonTraining(
-      clubPlayers,
-      PRESEASON_WEEKS,
-      clubStaff,
-      club.facilities,
-      rng,
-    )
+    calculatePreseasonTraining(clubPlayers, PRESEASON_WEEKS, clubStaff, club.facilities, rng)
 
-    // Write the trained players back to the main record
     for (const [playerId, player] of Object.entries(clubPlayers)) {
       updatedPlayers[playerId] = player
     }
   }
 
-  // Final reset pass: normalize fitness, fatigue, form, and clear injuries
+  // --- Roll preseason training injuries ---
+  const playersByClub: Record<string, Player[]> = {}
   for (const player of Object.values(updatedPlayers)) {
-    if (!player.clubId || player.clubId === 'retired' || player.clubId === '') {
-      continue
+    if (!player.clubId || player.clubId === 'retired' || player.clubId === '') continue
+    if (!playersByClub[player.clubId]) playersByClub[player.clubId] = []
+    playersByClub[player.clubId].push(player)
+  }
+
+  const year = currentYear ?? new Date().getFullYear()
+  const preseasonStartDate = `${year}-01-20`
+
+  const trainingInjuryEvents = rollPreseasonInjuryBlock(
+    playersByClub,
+    medicalByClub,
+    PRESEASON_WEEKS,
+    rng,
+    preseasonStartDate,
+    3, // extra weeks (practice-matches + venue phases) before round 1
+  )
+
+  // Build a map of players with injuries that persist into the regular season
+  const persistingInjuries = new Map<string, TrainingInjuryEvent>()
+  for (const event of trainingInjuryEvents) {
+    if (event.weeksAtSeasonStart > 0) {
+      const existing = persistingInjuries.get(event.playerId)
+      if (!existing || event.weeksAtSeasonStart > existing.weeksAtSeasonStart) {
+        persistingInjuries.set(event.playerId, event)
+      }
     }
+  }
+
+  // --- Final reset pass ---
+  for (const player of Object.values(updatedPlayers)) {
+    if (!player.clubId || player.clubId === 'retired' || player.clubId === '') continue
 
     player.fitness = rng.nextInt(85, 95)
     player.fatigue = rng.nextInt(0, 10)
     player.form = rng.nextInt(40, 60)
-    player.injury = null
+
+    const persisting = persistingInjuries.get(player.id)
+    if (persisting) {
+      // Apply persisting injury with fitness/morale hit
+      const weeksOut = persisting.weeksAtSeasonStart
+      player.injury = { ...persisting.injury, weeksRemaining: weeksOut }
+      player.fitness = Math.max(30, player.fitness - (weeksOut >= 6 ? 25 : weeksOut >= 3 ? 15 : 8))
+      player.morale = Math.max(20, (player.morale ?? 60) - (persisting.injury.severity === 'severe' ? 12 : 6))
+    } else {
+      player.injury = null
+    }
   }
 
-  // Re-select leadership for all clubs (roster may have changed during offseason)
+  // Re-select leadership for all clubs
   for (const club of Object.values(clubs)) {
     club.leadership = autoSelectLeadership(updatedPlayers, club.id)
   }
 
-  return updatedPlayers
+  // Generate news items for all training injuries
+  const newsItems: NewsItem[] = []
+  for (const event of trainingInjuryEvents) {
+    const player = updatedPlayers[event.playerId]
+    if (!player) continue
+    const club = clubs[player.clubId]
+
+    const causeLabel =
+      event.cause === 'practice-match' ? 'a preseason practice match'
+      : event.cause === 'stress-fracture' ? 'overloaded training'
+      : event.cause === 'overtraining' ? 'high-intensity preseason drills'
+      : 'preseason training'
+
+    if (event.weeksAtSeasonStart > 0) {
+      newsItems.push(
+        createNews(
+          `${player.firstName} ${player.lastName} to miss start of season (${event.weeksAtSeasonStart}w)`,
+          `${player.firstName} ${player.lastName} suffered ${event.injury.type} during ${causeLabel}. ` +
+          `The ${player.position.primary} is expected to miss approximately ${event.weeksAtSeasonStart} ` +
+          `week${event.weeksAtSeasonStart === 1 ? '' : 's'} of the regular season.`,
+          'injury',
+          [player.clubId],
+          [player.id],
+          preseasonStartDate,
+          rng,
+        ),
+      )
+    } else {
+      newsItems.push(
+        createNews(
+          `${player.firstName} ${player.lastName} picks up preseason knock`,
+          `${player.firstName} ${player.lastName} suffered ${event.injury.type} during ${causeLabel} in week ${event.week} ` +
+          `but is expected to be fit for round 1.` +
+          (club ? ` ${club.name} confirmed the ${player.position.primary} will be available for the season opener.` : ''),
+          'injury',
+          [player.clubId],
+          [player.id],
+          preseasonStartDate,
+          rng,
+        ),
+      )
+    }
+  }
+
+  return { players: updatedPlayers, trainingInjuryEvents, newsItems }
 }
 
 // ---------------------------------------------------------------------------

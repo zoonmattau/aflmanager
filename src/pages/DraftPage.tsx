@@ -37,6 +37,7 @@ import {
 import { useTableViewManager, type TableViewColumnConfig } from '@/components/table-view/useTableViewManager'
 import { TableViewManagerControl } from '@/components/table-view/TableViewManagerControl'
 import { ShortlistAssignMenu, ShortlistManager } from '@/components/shortlists/ShortlistManager'
+import { TermTooltip } from '@/components/help/TermTooltip'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -787,9 +788,10 @@ function DraftBoardTab({
                       </Button>
                     )}
                     {pick.isBid && (
-                      <Badge variant="outline" className="ml-2 text-xs">
-                        BID
-                      </Badge>
+                      <span className="inline-flex items-center gap-1">
+                        <Badge variant="outline" className="text-xs">BID</Badge>
+                        <TermTooltip id="bid" />
+                      </span>
                     )}
                   </TableCell>
                 </TableRow>
@@ -1091,7 +1093,10 @@ function ProspectListTab({
                           handleSort(colId as ProspectSortField)
                         }}
                       >
-                        {label}{isSortable ? sortIndicator(colId as ProspectSortField) : ''}
+                        {colId === 'fs'
+                      ? <span className="inline-flex items-center gap-0.5">F/S <TermTooltip id="father-son" /></span>
+                      : <>{label}{isSortable ? sortIndicator(colId as ProspectSortField) : ''}</>
+                    }
                       </TableHead>
                     )
                   })}
@@ -1418,10 +1423,12 @@ export function DraftPage() {
           <Badge variant="outline">Strength: {draft.classProfile.strength}</Badge>
           <Badge variant="outline">Score: {draft.classProfile.strengthScore}</Badge>
           <Badge variant="outline">Top-End: {draft.classProfile.topEndTalent}</Badge>
+          <TermTooltip id="prospect-tier" />
           <Badge variant="outline">Depth: {draft.classProfile.depthRating}</Badge>
           <Badge variant={settings.realism.draftVariance ? 'default' : 'secondary'}>
             Bust/Late-Bloomer Variance: {settings.realism.draftVariance ? 'On' : 'Off'}
           </Badge>
+          <TermTooltip id="draft-variance" />
           <Badge variant={draft.combineCompleted ? 'default' : 'secondary'}>
             Combine: {draft.combineCompleted ? `Completed (${draft.combineDate ?? 'N/A'})` : 'Pending'}
           </Badge>

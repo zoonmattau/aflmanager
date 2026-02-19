@@ -356,8 +356,7 @@ export function projectContractValue(
       1,
       Math.min(100, runningOverall + delta),
     )
-    const overallDelta =
-      Math.round((projectedOverall - currentOverall) * 10) / 10
+    const overallDelta = Math.round(projectedOverall - currentOverall)
 
     const phase = getPhase(projectedAge, peakAgeStart, peakAgeEnd)
 
@@ -403,7 +402,7 @@ export function projectContractValue(
     projections.push({
       yearOffset,
       projectedAge,
-      projectedOverall: Math.round(projectedOverall * 10) / 10,
+      projectedOverall: Math.round(projectedOverall),
       overallDelta,
       projectedMarketValue,
       projectedDemand,
@@ -449,7 +448,7 @@ export function projectContractValue(
     playerId: player.id,
     playerName: `${player.firstName} ${player.lastName}`,
     currentAge: player.age,
-    currentOverall: Math.round(currentOverall * 10) / 10,
+    currentOverall: Math.round(currentOverall),
     currentMarketValue,
     currentDemand,
     projections,

@@ -1,4 +1,5 @@
 import type { Club, ClubFacilities } from '@/types/club'
+import { calculateTierMembershipRevenue } from '@/engine/clubs/membershipEngine'
 import type { SeededRNG } from '@/engine/core/rng'
 
 // ---------------------------------------------------------------------------
@@ -15,11 +16,14 @@ export interface FacilityImpact {
 }
 
 export interface RevenueBreakdown {
-  matchDay: number
-  membership: number
-  sponsorship: number
-  broadcasting: number
-  merchandise: number
+  matchDay: number        // Regular season gate revenue
+  membership: number      // Membership fees
+  sponsorship: number     // Commercial deal revenue
+  broadcasting: number    // Per-match broadcast rights (accumulated)
+  merchandise: number     // Merchandise and licensing
+  aflDistribution: number // AFL prize money by ladder position
+  finalsRevenue: number   // Finals gate revenue
+  specialEvents: number   // Marquee game/blockbuster hosting bonuses
   total: number
 }
 
@@ -28,6 +32,9 @@ export interface ExpenseBreakdown {
   staffSalaries: number
   facilityMaintenance: number
   operations: number
+  travel: number   // Away game travel costs
+  medical: number  // Medical staff, physio, injury rehabilitation
+  scouting: number // Scouting department expenditure
   total: number
 }
 
@@ -169,70 +176,6 @@ function lerpByLadder(ladderPosition: number, best: number, worst: number): numb
   return best + (worst - best) * t
 }
 
-/**
- * Calculate the revenue breakdown for a club's season.
- *
- * @param club           - The club generating revenue
- * @param ladderPosition - Final ladder position (1 = premiers/minor premiers, 18 = last)
- * @param isFinalist     - Whether the club played in finals
- * @param rng            - Seeded RNG for slight random variation in membership numbers
- */
-export function calculateRevenue(
-  club: Club,
-  ladderPosition: number,
-  isFinalist: boolean,
-  rng: SeededRNG,
-  accumulatedMatchDayRevenue?: number,
-  inflationIndex = 1.0,
-): RevenueBreakdown {
-  const ix = inflationIndex
-
-  // matchDay: use venue system accumulated revenue if available, else estimate by ladder (already nominal if accumulated)
-  const matchDay = accumulatedMatchDayRevenue != null
-    ? accumulatedMatchDayRevenue
-    : Math.round(lerpByLadder(ladderPosition, 5_000_000, 2_000_000) * ix)
-
-  // membership: $3.5M-$5.5M (real) with slight random variance
-  const membershipBase = lerpByLadder(ladderPosition, 5_500_000, 3_500_000) * ix
-  const membershipVariance = rng.nextFloat(-500_000, 500_000) * ix
-  let membership = Math.round(membershipBase + membershipVariance)
-
-  // sponsorship: $5M-$2M (real)
-  let sponsorship = Math.round(lerpByLadder(ladderPosition, 5_000_000, 2_000_000) * ix)
-
-  // broadcasting: flat $4M (real) for every club (equal distribution)
-  const broadcasting = Math.round(4_000_000 * ix)
-
-  // merchandise: $3M-$1M (real)
-  const merchandise = Math.round(lerpByLadder(ladderPosition, 3_000_000, 1_000_000) * ix)
-
-  // Finalist bonus
-  const finalistBonus = isFinalist ? Math.round(1_000_000 * ix) : 0
-
-  // Facility revenue bonus: average facility level above 3 adds 0-5% to membership + sponsorship
-  const avgFacility = FACILITY_KEYS.reduce((sum, k) => sum + club.facilities[k], 0) / FACILITY_KEYS.length
-  if (avgFacility > 3) {
-    const facilityBonus = Math.min(0.05, (avgFacility - 3) * 0.025) // 0-5%
-    membership = Math.round(membership * (1 + facilityBonus))
-    sponsorship = Math.round(sponsorship * (1 + facilityBonus))
-  }
-
-  const total = matchDay + membership + sponsorship + broadcasting + merchandise + finalistBonus
-
-  return {
-    matchDay,
-    membership,
-    sponsorship,
-    broadcasting,
-    merchandise,
-    total,
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Expense calculation
-// ---------------------------------------------------------------------------
-
 /** All facility keys on ClubFacilities. */
 const FACILITY_KEYS: (keyof ClubFacilities)[] = [
   'trainingGround',
@@ -244,16 +187,134 @@ const FACILITY_KEYS: (keyof ClubFacilities)[] = [
 ]
 
 /**
+ * Calculate the revenue breakdown for a club's season.
+ *
+ * @param club                     - The club generating revenue
+ * @param ladderPosition           - Final ladder position (1 = premiers, 18 = last)
+ * @param isTop4                   - Whether the club finished in the top 4
+ * @param rng                      - Seeded RNG for slight random variation
+ * @param accumulatedGate          - Gate revenue accumulated (regular season only)
+ * @param accumulatedBroadcast     - Per-match broadcast revenue accumulated
+ * @param accumulatedFinalsGate    - Gate revenue from finals matches
+ * @param specialEventsAccumulated - Marquee/blockbuster bonus revenue
+ * @param inflationIndex           - Annual CPI multiplier
+ */
+export function calculateRevenue(
+  club: Club,
+  ladderPosition: number,
+  isTop4: boolean,
+  rng: SeededRNG,
+  accumulatedGate?: number,
+  accumulatedBroadcast?: number,
+  accumulatedFinalsGate?: number,
+  specialEventsAccumulated?: number,
+  aflDistributionOverride?: number,
+  inflationIndex = 1.0,
+): RevenueBreakdown {
+  const ix = inflationIndex
+
+  // matchDay: gate revenue only (separate from broadcast)
+  const matchDay = accumulatedGate != null
+    ? accumulatedGate
+    : Math.round(lerpByLadder(ladderPosition, 5_000_000, 2_000_000) * ix)
+
+  // membership: use tier-based calculation if membershipState exists, else formula fallback
+  const membershipState = club.finances.membershipState
+  let membership: number
+  if (membershipState) {
+    membership = Math.round(calculateTierMembershipRevenue(membershipState.tiers) * ix)
+  } else {
+    const membershipBase = lerpByLadder(ladderPosition, 5_500_000, 3_500_000) * ix
+    const membershipVariance = rng.nextFloat(-500_000, 500_000) * ix
+    membership = Math.round(membershipBase + membershipVariance)
+    // Apply legacy membershipData boost
+    const membershipData = club.finances.membershipData
+    if (membershipData && membershipData.totalMembers > 40_000) {
+      const bonusMembers = membershipData.totalMembers - 40_000
+      membership = Math.round(membership + bonusMembers * 25 * ix)
+    }
+  }
+
+  // sponsorship: use active deals if present, else formula fallback
+  let sponsorship: number
+  if (club.sponsorshipDeals && club.sponsorshipDeals.length > 0) {
+    // Inline computation to avoid circular import (same as getSponsorshipTotalRevenue)
+    const raw = club.sponsorshipDeals.reduce(
+      (sum, d) => sum + d.annualValue + (isTop4 ? d.performanceBonus : 0),
+      0,
+    )
+    sponsorship = Math.round(raw * ix)
+  } else {
+    sponsorship = Math.round(lerpByLadder(ladderPosition, 5_000_000, 2_000_000) * ix)
+  }
+
+  // broadcasting: per-match broadcast revenue accumulated (split from gate)
+  const broadcasting = accumulatedBroadcast ?? 0
+
+  // merchandise: $3M-$1M (real)
+  const merchandise = Math.round(lerpByLadder(ladderPosition, 3_000_000, 1_000_000) * ix)
+
+  // AFL distribution: prize money by ladder position (winner ~$1.8M, last ~$0.4M)
+  // Use override from distributionEngine if provided (more accurate), else formula fallback
+  const aflDistribution = aflDistributionOverride != null
+    ? aflDistributionOverride
+    : Math.round(lerpByLadder(ladderPosition, 1_800_000, 400_000) * ix)
+
+  // Finals revenue: gate from finals matches hosted
+  const finalsRevenue = accumulatedFinalsGate ?? 0
+
+  // Special events: marquee/blockbuster hosting bonuses
+  const specialEvents = specialEventsAccumulated ?? 0
+
+  // Facility revenue bonus: average facility level above 3 adds 0-5% to membership + sponsorship
+  const avgFacility = FACILITY_KEYS.reduce((sum, k) => sum + club.facilities[k], 0) / FACILITY_KEYS.length
+  if (avgFacility > 3) {
+    const facilityBonus = Math.min(0.05, (avgFacility - 3) * 0.025) // 0-5%
+    membership = Math.round(membership * (1 + facilityBonus))
+    sponsorship = Math.round(sponsorship * (1 + facilityBonus))
+  }
+
+  const total =
+    matchDay + membership + sponsorship + broadcasting +
+    merchandise + aflDistribution + finalsRevenue + specialEvents
+
+  return {
+    matchDay,
+    membership,
+    sponsorship,
+    broadcasting,
+    merchandise,
+    aflDistribution,
+    finalsRevenue,
+    specialEvents,
+    total,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Expense calculation
+// ---------------------------------------------------------------------------
+
+/**
  * Calculate the expense breakdown for a club's season.
  *
- * @param club            - The club incurring expenses
- * @param staffWageBill   - Total staff salaries for the season
- * @param playerWageBill  - Total player salaries for the season
+ * @param club              - The club incurring expenses
+ * @param staffWageBill     - Total staff salaries for the season
+ * @param playerWageBill    - Total player salaries for the season
+ * @param awayGamesPlayed   - Number of away games played this season
+ * @param injuryWeeksTotal  - Sum of injury weeks across all club players
+ * @param scoutingBudgetPct - Budget allocation percentage for scouting (e.g. 20)
+ * @param totalRevenue      - Total revenue (used to compute discretionary scouting spend)
+ * @param inflationIndex    - Annual CPI multiplier
  */
 export function calculateExpenses(
   club: Club,
   staffWageBill: number,
   playerWageBill: number,
+  awayGamesPlayed = 11,
+  injuryWeeksTotal = 0,
+  scoutingBudgetPct = 20,
+  totalRevenue = 0,
   inflationIndex = 1.0,
 ): ExpenseBreakdown {
   const ix = inflationIndex
@@ -267,13 +328,29 @@ export function calculateExpenses(
   // Flat operational cost ($2M real)
   const operations = Math.round(2_000_000 * ix)
 
-  const total = playerWageBill + staffWageBill + facilityMaintenance + operations
+  // Travel: away game travel costs (~$45k per game average)
+  const travel = Math.round(awayGamesPlayed * 45_000 * ix)
+
+  // Medical: base $600k + $8k per injury week
+  const medical = Math.round((600_000 + injuryWeeksTotal * 8_000) * ix)
+
+  // Scouting: discretionary budget × scouting allocation %
+  const discretionaryBudget = totalRevenue * 0.08
+  const scoutingRaw = (discretionaryBudget * scoutingBudgetPct) / 100
+  const scouting = Math.round(Math.max(200_000, Math.min(1_200_000, scoutingRaw)) * ix)
+
+  const total =
+    playerWageBill + staffWageBill + facilityMaintenance +
+    operations + travel + medical + scouting
 
   return {
     playerSalaries: playerWageBill,
     staffSalaries: staffWageBill,
     facilityMaintenance,
     operations,
+    travel,
+    medical,
+    scouting,
     total,
   }
 }

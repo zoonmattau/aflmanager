@@ -13,6 +13,7 @@ import type {
 import type { SpecialEventsSettings, OriginConfig } from '@/types/specialEvents'
 import { computeDefaultGameStartDate } from '@/engine/calendar/calendarEngine'
 import { DEFAULT_INFLATION_SETTINGS } from '@/engine/inflation/inflationEngine'
+import { DEFAULT_DISTRIBUTION_CONFIG } from '@/engine/clubs/distributionEngine'
 
 // ---------------------------------------------------------------------------
 // Default realistic match time slots (expanded AFL-style pool spanning Thu–Mon)
@@ -398,6 +399,7 @@ export const DEFAULT_REALISM: RealismSettings = {
   tribunalEarlyPleaDiscount: true,
   tribunalLegalRepresentation: true,
   tribunalPriorRecord: true,
+  allowLoans: true,
 }
 
 // ---------------------------------------------------------------------------
@@ -451,6 +453,7 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   },
   seasonStartDate: '2026-03-20',
   gameStartDate: computeDefaultGameStartDate(2026),
+  aflDistributions: { ...DEFAULT_DISTRIBUTION_CONFIG, ladderTiers: DEFAULT_DISTRIBUTION_CONFIG.ladderTiers.map((t) => ({ ...t })) },
 }
 
 /** Create a deep copy of default settings */
@@ -493,6 +496,7 @@ export function createDefaultSettings(): GameSettings {
       allowCustomAffiliations: DEFAULT_GAME_SETTINGS.stateLeagueAffiliations.allowCustomAffiliations,
       clubAffiliations: { ...DEFAULT_GAME_SETTINGS.stateLeagueAffiliations.clubAffiliations },
     },
+    aflDistributions: { ...DEFAULT_DISTRIBUTION_CONFIG, ladderTiers: DEFAULT_DISTRIBUTION_CONFIG.ladderTiers.map((t) => ({ ...t })) },
   }
 }
 

@@ -32,14 +32,28 @@ export interface ClubFinances {
   balance: number
   /** Running match-day gate total accumulated during the season */
   matchDayAccumulated?: number
+  /** Per-match broadcast revenue accumulated separately from gate */
+  broadcastAccumulated?: number
+  /** Gate revenue from finals matches */
+  finalsRevenueAccumulated?: number
+  /** Marquee/blockbuster special events bonus revenue */
+  specialEventsAccumulated?: number
   /** Performance momentum modifier from recent form (-0.10 to +0.15) */
   momentumModifier?: number
+  /** Membership campaign and tracking data (legacy) */
+  membershipData?: MembershipData
+  /** Full membership tier state (replaces membershipData) */
+  membershipState?: ClubMembershipState
   /** Last season's revenue breakdown */
   seasonRevenue?: import('@/engine/clubs/clubManagement').RevenueBreakdown
   /** Last season's expense breakdown */
   seasonExpenses?: import('@/engine/clubs/clubManagement').ExpenseBreakdown
   /** Net profit/loss from last season */
   seasonPnL?: number
+  /** Breakdown of AFL distribution components received last season */
+  distributionBreakdown?: import('@/types/distributions').DistributionBreakdown
+  /** Active and historical loans taken by the club */
+  loans?: import('@/types/finance').ClubLoan[]
 }
 
 export interface DraftPick {
@@ -147,7 +161,7 @@ export interface MediaPressure {
 // Budget allocation
 // ---------------------------------------------------------------------------
 
-export type BudgetDepartment = 'facilities' | 'coaching' | 'recruiting' | 'medical' | 'scouting'
+export type BudgetDepartment = 'facilities' | 'coaching' | 'recruiting' | 'medical' | 'scouting' | 'marketing'
 
 export interface ClubBudgetAllocation {
   facilities: number   // 5-50, percentage
@@ -155,6 +169,89 @@ export interface ClubBudgetAllocation {
   recruiting: number   // 5-50, percentage
   medical: number      // 5-50, percentage
   scouting: number     // 5-50, percentage
+  /** Marketing & fan engagement — affects membership growth, sponsorship, and fan satisfaction */
+  marketing: number    // 5-50, percentage
+}
+
+// ---------------------------------------------------------------------------
+// Sponsorship & membership
+// ---------------------------------------------------------------------------
+
+export type SponsorshipTier = 'naming-rights' | 'major' | 'secondary' | 'minor'
+export type SponsorshipCategory =
+  | 'telecoms' | 'automotive' | 'beer' | 'finance' | 'insurance'
+  | 'retail' | 'tech' | 'energy' | 'travel' | 'food'
+
+export type SponsorshipSlot = 'major' | 'guernsey' | 'stadium' | 'digital'
+
+export interface SponsorshipDeal {
+  id: string
+  companyName: string
+  tier: SponsorshipTier
+  category: SponsorshipCategory
+  annualValue: number        // nominal $
+  yearsRemaining: number     // counts down each season
+  totalYears: number
+  performanceBonus: number   // extra $ if top-4 finish
+  signedYear: number
+  slot: SponsorshipSlot
+  satisfaction: number       // 0–100; starts at 70 on signing
+  reputationRequirement?: number
+  exclusiveCategory?: SponsorshipCategory
+}
+
+export interface SponsorshipOffer {
+  id: string
+  clubId: string             // which club the offer is for
+  companyName: string
+  tier: SponsorshipTier
+  category: SponsorshipCategory
+  annualValue: number
+  years: number
+  performanceBonus: number
+  expiresYear: number        // player must decide before this year starts
+  slot: SponsorshipSlot
+  reputationRequirement?: number
+  exclusiveCategory?: SponsorshipCategory
+  counterStatus?: 'pending' | 'accepted' | 'rejected'
+  counterAnnualValue?: number
+  counterYears?: number
+}
+
+export interface MembershipData {
+  totalMembers: number
+  target: number
+  campaignBudgetSpent: number  // amount spent on campaigns this offseason
+  trendLastSeason: number      // +/- vs prior year
+}
+
+export type MembershipTierId =
+  | 'reserved-seat' | 'general-admission' | 'interstate'
+  | 'digital' | 'family' | 'premium'
+
+export interface MembershipTierConfig {
+  id: MembershipTierId
+  label: string
+  description: string
+  basePrice: number        // default $ price
+  minPrice: number
+  maxPrice: number
+}
+
+export interface MembershipTierState {
+  tierId: MembershipTierId
+  price: number            // manager-set price
+  count: number            // current members in this tier
+  lastSeasonCount: number  // for trend display
+}
+
+export interface ClubMembershipState {
+  tiers: MembershipTierState[]
+  campaignBudget: number   // $ to spend on acquisition campaign
+  seasonTarget: number     // manager-set target total
+  fanSatisfaction: number  // 0-100; drives acquisition/churn
+  trendLastSeason: number  // net delta last season (signed)
+  history: Array<{ year: number; total: number; revenue: number }>
 }
 
 export interface Club {
@@ -193,4 +290,6 @@ export interface Club {
     riskTolerance: 'aggressive' | 'moderate' | 'conservative'
     tradeActivity: 'active' | 'moderate' | 'passive'
   }
+  /** Active commercial sponsorship deals */
+  sponsorshipDeals?: SponsorshipDeal[]
 }

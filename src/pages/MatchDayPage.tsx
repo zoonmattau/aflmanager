@@ -23,6 +23,7 @@ import { simulateMatch } from '@/engine/match/simulateMatch'
 import type { SimulateMatchInput } from '@/engine/match/simulateMatch'
 import { processMatchResults } from '@/engine/season/processResults'
 import { LiveMatchView } from '@/components/match/LiveMatchView'
+import { MatchReportModal } from '@/components/match/MatchReportModal'
 import { getOverallRating } from '@/engine/player/playerRating'
 import { VENUES } from '@/data/venues'
 import type { Club } from '@/types/club'
@@ -336,7 +337,10 @@ export function MatchDayPage() {
   const moveFixtureInRound = useGameStore((s) => s.moveFixtureInRound)
   const swapFixturesInRound = useGameStore((s) => s.swapFixturesInRound)
 
+  const matchReports = useGameStore((s) => s.history.matchReports)
+
   const [lastMatchResult, setLastMatchResult] = useState<Match | null>(null)
+  const [reportOpen, setReportOpen] = useState(false)
   const [viewingRound, setViewingRound] = useState<number | null>(null)
   const [selectedFixtureKey, setSelectedFixtureKey] = useState<string | null>(null)
   const [editorFixtureIndex, setEditorFixtureIndex] = useState<number>(0)
@@ -1116,9 +1120,28 @@ export function MatchDayPage() {
         </div>
       )}
 
-      {lastMatchResult?.result && (
-        <MatchResultView match={lastMatchResult} clubs={clubs} players={players} playerClubId={playerClubId} />
-      )}
+      {lastMatchResult?.result && (() => {
+        const matchReport = matchReports?.find((r: import('@/types/history').MatchReport) => r.matchId === lastMatchResult.id)
+        return (
+          <>
+            {matchReport && (
+              <div className="flex justify-end">
+                <Button variant="outline" onClick={() => setReportOpen(true)}>Read Report</Button>
+              </div>
+            )}
+            <MatchResultView match={lastMatchResult} clubs={clubs} players={players} playerClubId={playerClubId} />
+            {matchReport && (
+              <MatchReportModal
+                report={matchReport}
+                clubs={clubs}
+                players={players}
+                open={reportOpen}
+                onClose={() => setReportOpen(false)}
+              />
+            )}
+          </>
+        )
+      })()}
     </div>
   )
 }

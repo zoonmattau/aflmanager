@@ -197,7 +197,7 @@ export function ContractProjectionPanel({
             <div>
               <span className="text-muted-foreground">Overall</span>
               <p className="font-semibold">
-                {projection.currentOverall.toFixed(1)}
+                {projection.currentOverall}
               </p>
             </div>
             <div>
@@ -245,7 +245,7 @@ export function ContractProjectionPanel({
                     </TableCell>
                     <TableCell className="px-2 text-right">
                       <span className="font-mono">
-                        {yr.projectedOverall.toFixed(1)}
+                        {yr.projectedOverall}
                       </span>{' '}
                       <span className="text-[10px]">
                         ({formatOverallDelta(yr.overallDelta)})

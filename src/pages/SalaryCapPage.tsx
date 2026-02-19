@@ -58,6 +58,7 @@ import { isPlayerEligibleForPositionType } from '@/engine/player/positionEligibi
 import { useTableViewManager, type TableViewColumnConfig } from '@/components/table-view/useTableViewManager'
 import { TableViewManagerControl } from '@/components/table-view/TableViewManagerControl'
 import { isAflListedPlayer } from '@/engine/players/contracts'
+import { TermTooltip } from '@/components/help/TermTooltip'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -586,7 +587,7 @@ export function SalaryCapPage() {
             </div>
             <p className="text-2xl font-bold tabular-nums">{expiringPlayers.length}</p>
             <p className="text-xs text-muted-foreground mt-1">
-              {formatSalary(expiringAAV)} in expiring AAV
+              {formatSalary(expiringAAV)} in expiring <TermTooltip id="aav">AAV</TermTooltip>
             </p>
           </CardContent>
         </Card>
@@ -712,11 +713,11 @@ export function SalaryCapPage() {
               {capRatio >= 1.0 ? 'OVER' : capRatio >= 0.95 ? 'TIGHT' : capRatio >= 0.90 ? 'OK' : 'HEALTHY'}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              {(capRatio * 100).toFixed(1)}% of hard cap used
+              {(capRatio * 100).toFixed(1)}% of <TermTooltip id="hard-cap">hard cap</TermTooltip> used
             </p>
             {softCapEnabled && (
               <p className="text-xs text-muted-foreground">
-                Soft cap ceiling: {formatSalary(salaryCapAmount * 1.10)}
+                <TermTooltip id="soft-cap">Soft cap</TermTooltip> ceiling: {formatSalary(salaryCapAmount * 1.10)}
               </p>
             )}
           </CardContent>
@@ -745,7 +746,7 @@ export function SalaryCapPage() {
                   <div className="flex items-start gap-2">
                     <DollarSign className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
                     <p className="text-sm text-red-600 dark:text-red-400">
-                      Projected luxury tax: {formatSalary(luxuryTax)}
+                      Projected <TermTooltip id="luxury-tax">luxury tax</TermTooltip>: {formatSalary(luxuryTax)}
                     </p>
                   </div>
                 )}
@@ -760,7 +761,9 @@ export function SalaryCapPage() {
       {/* ------------------------------------------------------------------ */}
       <Card ref={projectionsRef}>
         <CardHeader>
-          <CardTitle>Cap Projections</CardTitle>
+          <CardTitle className="flex items-center gap-1">
+            <TermTooltip id="cap-projection">Cap Projections</TermTooltip>
+          </CardTitle>
           <CardDescription>
             Projected salary commitments over the next 3 years
           </CardDescription>

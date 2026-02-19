@@ -54,6 +54,7 @@ import {
   ArrowDown,
   Swords,
   Heart,
+  Megaphone,
 } from 'lucide-react'
 import { getDynastyStats } from '@/engine/history/historyEngine'
 import { getClubIdentity, getClubIdentityLabel, getFanExpectationLabel } from '@/engine/clubs/identity'
@@ -146,6 +147,7 @@ const DEPT_ICON_MAP: Record<BudgetDepartment, typeof Building2> = {
   recruiting: UserSearch,
   medical: Stethoscope,
   scouting: Search,
+  marketing: Megaphone,
 }
 
 // ---------------------------------------------------------------------------

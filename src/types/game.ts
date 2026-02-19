@@ -1,3 +1,4 @@
+import type { UnlockedAchievement, CareerObjective } from './achievements'
 import type { Club } from './club'
 import type { LineupSlot, Player } from './player'
 import type { Season, LadderEntry, MatchDay, PowerRankingSnapshot } from './season'
@@ -22,6 +23,7 @@ import type { MultiTierState } from '@/engine/league/multiTierEngine'
 import type { SpecialEventsSettings, SpecialEventsState } from './specialEvents'
 import type { FacilityUpgradeTracker } from './facilityUpgrade'
 import type { BoardApprovalTracker } from './boardApproval'
+import type { AgentRelationship } from './agent'
 
 export type GamePhase =
   | 'setup'           // Choosing club
@@ -37,6 +39,7 @@ export interface GameMeta {
   createdAt: string     // ISO timestamp
   lastSaved: string     // ISO timestamp
   version: string       // Game version for save compatibility
+  schemaVersion?: number // Save schema version (may be absent on old saves)
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +178,9 @@ export interface RealismSettings {
   tribunalEarlyPleaDiscount: boolean  // Allow early guilty plea discount (default true)
   tribunalLegalRepresentation: boolean // Allow hiring lawyers (default true)
   tribunalPriorRecord: boolean        // Prior offences increase penalties (default true)
+
+  // Finance
+  allowLoans: boolean                 // Allow clubs to take out loans (default true)
 }
 
 export interface ManagerCareer {
@@ -333,6 +339,8 @@ export interface GameSettings {
   stateLeagueAffiliations: StateLeagueAffiliationSettings
   seasonStartDate: string        // ISO date, default '2026-03-20'
   gameStartDate: string          // ISO date, day after previous GF, default computed from startingYear
+  /** AFL distribution rules: ladder prizes, finals bonuses, equalisation, travel comp */
+  aflDistributions?: import('@/types/distributions').AflDistributionConfig
 }
 
 export interface SigningNotificationPreferences {
@@ -498,6 +506,16 @@ export interface GameState {
   inflationIndex: number
   /** Year-by-year history of inflation index and actual rate applied. */
   inflationHistory: import('@/engine/inflation/inflationEngine').InflationYearRecord[]
+
+  /** Agent relationship scores keyed by agentId */
+  agentRelationships?: Record<string, AgentRelationship>
+
+  // Achievements & career objectives
+  achievements: UnlockedAchievement[]
+  careerObjectives: CareerObjective[]
+
+  // Pending sponsorship offers for the player's club (generated at season end)
+  sponsorshipOffers: import('@/types/club').SponsorshipOffer[]
 }
 
 export interface WeeklyGameplan {

@@ -1,7 +1,7 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Table,
@@ -11,10 +11,17 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion'
+import { ChevronDown } from 'lucide-react'
 import type { RecordsLeaderboardStat } from '@/types/history'
 
 const STAT_LABELS: Record<RecordsLeaderboardStat, string> = {
-  gamesPlayed: 'Games',
+  gamesPlayed: 'Games Played',
   goals: 'Goals',
   disposals: 'Disposals',
   marks: 'Marks',
@@ -23,9 +30,150 @@ const STAT_LABELS: Record<RecordsLeaderboardStat, string> = {
   clearances: 'Clearances',
   intercepts: 'Intercepts',
   scoreInvolvements: 'Score Involvements',
-  aflFantasyPoints: 'AFL Fantasy',
-  superCoachPoints: 'SuperCoach',
+  aflFantasyPoints: 'AFL Fantasy Points',
+  superCoachPoints: 'SuperCoach Points',
 }
+
+// ---------------------------------------------------------------------------
+// Section wrapper with collapse toggle
+// ---------------------------------------------------------------------------
+
+function Section({
+  title,
+  defaultOpen = true,
+  children,
+}: {
+  title: string
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="rounded-lg border bg-card">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-4 py-3 text-left"
+      >
+        <span className="text-sm font-semibold">{title}</span>
+        <ChevronDown
+          className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {open && <div className="border-t">{children}</div>}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Record row — one line per record
+// ---------------------------------------------------------------------------
+
+function RecordRow({
+  label,
+  value,
+  primary,
+  secondary,
+  href,
+}: {
+  label: string
+  value: string | number | null | undefined
+  primary?: string
+  secondary?: string
+  href?: string
+}) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5 border-b last:border-b-0 hover:bg-muted/30 transition-colors">
+      <span className="flex-1 text-sm text-muted-foreground">{label}</span>
+      {value != null ? (
+        <>
+          <span className="font-mono font-semibold text-sm min-w-[3rem] text-right">
+            {value}
+          </span>
+          <div className="text-right min-w-[12rem]">
+            {href ? (
+              <Link to={href} className="text-sm font-medium hover:underline">
+                {primary}
+              </Link>
+            ) : (
+              <span className="text-sm font-medium">{primary}</span>
+            )}
+            {secondary && (
+              <p className="text-xs text-muted-foreground">{secondary}</p>
+            )}
+          </div>
+        </>
+      ) : (
+        <span className="text-sm text-muted-foreground italic">No record yet</span>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Leaderboard accordion item
+// ---------------------------------------------------------------------------
+
+function LeaderboardItem({
+  label,
+  entries,
+  statKey,
+  clubLabel,
+}: {
+  label: string
+  entries: Array<{ playerId: string; playerName: string; clubId: string; value: number }>
+  statKey: string
+  clubLabel: (id: string) => string
+}) {
+  return (
+    <AccordionItem value={statKey} className="border-b last:border-b-0">
+      <AccordionTrigger className="px-4 py-2.5 text-sm font-medium hover:no-underline hover:bg-muted/30 [&[data-state=open]]:bg-muted/20">
+        <div className="flex items-center justify-between w-full pr-2">
+          <span>{label}</span>
+          {entries[0] && (
+            <span className="text-xs text-muted-foreground font-normal">
+              {entries[0].playerName} · {entries[0].value}
+            </span>
+          )}
+        </div>
+      </AccordionTrigger>
+      <AccordionContent className="px-0 pb-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-8 pl-4">#</TableHead>
+              <TableHead>Player</TableHead>
+              <TableHead>Club</TableHead>
+              <TableHead className="text-right pr-4">{label}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {entries.slice(0, 10).map((entry, idx) => (
+              <TableRow key={`${statKey}-${entry.playerId}`}>
+                <TableCell className="pl-4 text-muted-foreground">{idx + 1}</TableCell>
+                <TableCell>
+                  <Link
+                    to={`/player/${entry.playerId}`}
+                    className="font-medium hover:underline"
+                  >
+                    {entry.playerName}
+                  </Link>
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {clubLabel(entry.clubId)}
+                </TableCell>
+                <TableCell className="text-right font-mono pr-4">{entry.value}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </AccordionContent>
+    </AccordionItem>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
 
 export function RecordsPage() {
   const history = useGameStore((s) => s.history)
@@ -36,22 +184,147 @@ export function RecordsPage() {
 
   const statKeys = useMemo(() => Object.keys(STAT_LABELS) as RecordsLeaderboardStat[], [])
 
-  const clubLabel = (clubId: string) => clubs[clubId]?.abbreviation ?? clubs[clubId]?.name ?? clubId
-  const singleSeasonRecords = [
-    { label: 'Most Goals In A Season', entry: recordsBook.singleSeason.mostGoals },
-    { label: 'Most Disposals In A Season', entry: recordsBook.singleSeason.mostDisposals },
-    { label: 'Most Marks In A Season', entry: recordsBook.singleSeason.mostMarks },
-    { label: 'Most Tackles In A Season', entry: recordsBook.singleSeason.mostTackles },
-    { label: 'Most Hitouts In A Season', entry: recordsBook.singleSeason.mostHitouts },
-    { label: 'Most Clearances In A Season', entry: recordsBook.singleSeason.mostClearances },
-    { label: 'Most Intercepts In A Season', entry: recordsBook.singleSeason.mostIntercepts },
-    { label: 'Most Score Involvements In A Season', entry: recordsBook.singleSeason.mostScoreInvolvements },
-    { label: 'Most AFL Fantasy Points In A Season', entry: recordsBook.singleSeason.mostAflFantasyPoints },
-    { label: 'Most SuperCoach Points In A Season', entry: recordsBook.singleSeason.mostSuperCoachPoints },
-  ] as const
+  const clubLabel = (clubId: string) =>
+    clubs[clubId]?.abbreviation ?? clubs[clubId]?.name ?? clubId
+
+  const ss = recordsBook.singleSeason
+  const team = recordsBook.team
+
+  const singleSeasonRows = [
+    {
+      label: 'Most Goals',
+      entry: ss.mostGoals,
+      fmt: (e: typeof ss.mostGoals) =>
+        e
+          ? {
+              value: e.value,
+              primary: e.playerName,
+              secondary: `${clubLabel(e.clubId)}${e.year ? ` · ${e.year}` : ''}`,
+              href: `/player/${e.playerId}`,
+            }
+          : null,
+    },
+    {
+      label: 'Most Disposals',
+      entry: ss.mostDisposals,
+      fmt: (e: typeof ss.mostDisposals) =>
+        e
+          ? {
+              value: e.value,
+              primary: e.playerName,
+              secondary: `${clubLabel(e.clubId)}${e.year ? ` · ${e.year}` : ''}`,
+              href: `/player/${e.playerId}`,
+            }
+          : null,
+    },
+    {
+      label: 'Most Marks',
+      entry: ss.mostMarks,
+      fmt: (e: typeof ss.mostMarks) =>
+        e
+          ? {
+              value: e.value,
+              primary: e.playerName,
+              secondary: `${clubLabel(e.clubId)}${e.year ? ` · ${e.year}` : ''}`,
+              href: `/player/${e.playerId}`,
+            }
+          : null,
+    },
+    {
+      label: 'Most Tackles',
+      entry: ss.mostTackles,
+      fmt: (e: typeof ss.mostTackles) =>
+        e
+          ? {
+              value: e.value,
+              primary: e.playerName,
+              secondary: `${clubLabel(e.clubId)}${e.year ? ` · ${e.year}` : ''}`,
+              href: `/player/${e.playerId}`,
+            }
+          : null,
+    },
+    {
+      label: 'Most Hitouts',
+      entry: ss.mostHitouts,
+      fmt: (e: typeof ss.mostHitouts) =>
+        e
+          ? {
+              value: e.value,
+              primary: e.playerName,
+              secondary: `${clubLabel(e.clubId)}${e.year ? ` · ${e.year}` : ''}`,
+              href: `/player/${e.playerId}`,
+            }
+          : null,
+    },
+    {
+      label: 'Most Clearances',
+      entry: ss.mostClearances,
+      fmt: (e: typeof ss.mostClearances) =>
+        e
+          ? {
+              value: e.value,
+              primary: e.playerName,
+              secondary: `${clubLabel(e.clubId)}${e.year ? ` · ${e.year}` : ''}`,
+              href: `/player/${e.playerId}`,
+            }
+          : null,
+    },
+    {
+      label: 'Most Intercepts',
+      entry: ss.mostIntercepts,
+      fmt: (e: typeof ss.mostIntercepts) =>
+        e
+          ? {
+              value: e.value,
+              primary: e.playerName,
+              secondary: `${clubLabel(e.clubId)}${e.year ? ` · ${e.year}` : ''}`,
+              href: `/player/${e.playerId}`,
+            }
+          : null,
+    },
+    {
+      label: 'Most Score Involvements',
+      entry: ss.mostScoreInvolvements,
+      fmt: (e: typeof ss.mostScoreInvolvements) =>
+        e
+          ? {
+              value: e.value,
+              primary: e.playerName,
+              secondary: `${clubLabel(e.clubId)}${e.year ? ` · ${e.year}` : ''}`,
+              href: `/player/${e.playerId}`,
+            }
+          : null,
+    },
+    {
+      label: 'Most AFL Fantasy Pts',
+      entry: ss.mostAflFantasyPoints,
+      fmt: (e: typeof ss.mostAflFantasyPoints) =>
+        e
+          ? {
+              value: e.value,
+              primary: e.playerName,
+              secondary: `${clubLabel(e.clubId)}${e.year ? ` · ${e.year}` : ''}`,
+              href: `/player/${e.playerId}`,
+            }
+          : null,
+    },
+    {
+      label: 'Most SuperCoach Pts',
+      entry: ss.mostSuperCoachPoints,
+      fmt: (e: typeof ss.mostSuperCoachPoints) =>
+        e
+          ? {
+              value: e.value,
+              primary: e.playerName,
+              secondary: `${clubLabel(e.clubId)}${e.year ? ` · ${e.year}` : ''}`,
+              href: `/player/${e.playerId}`,
+            }
+          : null,
+    },
+  ]
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div>
         <h1 className="text-2xl font-bold">AFL Records Book</h1>
         <p className="text-sm text-muted-foreground">
@@ -59,257 +332,146 @@ export function RecordsPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {singleSeasonRecords.map((record) => (
-          <Card key={record.label}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm">{record.label}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {record.entry ? (
-                <div className="space-y-1">
-                  <div className="text-2xl font-bold">{record.entry.value}</div>
-                  <div className="text-sm">
-                    <Link to={`/player/${record.entry.playerId}`} className="hover:underline">
-                      {record.entry.playerName}
-                    </Link>
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {clubLabel(record.entry.clubId)} {record.entry.year ? `- ${record.entry.year}` : ''}
-                  </div>
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">No record yet.</p>
-              )}
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      {/* Single-Season Player Records */}
+      <Section title="Single-Season Player Records">
+        {singleSeasonRows.map((r) => {
+          const data = r.fmt(r.entry as never)
+          return (
+            <RecordRow
+              key={r.label}
+              label={r.label}
+              value={data?.value}
+              primary={data?.primary}
+              secondary={data?.secondary}
+              href={data?.href}
+            />
+          )
+        })}
+      </Section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Longest Win Streak</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {recordsBook.team.longestWinStreak ? (
-              <div className="space-y-1">
-                <div className="text-2xl font-bold">{recordsBook.team.longestWinStreak.value}</div>
-                <div className="text-sm">{recordsBook.team.longestWinStreak.clubName}</div>
-                <div className="text-xs text-muted-foreground">
-                  {recordsBook.team.longestWinStreak.startYear}-{recordsBook.team.longestWinStreak.endYear}
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">No record yet.</p>
-            )}
-          </CardContent>
-        </Card>
+      {/* Team Records */}
+      <Section title="Team Records">
+        <RecordRow
+          label="Most Premierships"
+          value={team.mostPremierships?.value}
+          primary={team.mostPremierships?.clubName}
+        />
+        <RecordRow
+          label="Longest Win Streak"
+          value={team.longestWinStreak?.value != null ? `${team.longestWinStreak.value} games` : undefined}
+          primary={team.longestWinStreak?.clubName}
+          secondary={
+            team.longestWinStreak
+              ? `${team.longestWinStreak.startYear}–${team.longestWinStreak.endYear}`
+              : undefined
+          }
+        />
+        <RecordRow
+          label="Longest Premiership Streak"
+          value={team.longestPremiershipStreak?.value != null ? `${team.longestPremiershipStreak.value} in a row` : undefined}
+          primary={team.longestPremiershipStreak?.clubName}
+          secondary={
+            team.longestPremiershipStreak
+              ? `${team.longestPremiershipStreak.startYear}–${team.longestPremiershipStreak.endYear}`
+              : undefined
+          }
+        />
+        <RecordRow
+          label="Most Top-4 Finishes"
+          value={team.mostTopFourFinishes?.value}
+          primary={team.mostTopFourFinishes?.clubName}
+        />
+      </Section>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Longest Premiership Streak</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {recordsBook.team.longestPremiershipStreak ? (
-              <div className="space-y-1">
-                <div className="text-2xl font-bold">{recordsBook.team.longestPremiershipStreak.value}</div>
-                <div className="text-sm">{recordsBook.team.longestPremiershipStreak.clubName}</div>
-                <div className="text-xs text-muted-foreground">
-                  {recordsBook.team.longestPremiershipStreak.startYear}-{recordsBook.team.longestPremiershipStreak.endYear}
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">No record yet.</p>
-            )}
-          </CardContent>
-        </Card>
+      {/* Match Records */}
+      <Section title="Match Records">
+        <RecordRow
+          label="Biggest Winning Margin"
+          value={matchRecords?.biggestWinMargin?.value != null ? `${matchRecords.biggestWinMargin.value} pts` : undefined}
+          primary={
+            matchRecords?.biggestWinMargin
+              ? `${clubLabel(matchRecords.biggestWinMargin.homeClubId)} vs ${clubLabel(matchRecords.biggestWinMargin.awayClubId)}`
+              : undefined
+          }
+          secondary={
+            matchRecords?.biggestWinMargin
+              ? `${matchRecords.biggestWinMargin.year} · Round ${matchRecords.biggestWinMargin.round}`
+              : undefined
+          }
+        />
+        <RecordRow
+          label="Highest Team Score"
+          value={matchRecords?.highestTeamScore?.value}
+          primary={
+            matchRecords?.highestTeamScore
+              ? `${clubLabel(matchRecords.highestTeamScore.homeClubId)} vs ${clubLabel(matchRecords.highestTeamScore.awayClubId)}`
+              : undefined
+          }
+          secondary={
+            matchRecords?.highestTeamScore
+              ? `${matchRecords.highestTeamScore.year} · Round ${matchRecords.highestTeamScore.round}`
+              : undefined
+          }
+        />
+        <RecordRow
+          label="Highest Combined Score"
+          value={matchRecords?.highestCombinedScore?.value}
+          primary={
+            matchRecords?.highestCombinedScore
+              ? `${clubLabel(matchRecords.highestCombinedScore.homeClubId)} vs ${clubLabel(matchRecords.highestCombinedScore.awayClubId)}`
+              : undefined
+          }
+          secondary={
+            matchRecords?.highestCombinedScore
+              ? `${matchRecords.highestCombinedScore.year} · Round ${matchRecords.highestCombinedScore.round}`
+              : undefined
+          }
+        />
+      </Section>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Most Premierships</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {recordsBook.team.mostPremierships ? (
-              <div className="space-y-1">
-                <div className="text-2xl font-bold">{recordsBook.team.mostPremierships.value}</div>
-                <div className="text-sm">{recordsBook.team.mostPremierships.clubName}</div>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">No record yet.</p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Most Top-4 Finishes</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {recordsBook.team.mostTopFourFinishes ? (
-              <div className="space-y-1">
-                <div className="text-2xl font-bold">{recordsBook.team.mostTopFourFinishes.value}</div>
-                <div className="text-sm">{recordsBook.team.mostTopFourFinishes.clubName}</div>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">No record yet.</p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Biggest Winning Margin</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {matchRecords?.biggestWinMargin ? (
-              <div className="space-y-1">
-                <div className="text-2xl font-bold">{matchRecords.biggestWinMargin.value}</div>
-                <div className="text-sm">
-                  {clubLabel(matchRecords.biggestWinMargin.homeClubId)} vs {clubLabel(matchRecords.biggestWinMargin.awayClubId)}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {matchRecords.biggestWinMargin.year}, Round {matchRecords.biggestWinMargin.round}
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">No record yet.</p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Highest Team Score</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {matchRecords?.highestTeamScore ? (
-              <div className="space-y-1">
-                <div className="text-2xl font-bold">{matchRecords.highestTeamScore.value}</div>
-                <div className="text-sm">
-                  {clubLabel(matchRecords.highestTeamScore.homeClubId)} vs {clubLabel(matchRecords.highestTeamScore.awayClubId)}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {matchRecords.highestTeamScore.year}, Round {matchRecords.highestTeamScore.round}
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">No record yet.</p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Highest Combined Score</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {matchRecords?.highestCombinedScore ? (
-              <div className="space-y-1">
-                <div className="text-2xl font-bold">{matchRecords.highestCombinedScore.value}</div>
-                <div className="text-sm">
-                  {clubLabel(matchRecords.highestCombinedScore.homeClubId)} vs {clubLabel(matchRecords.highestCombinedScore.awayClubId)}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {matchRecords.highestCombinedScore.year}, Round {matchRecords.highestCombinedScore.round}
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">No record yet.</p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Statistical Leaderboards</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Tabs defaultValue="career" className="space-y-3">
-            <TabsList>
+      {/* Statistical Leaderboards */}
+      <Section title="Statistical Leaderboards">
+        <div className="px-4 pt-3 pb-2">
+          <Tabs defaultValue="career">
+            <TabsList className="mb-3">
               <TabsTrigger value="career">Career</TabsTrigger>
               <TabsTrigger value="season">Current Season</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="career" className="space-y-4">
-              {statKeys.map((stat) => (
-                <Card key={`career-${stat}`}>
-                  <CardHeader className="py-3">
-                    <CardTitle className="text-sm">Career {STAT_LABELS[stat]}</CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-0">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="w-8">#</TableHead>
-                          <TableHead>Player</TableHead>
-                          <TableHead>Club</TableHead>
-                          <TableHead className="text-right">{STAT_LABELS[stat]}</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {recordsBook.leaderboards.career[stat].slice(0, 10).map((entry, idx) => (
-                          <TableRow key={`${stat}-${entry.playerId}`}>
-                            <TableCell>{idx + 1}</TableCell>
-                            <TableCell>
-                              <Link to={`/player/${entry.playerId}`} className="font-medium hover:underline">
-                                {entry.playerName}
-                              </Link>
-                            </TableCell>
-                            <TableCell className="text-muted-foreground">{clubLabel(entry.clubId)}</TableCell>
-                            <TableCell className="text-right font-mono">{entry.value}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </CardContent>
-                </Card>
-              ))}
+            <TabsContent value="career">
+              <Card className="p-0 overflow-hidden">
+                <Accordion type="multiple" className="divide-y">
+                  {statKeys.map((stat) => (
+                    <LeaderboardItem
+                      key={`career-${stat}`}
+                      statKey={`career-${stat}`}
+                      label={`Career ${STAT_LABELS[stat]}`}
+                      entries={recordsBook.leaderboards.career[stat]}
+                      clubLabel={clubLabel}
+                    />
+                  ))}
+                </Accordion>
+              </Card>
             </TabsContent>
 
-            <TabsContent value="season" className="space-y-4">
-              {statKeys.map((stat) => (
-                <Card key={`season-${stat}`}>
-                  <CardHeader className="py-3">
-                    <CardTitle className="text-sm">{currentYear} {STAT_LABELS[stat]}</CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-0">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="w-8">#</TableHead>
-                          <TableHead>Player</TableHead>
-                          <TableHead>Club</TableHead>
-                          <TableHead className="text-right">{STAT_LABELS[stat]}</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {recordsBook.leaderboards.season[stat].slice(0, 10).map((entry, idx) => (
-                          <TableRow key={`${stat}-${entry.playerId}`}>
-                            <TableCell>{idx + 1}</TableCell>
-                            <TableCell>
-                              <Link to={`/player/${entry.playerId}`} className="font-medium hover:underline">
-                                {entry.playerName}
-                              </Link>
-                            </TableCell>
-                            <TableCell className="text-muted-foreground">{clubLabel(entry.clubId)}</TableCell>
-                            <TableCell className="text-right font-mono">{entry.value}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </CardContent>
-                </Card>
-              ))}
+            <TabsContent value="season">
+              <Card className="p-0 overflow-hidden">
+                <Accordion type="multiple" className="divide-y">
+                  {statKeys.map((stat) => (
+                    <LeaderboardItem
+                      key={`season-${stat}`}
+                      statKey={`season-${stat}`}
+                      label={`${currentYear} ${STAT_LABELS[stat]}`}
+                      entries={recordsBook.leaderboards.season[stat]}
+                      clubLabel={clubLabel}
+                    />
+                  ))}
+                </Accordion>
+              </Card>
             </TabsContent>
           </Tabs>
-        </CardContent>
-      </Card>
+        </div>
+      </Section>
     </div>
   )
 }

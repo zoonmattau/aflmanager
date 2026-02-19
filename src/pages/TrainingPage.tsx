@@ -10,6 +10,8 @@ import {
   PLAYER_TRAINING_FOCUS_OPTIONS,
 } from '@/engine/players/trainingFocus'
 import { addDays } from '@/engine/calendar/calendarEngine'
+import { getTrainingInjuryRisk } from '@/engine/players/trainingInjuries'
+import { getMedicalStaffImpact } from '@/engine/staff/staffEngine'
 import { WeekPlannerGrid } from '@/components/training/WeekPlannerGrid'
 import { WeekLoadSummary } from '@/components/training/WeekLoadSummary'
 import { EnhancedSquadFitness } from '@/components/training/EnhancedSquadFitness'
@@ -32,6 +34,9 @@ import {
   Activity,
   Sparkles,
   Target,
+  ShieldAlert,
+  AlertTriangle,
+  CheckCircle2,
 } from 'lucide-react'
 
 function getWeekStart(dateStr: string): string {
@@ -576,6 +581,161 @@ function PlayerFocusTab({ clubPlayers }: { clubPlayers: Player[] }) {
   )
 }
 
+type TrainingIntensity = 'light' | 'moderate' | 'intense'
+
+function InjuryRiskTab({
+  clubPlayers,
+  clubStaff,
+}: {
+  clubPlayers: Player[]
+  clubStaff: Record<string, StaffMember>
+}) {
+  const [intensity, setIntensity] = useState<TrainingIntensity>('moderate')
+
+  const medical = useMemo(
+    () => getMedicalStaffImpact(Object.values(clubStaff), clubPlayers[0]?.clubId ?? ''),
+    [clubStaff, clubPlayers],
+  )
+
+  const rows = useMemo(() => {
+    return clubPlayers
+      .filter((p) => !p.injury)
+      .map((p) => ({ player: p, risk: getTrainingInjuryRisk(p, intensity, medical) }))
+      .sort((a, b) => {
+        const order = { high: 0, moderate: 1, low: 2 }
+        const levelDiff = order[a.risk.level] - order[b.risk.level]
+        if (levelDiff !== 0) return levelDiff
+        return b.risk.chance - a.risk.chance
+      })
+  }, [clubPlayers, intensity, medical])
+
+  const injuredPlayers = useMemo(() => clubPlayers.filter((p) => p.injury), [clubPlayers])
+
+  const riskCounts = useMemo(() => ({
+    high: rows.filter((r) => r.risk.level === 'high').length,
+    moderate: rows.filter((r) => r.risk.level === 'moderate').length,
+    low: rows.filter((r) => r.risk.level === 'low').length,
+  }), [rows])
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <ShieldAlert className="h-4 w-4" />
+            Training Injury Risk
+          </CardTitle>
+          <CardDescription>
+            Per-player injury probability based on fatigue, fitness, age, injury history, and medical staff quality.
+            Adjust training intensity to see how load changes risk.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground font-medium">Training Intensity</span>
+            <Select value={intensity} onValueChange={(v) => setIntensity(v as TrainingIntensity)}>
+              <SelectTrigger className="h-8 text-xs w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="light">Light</SelectItem>
+                <SelectItem value="moderate">Moderate</SelectItem>
+                <SelectItem value="intense">Intense</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-2">
+              <p className="text-lg font-bold text-red-600 dark:text-red-400">{riskCounts.high}</p>
+              <p className="text-[10px] text-muted-foreground">High Risk</p>
+            </div>
+            <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/20 p-2">
+              <p className="text-lg font-bold text-yellow-600 dark:text-yellow-400">{riskCounts.moderate}</p>
+              <p className="text-[10px] text-muted-foreground">Moderate</p>
+            </div>
+            <div className="rounded-lg bg-green-500/10 border border-green-500/20 p-2">
+              <p className="text-lg font-bold text-green-600 dark:text-green-400">{riskCounts.low}</p>
+              <p className="text-[10px] text-muted-foreground">Low Risk</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {injuredPlayers.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">
+              Currently Injured ({injuredPlayers.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap gap-2">
+              {injuredPlayers.map((p) => (
+                <Badge key={p.id} variant="outline" className="text-xs text-red-600 border-red-500/40">
+                  {p.firstName} {p.lastName} — {p.injury?.type} ({p.injury?.weeksRemaining}w)
+                </Badge>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="space-y-2">
+        {rows.map(({ player, risk }) => {
+          const isHigh = risk.level === 'high'
+          const isMod = risk.level === 'moderate'
+          const levelColor = isHigh
+            ? 'text-red-600 dark:text-red-400'
+            : isMod
+            ? 'text-yellow-600 dark:text-yellow-400'
+            : 'text-green-600 dark:text-green-400'
+          const levelBg = isHigh
+            ? 'bg-red-500/10 border-red-500/20'
+            : isMod
+            ? 'bg-yellow-500/10 border-yellow-500/20'
+            : 'bg-green-500/10 border-green-500/20'
+          const Icon = isHigh || isMod ? AlertTriangle : CheckCircle2
+
+          return (
+            <div
+              key={player.id}
+              className={cn('flex items-center gap-3 rounded-lg border px-3 py-2', levelBg)}
+            >
+              <Icon className={cn('h-4 w-4 flex-shrink-0', levelColor)} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium">
+                    {player.firstName} {player.lastName}
+                  </span>
+                  <Badge variant="outline" className="text-[10px]">{player.position.primary}</Badge>
+                  <span className="text-xs text-muted-foreground">Age {player.age}</span>
+                </div>
+                {risk.factors.length > 0 && (
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {risk.factors.join(' · ')}
+                  </p>
+                )}
+              </div>
+              <div className="text-right flex-shrink-0">
+                <p className={cn('text-sm font-bold', levelColor)}>
+                  {(risk.chance * 100).toFixed(1)}%
+                </p>
+                <p className={cn('text-[10px] capitalize', levelColor)}>{risk.level}</p>
+              </div>
+            </div>
+          )
+        })}
+        {rows.length === 0 && (
+          <p className="text-sm text-muted-foreground text-center py-8">
+            All players are currently injured.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function TrainingPage() {
   const playerClubId = useGameStore((s) => s.playerClubId)
   const players = useGameStore((s) => s.players)
@@ -634,6 +794,10 @@ export function TrainingPage() {
             <Target className="mr-1 h-4 w-4" />
             Player Focus
           </TabsTrigger>
+          <TabsTrigger value="injury-risk">
+            <ShieldAlert className="mr-1 h-4 w-4" />
+            Injury Risk
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="planner">
@@ -650,6 +814,10 @@ export function TrainingPage() {
 
         <TabsContent value="focus">
           <PlayerFocusTab clubPlayers={clubPlayers} />
+        </TabsContent>
+
+        <TabsContent value="injury-risk">
+          <InjuryRiskTab clubPlayers={clubPlayers} clubStaff={clubStaff} />
         </TabsContent>
       </Tabs>
     </div>

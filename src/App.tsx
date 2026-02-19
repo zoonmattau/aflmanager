@@ -16,6 +16,7 @@ import { LineupPage } from '@/pages/LineupPage'
 import { GameplanPage } from '@/pages/GameplanPage'
 import { PlayerProfilePage } from '@/pages/PlayerProfilePage'
 import { SalaryCapPage } from '@/pages/SalaryCapPage'
+import { FinancesPage } from '@/pages/FinancesPage'
 import { ContractsPage } from '@/pages/ContractsPage'
 import { DraftPage } from '@/pages/DraftPage'
 import { ScoutingPage } from '@/pages/ScoutingPage'
@@ -45,6 +46,10 @@ import { LeagueHistoryPage } from '@/pages/LeagueHistoryPage'
 import { JumperManagementPage } from '@/pages/JumperManagementPage'
 import { PlayerComparisonPage } from '@/pages/PlayerComparisonPage'
 import { RulesPage } from '@/pages/RulesPage'
+import { AgentRelationshipsPage } from '@/pages/AgentRelationshipsPage'
+import { MembershipPage } from '@/pages/MembershipPage'
+import { SponsorshipPage } from '@/pages/SponsorshipPage'
+import { GlossaryPage } from '@/pages/GlossaryPage'
 import { useGameStore } from '@/stores/gameStore'
 import { useAppStore } from '@/stores/appStore'
 
@@ -87,7 +92,10 @@ function GameRoutes() {
         <Route path="/players" element={<PlayerProfilePage />} />
         <Route path="/players/:playerId" element={<PlayerProfilePage />} />
         <Route path="/salary-cap" element={<SalaryCapPage />} />
+        <Route path="/finances" element={<FinancesPage />} />
         <Route path="/contracts" element={<ContractsPage />} />
+        <Route path="/agent-relationships" element={<AgentRelationshipsPage />} />
+        <Route path="/sponsorship" element={<SponsorshipPage />} />
         <Route path="/draft" element={<DraftPage />} />
         <Route path="/scouting" element={<ScoutingPage />} />
         <Route path="/staff" element={<StaffPage />} />
@@ -95,6 +103,7 @@ function GameRoutes() {
         <Route path="/trades" element={<TradePage />} />
         <Route path="/club" element={<ClubPage />} />
         <Route path="/club/:clubId" element={<ClubPage />} />
+        <Route path="/membership" element={<MembershipPage />} />
         <Route path="/squad/:clubId" element={<SquadPage />} />
         <Route path="/league" element={<LeaguePage />} />
         <Route path="/records" element={<RecordsPage />} />
@@ -111,6 +120,7 @@ function GameRoutes() {
         <Route path="/injury-report" element={<InjuryReportPage />} />
         <Route path="/compare" element={<PlayerComparisonPage />} />
         <Route path="/rules" element={<RulesPage />} />
+        <Route path="/glossary" element={<GlossaryPage />} />
         <Route path="/compare/:playerAId" element={<PlayerComparisonPage />} />
         <Route path="/compare/:playerAId/:playerBId" element={<PlayerComparisonPage />} />
         <Route path="/matchup-preview" element={<MatchupPreviewPage />} />

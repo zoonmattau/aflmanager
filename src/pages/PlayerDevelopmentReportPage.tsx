@@ -15,8 +15,8 @@ import { PlayerStarRating } from '@/components/player/PlayerStarRating'
 import { getPlayerStarRating } from '@/engine/player/playerRating'
 
 function DeltaBadge({ delta }: { delta: number }) {
-  if (delta > 0) return <Badge className="bg-green-600 text-white">+{delta.toFixed(1)}</Badge>
-  if (delta < 0) return <Badge className="bg-red-600 text-white">{delta.toFixed(1)}</Badge>
+  if (delta > 0) return <Badge className="bg-green-600 text-white">+{delta}</Badge>
+  if (delta < 0) return <Badge className="bg-red-600 text-white">{delta}</Badge>
   return <Badge variant="secondary">0.0</Badge>
 }
 
@@ -150,7 +150,7 @@ export function PlayerDevelopmentReportPage() {
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant="outline">{r.overallAfter.toFixed(1)} OVR</Badge>
+                  <Badge variant="outline">{r.overallAfter} OVR</Badge>
                   <DeltaBadge delta={r.delta} />
                 </div>
               </div>
@@ -210,8 +210,8 @@ export function PlayerDevelopmentReportPage() {
                   <TableCell className="text-center"><DeltaBadge delta={s.avgDelta} /></TableCell>
                   <TableCell className="text-center">{s.risers}</TableCell>
                   <TableCell className="text-center">{s.fallers}</TableCell>
-                  <TableCell className="text-center">{s.youthAvgDelta.toFixed(1)}</TableCell>
-                  <TableCell className="text-center">{s.veteranAvgDelta.toFixed(1)}</TableCell>
+                  <TableCell className="text-center">{s.youthAvgDelta}</TableCell>
+                  <TableCell className="text-center">{s.veteranAvgDelta}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

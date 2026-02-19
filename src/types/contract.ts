@@ -136,6 +136,9 @@ export interface ActiveNegotiation {
   playerMood: 'eager' | 'neutral' | 'reluctant' | 'hostile'
   mediaLeaked: boolean
   leakedAtRound?: number
+  agentId?: string                  // Agent representing this player
+  agentRelBonus?: number            // Cached acceptance prob bonus from relationship
+  agentCooldownAdjust?: number      // Cached cooldown adjustment from relationship
 }
 
 // Completed negotiation (history)

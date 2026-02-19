@@ -29,3 +29,15 @@ export interface SeasonArchive {
   ladder: ArchivedLadderEntry[]
   finalsResults: ArchivedFinalsMatch[]
 }
+
+export interface FinancialSeasonRecord {
+  year: number
+  clubId: string
+  revenue: import('@/engine/clubs/clubManagement').RevenueBreakdown
+  expenses: import('@/engine/clubs/clubManagement').ExpenseBreakdown
+  luxuryTax: number
+  pnl: number
+  closingBalance: number
+  membershipMembers: number
+  sponsorshipCount: number
+}

@@ -347,6 +347,7 @@ export interface Player {
   hiddenAttributes: HiddenAttributes
   personality: PlayerPersonality
   agentArchetype?: AgentArchetype
+  agentId?: string              // Assigned agent from the static pool
   homeState?: string
   contract: PlayerContract
   morale: number                 // 1-100

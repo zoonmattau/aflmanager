@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useGameStore } from '@/stores/gameStore'
 import type { GameSettings, RealismSettings } from '@/types/game'
+import type { AflDistributionConfig, DistributionModel } from '@/types/distributions'
+import { DEFAULT_DISTRIBUTION_CONFIG, getDistributionPreviewTable } from '@/engine/clubs/distributionEngine'
 import type { MatchDay } from '@/types/season'
 import type { Club } from '@/types/club'
 import type { OriginConfig, OriginCompetitionFormat, OriginScheduleMode, OriginState, SpecialEventId, OriginEligibility } from '@/types/specialEvents'
@@ -124,6 +126,7 @@ const REALISM_LABELS: Record<keyof RealismSettings, string> = {
   tribunalEarlyPleaDiscount: 'Tribunal Early Plea Discount',
   tribunalLegalRepresentation: 'Tribunal Legal Representation',
   tribunalPriorRecord: 'Tribunal Prior Record',
+  allowLoans: 'Allow Club Loans',
 }
 
 function formatMatchDay(day: MatchDay): string {
@@ -192,6 +195,7 @@ export function GameSettingsPage() {
     blockbusters: false,
     specialEvents: false,
     realism: false,
+    distributions: false,
     teams: false,
   })
 
@@ -362,6 +366,15 @@ export function GameSettingsPage() {
   const toggleSection = (key: keyof typeof sectionsOpen) => {
     setSectionsOpen((prev) => ({ ...prev, [key]: !prev[key] }))
   }
+
+  const distConfig: AflDistributionConfig = draft.aflDistributions ?? DEFAULT_DISTRIBUTION_CONFIG
+  const setDist = (patch: Partial<AflDistributionConfig>) =>
+    setDraft((p) => ({ ...p, aflDistributions: { ...(p.aflDistributions ?? DEFAULT_DISTRIBUTION_CONFIG), ...patch } }))
+  const distPreview = useMemo(
+    () => getDistributionPreviewTable(distConfig, draft.teamCount ?? 18),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify(distConfig), draft.teamCount],
+  )
 
   return (
     <div className="space-y-4">
@@ -1172,6 +1185,159 @@ export function GameSettingsPage() {
                 <Switch checked={draft.realism[key]} onCheckedChange={(v) => setDraft((p) => ({ ...p, realism: { ...p.realism, [key]: v } }))} />
               </div>
             ))}
+          </CardContent>
+          )}
+        </Card>
+
+        {/* AFL Distributions */}
+        <Card className="xl:col-span-2">
+          <CardHeader>
+            <button type="button" className="flex w-full items-center justify-between" onClick={() => toggleSection('distributions')}>
+              <CardTitle className="text-base">AFL Distributions &amp; Prize Money</CardTitle>
+              {sectionsOpen.distributions ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+            </button>
+          </CardHeader>
+          {sectionsOpen.distributions && (
+          <CardContent className="space-y-6">
+            {/* Distribution model */}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label>Distribution Model</Label>
+                <Select value={distConfig.distributionModel} onValueChange={(v) => setDist({ distributionModel: v as DistributionModel })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="linear">Linear (smooth gradient)</SelectItem>
+                    <SelectItem value="tiered">Tiered (position bands)</SelectItem>
+                    <SelectItem value="flat">Flat (equal share)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>1st Place Prize: <span className="font-mono text-primary">${(distConfig.ladderFirst / 1_000_000).toFixed(2)}M</span></Label>
+                <Slider min={500_000} max={5_000_000} step={100_000} value={[distConfig.ladderFirst]}
+                  onValueChange={([v]) => setDist({ ladderFirst: v })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Last Place Prize: <span className="font-mono text-primary">${(distConfig.ladderLast / 1_000_000).toFixed(2)}M</span></Label>
+                <Slider min={100_000} max={2_000_000} step={50_000} value={[distConfig.ladderLast]}
+                  onValueChange={([v]) => setDist({ ladderLast: v })} />
+              </div>
+            </div>
+
+            {/* Finals bonuses */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <Switch checked={distConfig.finalsEnabled} onCheckedChange={(v) => setDist({ finalsEnabled: v })} />
+                <Label className="font-medium">Finals Performance Bonuses</Label>
+              </div>
+              {distConfig.finalsEnabled && (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3 pl-6">
+                <div className="space-y-1.5">
+                  <Label>Per Finals Win: <span className="font-mono text-primary">${(distConfig.finalsWinBonus / 1_000).toFixed(0)}k</span></Label>
+                  <Slider min={0} max={500_000} step={25_000} value={[distConfig.finalsWinBonus]}
+                    onValueChange={([v]) => setDist({ finalsWinBonus: v })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Premiership Bonus: <span className="font-mono text-primary">${(distConfig.premiershipBonus / 1_000).toFixed(0)}k</span></Label>
+                  <Slider min={0} max={2_000_000} step={50_000} value={[distConfig.premiershipBonus]}
+                    onValueChange={([v]) => setDist({ premiershipBonus: v })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Runner-Up Bonus: <span className="font-mono text-primary">${(distConfig.runnerUpBonus / 1_000).toFixed(0)}k</span></Label>
+                  <Slider min={0} max={1_000_000} step={50_000} value={[distConfig.runnerUpBonus]}
+                    onValueChange={([v]) => setDist({ runnerUpBonus: v })} />
+                </div>
+              </div>
+              )}
+            </div>
+
+            {/* Equalisation */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <Switch checked={distConfig.equalisationEnabled} onCheckedChange={(v) => setDist({ equalisationEnabled: v })} />
+                <Label className="font-medium">Equalisation Payments (bottom clubs)</Label>
+              </div>
+              {distConfig.equalisationEnabled && (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 pl-6">
+                <div className="space-y-1.5">
+                  <Label>Bottom <span className="font-mono text-primary">{distConfig.equalisationThreshold}</span> clubs qualify</Label>
+                  <Slider min={1} max={8} step={1} value={[distConfig.equalisationThreshold]}
+                    onValueChange={([v]) => setDist({ equalisationThreshold: v })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Payment per club: <span className="font-mono text-primary">${(distConfig.equalisationPayment / 1_000).toFixed(0)}k</span></Label>
+                  <Slider min={0} max={1_000_000} step={50_000} value={[distConfig.equalisationPayment]}
+                    onValueChange={([v]) => setDist({ equalisationPayment: v })} />
+                </div>
+              </div>
+              )}
+            </div>
+
+            {/* Travel comp */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <Switch checked={distConfig.travelCompEnabled} onCheckedChange={(v) => setDist({ travelCompEnabled: v })} />
+                <Label className="font-medium">Travel Compensation</Label>
+              </div>
+              {distConfig.travelCompEnabled && (
+              <div className="pl-6 max-w-xs space-y-1.5">
+                <Label>Per away game: <span className="font-mono text-primary">${(distConfig.travelPerAwayGame / 1_000).toFixed(0)}k</span></Label>
+                <Slider min={5_000} max={100_000} step={5_000} value={[distConfig.travelPerAwayGame]}
+                  onValueChange={([v]) => setDist({ travelPerAwayGame: v })} />
+              </div>
+              )}
+            </div>
+
+            {/* Performance grants */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <Switch checked={distConfig.performanceGrantEnabled} onCheckedChange={(v) => setDist({ performanceGrantEnabled: v })} />
+                <Label className="font-medium">Most-Improved Performance Grants</Label>
+              </div>
+              {distConfig.performanceGrantEnabled && (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 pl-6">
+                <div className="space-y-1.5">
+                  <Label>Number of recipients: <span className="font-mono text-primary">{distConfig.performanceGrantPositions}</span></Label>
+                  <Slider min={1} max={6} step={1} value={[distConfig.performanceGrantPositions]}
+                    onValueChange={([v]) => setDist({ performanceGrantPositions: v })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Grant amount: <span className="font-mono text-primary">${(distConfig.performanceGrantAmount / 1_000).toFixed(0)}k</span></Label>
+                  <Slider min={50_000} max={500_000} step={25_000} value={[distConfig.performanceGrantAmount]}
+                    onValueChange={([v]) => setDist({ performanceGrantAmount: v })} />
+                </div>
+              </div>
+              )}
+            </div>
+
+            {/* Preview table */}
+            <div className="space-y-2">
+              <Label className="font-medium text-sm">Distribution Preview (base ladder prize per position)</Label>
+              <div className="overflow-x-auto rounded border">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/50">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium">Pos</th>
+                      <th className="px-3 py-2 text-right font-medium">Ladder Prize</th>
+                      <th className="px-3 py-2 text-right font-medium">+1 Finals Win</th>
+                      {distConfig.equalisationEnabled && <th className="px-3 py-2 text-right font-medium">w/ Equalisation</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {distPreview.map((row) => (
+                      <tr key={row.position} className={row.isEqualisation ? 'bg-blue-500/10' : ''}>
+                        <td className="px-3 py-1.5 font-mono font-semibold">{row.position}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">${(row.ladderPrize / 1_000).toFixed(0)}k</td>
+                        <td className="px-3 py-1.5 text-right font-mono text-green-600">${(row.withOneFinalWin / 1_000).toFixed(0)}k</td>
+                        {distConfig.equalisationEnabled && (
+                          <td className="px-3 py-1.5 text-right font-mono text-blue-600">${(row.withEqualisation / 1_000).toFixed(0)}k</td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </CardContent>
           )}
         </Card>

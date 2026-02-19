@@ -403,7 +403,7 @@ export function generateNegotiationDemand(
   _isReSigning: boolean,
   rng: SeededRNG,
   ladderPosition: number,
-  options?: { playerLoyaltyEnabled?: boolean; inflationIndex?: number },
+  options?: { playerLoyaltyEnabled?: boolean; inflationIndex?: number; agentDemandMultiplier?: number },
 ): NegotiationOffer {
   const demand = generateContractDemand(player, clubId, rng, options)
 
@@ -456,7 +456,7 @@ export function startNegotiation(
   currentDate: string,
   rng: SeededRNG,
   ladderPosition: number,
-  options?: { playerLoyaltyEnabled?: boolean; inflationIndex?: number },
+  options?: { playerLoyaltyEnabled?: boolean; inflationIndex?: number; agentDemandMultiplier?: number; agentRefusalChanceDelta?: number },
   teamCount?: number,
 ): StartNegotiationResult {
   // Check willingness based on professionalism + ambition
@@ -470,10 +470,11 @@ export function startNegotiation(
     }
   }
 
-  // Archetype + morale refusal check
+  // Archetype + morale refusal check (adjusted by agent relationship)
   const effectiveTeamCount = teamCount ?? 18
   const refusal = checkContractRefusal(player, clubId, ladderPosition, effectiveTeamCount)
-  if (refusal.refuseChance > 0 && rng.chance(refusal.refuseChance)) {
+  const adjustedRefuseChance = Math.max(0, Math.min(1, refusal.refuseChance + (options?.agentRefusalChanceDelta ?? 0)))
+  if (adjustedRefuseChance > 0 && rng.chance(adjustedRefuseChance)) {
     return {
       success: false,
       error: `${player.firstName} ${player.lastName} refused to negotiate: ${refusal.reason}`,
@@ -697,6 +698,11 @@ function evaluateClubOffer(
     case 'hostile':
       acceptanceProbability -= 0.15
       break
+  }
+
+  // Agent relationship bonus
+  if (negotiation.agentRelBonus) {
+    acceptanceProbability += negotiation.agentRelBonus
   }
 
   // Clamp
@@ -1011,8 +1017,10 @@ export function calculateNegotiationCooldown(
 
   if (negotiation.playerMood === 'hostile') cooldown += 1
 
-  // Multiple competing offers would add +1 but we don't track that here
-  // so we keep it simple
+  // Agent relationship cooldown adjustment
+  if (negotiation.agentCooldownAdjust) {
+    cooldown = Math.max(0, cooldown + negotiation.agentCooldownAdjust)
+  }
 
   return cooldown
 }

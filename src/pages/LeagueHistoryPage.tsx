@@ -19,6 +19,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { MatchReportModal } from '@/components/match/MatchReportModal'
+import type { MatchReport } from '@/types/history'
 
 const FINALS_ORDER: Array<'QF' | 'EF' | 'SF' | 'PF' | 'GF'> = ['QF', 'EF', 'SF', 'PF', 'GF']
 const FINALS_LABELS: Record<string, string> = {
@@ -55,6 +58,11 @@ export function LeagueHistoryPage() {
     () => (history.awards ?? []).map((a) => a.year).sort((a, b) => b - a),
     [history.awards],
   )
+  const reportYears = useMemo(
+    () => [...new Set((history.matchReports ?? []).map((r) => r.year))].sort((a, b) => b - a),
+    [history.matchReports],
+  )
+  const [selectedReport, setSelectedReport] = useState<MatchReport | null>(null)
 
   return (
     <div className="space-y-4">
@@ -73,6 +81,7 @@ export function LeagueHistoryPage() {
           <TabsTrigger value="draft">Draft</TabsTrigger>
           <TabsTrigger value="trades">Trades</TabsTrigger>
           <TabsTrigger value="awards">Awards</TabsTrigger>
+          <TabsTrigger value="reports">Reports</TabsTrigger>
         </TabsList>
 
         <TabsContent value="premiers">
@@ -93,7 +102,19 @@ export function LeagueHistoryPage() {
         <TabsContent value="awards">
           <AwardsTab years={awardYears} />
         </TabsContent>
+        <TabsContent value="reports">
+          <ReportsTab years={reportYears} />
+        </TabsContent>
       </Tabs>
+      {selectedReport && (
+        <MatchReportModal
+          report={selectedReport}
+          clubs={clubs}
+          players={players}
+          open={true}
+          onClose={() => setSelectedReport(null)}
+        />
+      )}
     </div>
   )
 
@@ -559,6 +580,84 @@ export function LeagueHistoryPage() {
                         ))}
                     </TableBody>
                   </Table>
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+    )
+  }
+
+  // ---------- Reports Tab ----------
+  function ReportsTab({ years }: { years: number[] }) {
+    const allReports = history.matchReports ?? []
+    const [selectedYear, setSelectedYear] = useState<string>(years.length > 0 ? String(years[0]) : '')
+
+    const year = Number(selectedYear)
+    const yearReports = allReports.filter((r) => r.year === year)
+    const regularReports = yearReports.filter((r) => !r.isFinal)
+    const finalsReports = yearReports.filter((r) => r.isFinal)
+
+    const FINALS_LABEL: Record<string, string> = {
+      QF: 'Qualifying Final', EF: 'Elimination Final',
+      SF: 'Semi Final', PF: 'Preliminary Final', GF: 'Grand Final',
+    }
+
+    function ReportCard({ report }: { report: MatchReport }) {
+      const home = clubs[report.homeClubId]
+      const away = clubs[report.awayClubId]
+      const homeAbbr = home?.abbreviation ?? report.homeClubId
+      const awayAbbr = away?.abbreviation ?? report.awayClubId
+      const label = report.isFinal && report.finalType
+        ? FINALS_LABEL[report.finalType] ?? report.finalType
+        : `Round ${report.round}`
+      return (
+        <div className="flex items-center justify-between rounded border px-3 py-2 text-sm">
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="text-[10px]">{label}</Badge>
+            <span className="font-mono font-medium">
+              {homeAbbr} {report.homeScore} – {report.awayScore} {awayAbbr}
+            </span>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => setSelectedReport(report)}>
+            View Report
+          </Button>
+        </div>
+      )
+    }
+
+    if (years.length === 0) {
+      return <EmptyState message="No match reports available yet. Simulate a round to generate reports." />
+    }
+
+    return (
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm">Match Reports</CardTitle>
+            <YearSelector years={years} value={selectedYear} onChange={setSelectedYear} />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {yearReports.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">No reports for {year}.</p>
+          ) : (
+            <>
+              {regularReports.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Regular Season</h3>
+                  <div className="space-y-1">
+                    {regularReports.map((r) => <ReportCard key={r.id} report={r} />)}
+                  </div>
+                </div>
+              )}
+              {finalsReports.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Finals</h3>
+                  <div className="space-y-1">
+                    {finalsReports.map((r) => <ReportCard key={r.id} report={r} />)}
+                  </div>
                 </div>
               )}
             </>
