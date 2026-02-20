@@ -175,6 +175,52 @@ function LeaderboardItem({
 // Page
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Mini leaderboard table for Fantasy/SC section
+// ---------------------------------------------------------------------------
+
+function FscLeaderboardTable({
+  entries,
+  statLabel,
+  clubLabel,
+}: {
+  entries: Array<{ playerId: string; playerName: string; clubId: string; avg: number; games: number }>
+  statLabel: string
+  clubLabel: (id: string) => string
+}) {
+  if (entries.length === 0) {
+    return <p className="text-sm text-muted-foreground italic py-2">No data yet — play through a season.</p>
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead className="w-8 pl-0">#</TableHead>
+          <TableHead>Player</TableHead>
+          <TableHead>Club</TableHead>
+          <TableHead className="text-right">GP</TableHead>
+          <TableHead className="text-right pr-4">{statLabel}</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {entries.map((e, idx) => (
+          <TableRow key={e.playerId}>
+            <TableCell className="pl-0 text-muted-foreground">{idx + 1}</TableCell>
+            <TableCell>
+              <Link to={`/player/${e.playerId}`} className="font-medium hover:underline">
+                {e.playerName}
+              </Link>
+            </TableCell>
+            <TableCell className="text-muted-foreground">{clubLabel(e.clubId)}</TableCell>
+            <TableCell className="text-right text-muted-foreground">{e.games}</TableCell>
+            <TableCell className="text-right font-mono font-semibold pr-4">{e.avg}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  )
+}
+
 export function RecordsPage() {
   const history = useGameStore((s) => s.history)
   const clubs = useGameStore((s) => s.clubs)
@@ -208,6 +254,21 @@ export function RecordsPage() {
       .sort((a, b) => b[1].wins - a[1].wins || b[1].latestYear - a[1].latestYear)
       .slice(0, 10)
   }, [history.awards, players])
+
+  // K:H Ratio leaderboard — highest and lowest ratio in career (min 20 games)
+  const khLeaderboards = useMemo(() => {
+    const qualified = Object.values(players).filter((p) => p.careerStats.gamesPlayed >= 20 && p.careerStats.handballs > 0)
+    const sorted = qualified.map((p) => ({
+      playerId: p.id,
+      playerName: `${p.firstName} ${p.lastName}`,
+      clubId: p.clubId,
+      ratio: p.careerStats.kicks / p.careerStats.handballs,
+    }))
+    return {
+      highest: [...sorted].sort((a, b) => b.ratio - a.ratio).slice(0, 10),
+      lowest: [...sorted].sort((a, b) => a.ratio - b.ratio).slice(0, 10),
+    }
+  }, [players])
 
   const statKeys = useMemo(() => Object.keys(STAT_LABELS) as RecordsLeaderboardStat[], [])
 
@@ -490,6 +551,70 @@ export function RecordsPage() {
               </TableBody>
             </Table>
           )}
+        </div>
+      </Section>
+
+      {/* K:H Ratio Leaderboards */}
+      <Section title="K:H Ratio Leaders (Career)" defaultOpen={false}>
+        <div className="px-4 py-3 grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Most Kick-Dominant (min 20 GP)</h4>
+            {khLeaderboards.highest.length === 0 ? (
+              <p className="text-sm text-muted-foreground italic">Not enough data yet.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-8 pl-0">#</TableHead>
+                    <TableHead>Player</TableHead>
+                    <TableHead>Club</TableHead>
+                    <TableHead className="text-right">K:H</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {khLeaderboards.highest.map((e, idx) => (
+                    <TableRow key={e.playerId}>
+                      <TableCell className="pl-0 text-muted-foreground">{idx + 1}</TableCell>
+                      <TableCell>
+                        <Link to={`/player/${e.playerId}`} className="font-medium hover:underline">{e.playerName}</Link>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{clubLabel(e.clubId)}</TableCell>
+                      <TableCell className="text-right font-mono">{e.ratio.toFixed(1)}:1</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+          <div>
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Most Handball-Dominant (min 20 GP)</h4>
+            {khLeaderboards.lowest.length === 0 ? (
+              <p className="text-sm text-muted-foreground italic">Not enough data yet.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-8 pl-0">#</TableHead>
+                    <TableHead>Player</TableHead>
+                    <TableHead>Club</TableHead>
+                    <TableHead className="text-right">K:H</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {khLeaderboards.lowest.map((e, idx) => (
+                    <TableRow key={e.playerId}>
+                      <TableCell className="pl-0 text-muted-foreground">{idx + 1}</TableCell>
+                      <TableCell>
+                        <Link to={`/player/${e.playerId}`} className="font-medium hover:underline">{e.playerName}</Link>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{clubLabel(e.clubId)}</TableCell>
+                      <TableCell className="text-right font-mono">{e.ratio.toFixed(1)}:1</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </div>
         </div>
       </Section>
 

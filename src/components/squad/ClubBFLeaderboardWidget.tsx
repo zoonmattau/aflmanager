@@ -33,7 +33,7 @@ export function ClubBFLeaderboardWidget() {
             <div key={entry.playerId} className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground w-4 text-right">{idx + 1}</span>
               <Link
-                to={`/players/${entry.playerId}`}
+                to={`/player/${entry.playerId}`}
                 className="flex-1 text-xs font-medium hover:underline truncate"
               >
                 {p.firstName} {p.lastName}

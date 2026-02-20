@@ -17,7 +17,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Wand2, RotateCcw, Save, Eye, EyeOff, FolderOpen, Pencil, Trash2, BookmarkPlus } from 'lucide-react'
+import { Wand2, RotateCcw, Save, Eye, EyeOff, FolderOpen, Pencil, Trash2, BookmarkPlus, Stethoscope } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { isRecentlyReturned } from '@/lib/injuryRisk'
 import type { LineupSlot, Player, PlayerPositionType } from '@/types/player'
 import { getLineupSlots, SLOT_POSITION_COMPATIBILITY } from '@/engine/core/constants'
 import { selectBestLineup, type LineupAutofillStrategy } from '@/engine/ai/lineupSelection'
@@ -1040,9 +1042,28 @@ export function LineupPage() {
                         #{p.jerseyNumber}
                       </span>
                       <div className="flex-1 min-w-0">
-                        <span className="text-sm truncate block">
-                          {p.firstName.charAt(0)}. {p.lastName}
-                        </span>
+                        <div className="flex items-center gap-1">
+                          <span className="text-sm truncate">
+                            {p.firstName.charAt(0)}. {p.lastName}
+                          </span>
+                          {isRecentlyReturned(p) && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="shrink-0">
+                                  <Stethoscope className="h-3 w-3 text-amber-500" />
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="right" className="text-xs">
+                                {(() => {
+                                  const last = [...(p.injuryHistory ?? [])].reverse()[0]
+                                  return last
+                                    ? `Returned from ${last.type} (${last.initialWeeks}w, ${last.gamesMissed ?? 0} gm missed)`
+                                    : 'Recently returned from injury'
+                                })()}
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                        </div>
                         {milestoneByPlayer.has(p.id) && (
                           <Badge variant="outline" className="mt-0.5 text-[10px] border-cyan-500/30 bg-cyan-500/10 text-cyan-700">
                             {milestoneByPlayer.get(p.id)}
@@ -1118,9 +1139,23 @@ export function LineupPage() {
                           {p.firstName.charAt(0)}. {p.lastName}
                         </span>
                         {p.injury ? (
-                          <Badge variant="outline" className="text-[10px] border-red-500/30 bg-red-500/15 text-red-600">
-                            {p.injury.type} ({p.injury.weeksRemaining}w)
-                          </Badge>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Badge variant="outline" className="cursor-default text-[10px] border-red-500/30 bg-red-500/15 text-red-600">
+                                <Stethoscope className="h-2.5 w-2.5 mr-0.5" />
+                                {p.injury.type} ({p.injury.weeksRemaining}w)
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent side="left" className="text-xs max-w-[200px]">
+                              <p className="font-semibold">{p.injury.type}</p>
+                              {p.injury.severity && <p className="capitalize">{p.injury.severity} injury</p>}
+                              <p>{p.injury.weeksRemaining} week{p.injury.weeksRemaining !== 1 ? 's' : ''} remaining</p>
+                              {p.injury.recurring && <p className="text-amber-400">↩ Recurring injury</p>}
+                              {typeof p.injury.recoveryProgress === 'number' && (
+                                <p>Recovery: {Math.round(p.injury.recoveryProgress)}% this week</p>
+                              )}
+                            </TooltipContent>
+                          </Tooltip>
                         ) : isPlayerSuspended(p) ? (
                           <Badge variant="outline" className="text-[10px] border-orange-500/30 bg-orange-500/15 text-orange-700">
                             Suspended ({p.suspension?.weeksRemaining ?? 0}w)

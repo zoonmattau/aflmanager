@@ -1,0 +1,262 @@
+[
+  {
+    "id": "coates-u18",
+    "name": "Coates Talent League",
+    "state": "VIC",
+    "level": "elite",
+    "ageGroup": "u18",
+    "rounds": 15,
+    "clubs": [
+      { "id": "u18-sandringham", "name": "Sandringham Dragons", "abbreviation": "SAN", "colors": { "primary": "#FF0000", "secondary": "#000000" }, "strengthRating": 72 },
+      { "id": "u18-oakleigh", "name": "Oakleigh Chargers", "abbreviation": "OAK", "colors": { "primary": "#003399", "secondary": "#FFD700" }, "strengthRating": 68 },
+      { "id": "u18-eastern", "name": "Eastern Ranges", "abbreviation": "EAS", "colors": { "primary": "#002D72", "secondary": "#FFFFFF" }, "strengthRating": 65 },
+      { "id": "u18-northern", "name": "Northern Knights", "abbreviation": "NOR", "colors": { "primary": "#000000", "secondary": "#CC0000" }, "strengthRating": 70 },
+      { "id": "u18-western", "name": "Western Jets", "abbreviation": "WES", "colors": { "primary": "#003DA5", "secondary": "#FFFFFF" }, "strengthRating": 63 },
+      { "id": "u18-calder", "name": "Calder Cannons", "abbreviation": "CAL", "colors": { "primary": "#002B5C", "secondary": "#FFD700" }, "strengthRating": 74 },
+      { "id": "u18-murray", "name": "Murray Bushrangers", "abbreviation": "MUR", "colors": { "primary": "#003C14", "secondary": "#FFD700" }, "strengthRating": 67 },
+      { "id": "u18-bendigo", "name": "Bendigo Pioneers", "abbreviation": "BEN", "colors": { "primary": "#CC0000", "secondary": "#003399" }, "strengthRating": 61 },
+      { "id": "u18-gippsland", "name": "Gippsland Power", "abbreviation": "GIP", "colors": { "primary": "#000000", "secondary": "#FFFFFF" }, "strengthRating": 66 },
+      { "id": "u18-dandenong", "name": "Dandenong Stingrays", "abbreviation": "DAN", "colors": { "primary": "#FFD700", "secondary": "#003399" }, "strengthRating": 71 },
+      { "id": "u18-gwvrebels", "name": "GWV Rebels", "abbreviation": "GWV", "colors": { "primary": "#CC0000", "secondary": "#000000" }, "strengthRating": 60 },
+      { "id": "u18-tasmania", "name": "Tasmania Devils", "abbreviation": "TAS", "colors": { "primary": "#003C14", "secondary": "#FFD700" }, "strengthRating": 58 }
+    ]
+  },
+  {
+    "id": "vic-state-u18",
+    "name": "Vic State U18",
+    "state": "VIC",
+    "level": "local",
+    "ageGroup": "u18",
+    "rounds": 12,
+    "clubs": [
+      { "id": "vsu18-north", "name": "North VIC U18", "abbreviation": "NVU", "colors": { "primary": "#003399", "secondary": "#FFD700" }, "strengthRating": 52 },
+      { "id": "vsu18-south", "name": "South VIC U18", "abbreviation": "SVU", "colors": { "primary": "#CC0000", "secondary": "#FFFFFF" }, "strengthRating": 50 },
+      { "id": "vsu18-east", "name": "East VIC U18", "abbreviation": "EVU", "colors": { "primary": "#002D72", "secondary": "#FFFFFF" }, "strengthRating": 53 },
+      { "id": "vsu18-west", "name": "West VIC U18", "abbreviation": "WVU", "colors": { "primary": "#006400", "secondary": "#FFD700" }, "strengthRating": 48 },
+      { "id": "vsu18-metro1", "name": "Metro VIC Blue U18", "abbreviation": "MVB", "colors": { "primary": "#003DA5", "secondary": "#FFFFFF" }, "strengthRating": 55 },
+      { "id": "vsu18-metro2", "name": "Metro VIC Red U18", "abbreviation": "MVR", "colors": { "primary": "#CC0000", "secondary": "#003399" }, "strengthRating": 54 },
+      { "id": "vsu18-country1", "name": "Country VIC Gold U18", "abbreviation": "CVG", "colors": { "primary": "#FFD700", "secondary": "#000000" }, "strengthRating": 47 },
+      { "id": "vsu18-country2", "name": "Country VIC Green U18", "abbreviation": "CVE", "colors": { "primary": "#006400", "secondary": "#FFFFFF" }, "strengthRating": 46 }
+    ]
+  },
+  {
+    "id": "vic-state-u16",
+    "name": "Vic State U16",
+    "state": "VIC",
+    "level": "local",
+    "ageGroup": "u16",
+    "rounds": 12,
+    "clubs": [
+      { "id": "vsu16-north", "name": "North VIC U16", "abbreviation": "NV6", "colors": { "primary": "#003399", "secondary": "#FFD700" }, "strengthRating": 51 },
+      { "id": "vsu16-south", "name": "South VIC U16", "abbreviation": "SV6", "colors": { "primary": "#CC0000", "secondary": "#FFFFFF" }, "strengthRating": 49 },
+      { "id": "vsu16-east", "name": "East VIC U16", "abbreviation": "EV6", "colors": { "primary": "#002D72", "secondary": "#FFFFFF" }, "strengthRating": 52 },
+      { "id": "vsu16-west", "name": "West VIC U16", "abbreviation": "WV6", "colors": { "primary": "#006400", "secondary": "#FFD700" }, "strengthRating": 47 },
+      { "id": "vsu16-metro1", "name": "Metro VIC Blue U16", "abbreviation": "MB6", "colors": { "primary": "#003DA5", "secondary": "#FFFFFF" }, "strengthRating": 54 },
+      { "id": "vsu16-metro2", "name": "Metro VIC Red U16", "abbreviation": "MR6", "colors": { "primary": "#CC0000", "secondary": "#003399" }, "strengthRating": 53 },
+      { "id": "vsu16-country1", "name": "Country VIC Gold U16", "abbreviation": "CG6", "colors": { "primary": "#FFD700", "secondary": "#000000" }, "strengthRating": 46 },
+      { "id": "vsu16-country2", "name": "Country VIC Green U16", "abbreviation": "CE6", "colors": { "primary": "#006400", "secondary": "#FFFFFF" }, "strengthRating": 45 }
+    ]
+  },
+  {
+    "id": "aps",
+    "name": "APS Schools",
+    "state": "VIC",
+    "level": "school",
+    "ageGroup": "both",
+    "rounds": 10,
+    "clubs": [
+      { "id": "aps-scotch", "name": "Scotch College", "abbreviation": "SCO", "colors": { "primary": "#000080", "secondary": "#FFFFFF" }, "strengthRating": 60 },
+      { "id": "aps-mel", "name": "Melbourne Grammar", "abbreviation": "MEL", "colors": { "primary": "#003399", "secondary": "#FFD700" }, "strengthRating": 58 },
+      { "id": "aps-xav", "name": "Xavier College", "abbreviation": "XAV", "colors": { "primary": "#003DA5", "secondary": "#FFFFFF" }, "strengthRating": 62 },
+      { "id": "aps-hailey", "name": "Haileybury College", "abbreviation": "HAI", "colors": { "primary": "#CC0000", "secondary": "#003399" }, "strengthRating": 56 },
+      { "id": "aps-carey", "name": "Carey Grammar", "abbreviation": "CAR", "colors": { "primary": "#002B5C", "secondary": "#FFD700" }, "strengthRating": 55 },
+      { "id": "aps-bgsv", "name": "BGS Victoria", "abbreviation": "BGS", "colors": { "primary": "#8B0000", "secondary": "#FFD700" }, "strengthRating": 57 }
+    ]
+  },
+  {
+    "id": "agsv",
+    "name": "AGSV Schools",
+    "state": "VIC",
+    "level": "school",
+    "ageGroup": "both",
+    "rounds": 10,
+    "clubs": [
+      { "id": "agsv-camb", "name": "Camberwell Grammar", "abbreviation": "CMB", "colors": { "primary": "#800000", "secondary": "#FFFFFF" }, "strengthRating": 54 },
+      { "id": "agsv-ivs", "name": "Ivanhoe Grammar", "abbreviation": "IVA", "colors": { "primary": "#003399", "secondary": "#FFFFFF" }, "strengthRating": 53 },
+      { "id": "agsv-khs", "name": "Knox Grammar", "abbreviation": "KNX", "colors": { "primary": "#002B5C", "secondary": "#FFD700" }, "strengthRating": 55 },
+      { "id": "agsv-trin", "name": "Trinity Grammar", "abbreviation": "TRI", "colors": { "primary": "#000080", "secondary": "#C0C0C0" }, "strengthRating": 52 },
+      { "id": "agsv-cau", "name": "Caulfield Grammar", "abbreviation": "CAU", "colors": { "primary": "#CC0000", "secondary": "#000000" }, "strengthRating": 50 },
+      { "id": "agsv-dth", "name": "De La Salle", "abbreviation": "DLS", "colors": { "primary": "#003C14", "secondary": "#FFD700" }, "strengthRating": 51 }
+    ]
+  },
+  {
+    "id": "sa-u18",
+    "name": "SANFL Juniors U18",
+    "state": "SA",
+    "level": "local",
+    "ageGroup": "u18",
+    "rounds": 14,
+    "clubs": [
+      { "id": "saju18-central", "name": "Central District U18", "abbreviation": "CDU", "colors": { "primary": "#003399", "secondary": "#FFFFFF" }, "strengthRating": 63 },
+      { "id": "saju18-norwood", "name": "Norwood U18", "abbreviation": "NWU", "colors": { "primary": "#CC0000", "secondary": "#000000" }, "strengthRating": 65 },
+      { "id": "saju18-south", "name": "South Adelaide U18", "abbreviation": "SAU", "colors": { "primary": "#FFD700", "secondary": "#003399" }, "strengthRating": 60 },
+      { "id": "saju18-sturt", "name": "Sturt U18", "abbreviation": "STU", "colors": { "primary": "#003DA5", "secondary": "#FFFFFF" }, "strengthRating": 62 },
+      { "id": "saju18-west", "name": "West Adelaide U18", "abbreviation": "WAU", "colors": { "primary": "#CC0000", "secondary": "#003399" }, "strengthRating": 58 },
+      { "id": "saju18-woodville", "name": "Woodville-West Torrens U18", "abbreviation": "WWU", "colors": { "primary": "#006400", "secondary": "#FFD700" }, "strengthRating": 61 },
+      { "id": "saju18-glenelg", "name": "Glenelg U18", "abbreviation": "GLU", "colors": { "primary": "#003399", "secondary": "#FFD700" }, "strengthRating": 59 },
+      { "id": "saju18-eagles", "name": "Eagles U18", "abbreviation": "EAU", "colors": { "primary": "#002B5C", "secondary": "#FFFFFF" }, "strengthRating": 57 }
+    ]
+  },
+  {
+    "id": "sa-u16",
+    "name": "SANFL Juniors U16",
+    "state": "SA",
+    "level": "local",
+    "ageGroup": "u16",
+    "rounds": 12,
+    "clubs": [
+      { "id": "saju16-central", "name": "Central District U16", "abbreviation": "CD6", "colors": { "primary": "#003399", "secondary": "#FFFFFF" }, "strengthRating": 61 },
+      { "id": "saju16-norwood", "name": "Norwood U16", "abbreviation": "NW6", "colors": { "primary": "#CC0000", "secondary": "#000000" }, "strengthRating": 63 },
+      { "id": "saju16-south", "name": "South Adelaide U16", "abbreviation": "SA6", "colors": { "primary": "#FFD700", "secondary": "#003399" }, "strengthRating": 58 },
+      { "id": "saju16-sturt", "name": "Sturt U16", "abbreviation": "ST6", "colors": { "primary": "#003DA5", "secondary": "#FFFFFF" }, "strengthRating": 60 },
+      { "id": "saju16-west", "name": "West Adelaide U16", "abbreviation": "WA6", "colors": { "primary": "#CC0000", "secondary": "#003399" }, "strengthRating": 56 },
+      { "id": "saju16-woodville", "name": "Woodville-West Torrens U16", "abbreviation": "WW6", "colors": { "primary": "#006400", "secondary": "#FFD700" }, "strengthRating": 59 },
+      { "id": "saju16-glenelg", "name": "Glenelg U16", "abbreviation": "GL6", "colors": { "primary": "#003399", "secondary": "#FFD700" }, "strengthRating": 57 },
+      { "id": "saju16-eagles", "name": "Eagles U16", "abbreviation": "EA6", "colors": { "primary": "#002B5C", "secondary": "#FFFFFF" }, "strengthRating": 55 }
+    ]
+  },
+  {
+    "id": "wa-u18",
+    "name": "WAFL Colts U18",
+    "state": "WA",
+    "level": "local",
+    "ageGroup": "u18",
+    "rounds": 15,
+    "clubs": [
+      { "id": "wau18-claremont", "name": "Claremont U18", "abbreviation": "CLU", "colors": { "primary": "#003399", "secondary": "#FFD700" }, "strengthRating": 66 },
+      { "id": "wau18-east-perth", "name": "East Perth U18", "abbreviation": "EPU", "colors": { "primary": "#CC0000", "secondary": "#FFD700" }, "strengthRating": 64 },
+      { "id": "wau18-east-fremantle", "name": "East Fremantle U18", "abbreviation": "EFU", "colors": { "primary": "#CC0000", "secondary": "#000000" }, "strengthRating": 62 },
+      { "id": "wau18-peel", "name": "Peel Thunder U18", "abbreviation": "PTU", "colors": { "primary": "#003DA5", "secondary": "#FFD700" }, "strengthRating": 63 },
+      { "id": "wau18-subiaco", "name": "Subiaco U18", "abbreviation": "SUB", "colors": { "primary": "#003399", "secondary": "#FFFFFF" }, "strengthRating": 67 },
+      { "id": "wau18-swan", "name": "Swan Districts U18", "abbreviation": "SWU", "colors": { "primary": "#000000", "secondary": "#FFFFFF" }, "strengthRating": 60 },
+      { "id": "wau18-west-perth", "name": "West Perth U18", "abbreviation": "WPU", "colors": { "primary": "#002B5C", "secondary": "#FFFFFF" }, "strengthRating": 61 }
+    ]
+  },
+  {
+    "id": "wa-u16",
+    "name": "WAFL Colts U16",
+    "state": "WA",
+    "level": "local",
+    "ageGroup": "u16",
+    "rounds": 12,
+    "clubs": [
+      { "id": "wau16-claremont", "name": "Claremont U16", "abbreviation": "CL6", "colors": { "primary": "#003399", "secondary": "#FFD700" }, "strengthRating": 64 },
+      { "id": "wau16-east-perth", "name": "East Perth U16", "abbreviation": "EP6", "colors": { "primary": "#CC0000", "secondary": "#FFD700" }, "strengthRating": 62 },
+      { "id": "wau16-east-fremantle", "name": "East Fremantle U16", "abbreviation": "EF6", "colors": { "primary": "#CC0000", "secondary": "#000000" }, "strengthRating": 60 },
+      { "id": "wau16-peel", "name": "Peel Thunder U16", "abbreviation": "PT6", "colors": { "primary": "#003DA5", "secondary": "#FFD700" }, "strengthRating": 61 },
+      { "id": "wau16-subiaco", "name": "Subiaco U16", "abbreviation": "SU6", "colors": { "primary": "#003399", "secondary": "#FFFFFF" }, "strengthRating": 65 },
+      { "id": "wau16-swan", "name": "Swan Districts U16", "abbreviation": "SW6", "colors": { "primary": "#000000", "secondary": "#FFFFFF" }, "strengthRating": 58 },
+      { "id": "wau16-west-perth", "name": "West Perth U16", "abbreviation": "WP6", "colors": { "primary": "#002B5C", "secondary": "#FFFFFF" }, "strengthRating": 59 }
+    ]
+  },
+  {
+    "id": "nsw-u18",
+    "name": "AFLNSW Juniors U18",
+    "state": "NSW/ACT",
+    "level": "local",
+    "ageGroup": "u18",
+    "rounds": 12,
+    "clubs": [
+      { "id": "nswu18-sydney", "name": "Sydney Swans Academy U18", "abbreviation": "SSA", "colors": { "primary": "#CC0000", "secondary": "#FFFFFF" }, "strengthRating": 60 },
+      { "id": "nswu18-gws-academy", "name": "GWS GIANTS Academy U18", "abbreviation": "GWA", "colors": { "primary": "#FF6600", "secondary": "#000000" }, "strengthRating": 62 },
+      { "id": "nswu18-eastern", "name": "Eastern Subs U18", "abbreviation": "ESU", "colors": { "primary": "#003DA5", "secondary": "#FFFFFF" }, "strengthRating": 55 },
+      { "id": "nswu18-north", "name": "North Coast U18", "abbreviation": "NCU", "colors": { "primary": "#003399", "secondary": "#FFD700" }, "strengthRating": 50 },
+      { "id": "nswu18-south", "name": "South Coast U18", "abbreviation": "SCU", "colors": { "primary": "#006400", "secondary": "#FFFFFF" }, "strengthRating": 48 },
+      { "id": "nswu18-central", "name": "Central West U18", "abbreviation": "CWU", "colors": { "primary": "#FFD700", "secondary": "#003399" }, "strengthRating": 46 },
+      { "id": "nswu18-act", "name": "ACT Brumbies U18", "abbreviation": "ACT", "colors": { "primary": "#003C14", "secondary": "#FFD700" }, "strengthRating": 49 },
+      { "id": "nswu18-hunter", "name": "Hunter U18", "abbreviation": "HNT", "colors": { "primary": "#002B5C", "secondary": "#FFFFFF" }, "strengthRating": 47 }
+    ]
+  },
+  {
+    "id": "nsw-school",
+    "name": "GPS Schools NSW",
+    "state": "NSW/ACT",
+    "level": "school",
+    "ageGroup": "both",
+    "rounds": 10,
+    "clubs": [
+      { "id": "nswsch-syd-gram", "name": "Sydney Grammar", "abbreviation": "SGS", "colors": { "primary": "#000080", "secondary": "#FFFFFF" }, "strengthRating": 56 },
+      { "id": "nswsch-shore", "name": "Shore School", "abbreviation": "SHO", "colors": { "primary": "#003399", "secondary": "#FFFFFF" }, "strengthRating": 54 },
+      { "id": "nswsch-riverview", "name": "St Ignatius Riverview", "abbreviation": "RVW", "colors": { "primary": "#CC0000", "secondary": "#000000" }, "strengthRating": 55 },
+      { "id": "nswsch-kings", "name": "The Kings School", "abbreviation": "KNG", "colors": { "primary": "#8B0000", "secondary": "#C0C0C0" }, "strengthRating": 53 },
+      { "id": "nswsch-scots", "name": "The Scots College", "abbreviation": "SCT", "colors": { "primary": "#002B5C", "secondary": "#FFD700" }, "strengthRating": 52 },
+      { "id": "nswsch-newington", "name": "Newington College", "abbreviation": "NEW", "colors": { "primary": "#003C14", "secondary": "#FFFFFF" }, "strengthRating": 51 }
+    ]
+  },
+  {
+    "id": "qld-u18",
+    "name": "AFLQ Juniors U18",
+    "state": "QLD",
+    "level": "local",
+    "ageGroup": "u18",
+    "rounds": 12,
+    "clubs": [
+      { "id": "qldu18-brisbane-lions", "name": "Brisbane Lions Academy U18", "abbreviation": "BLA", "colors": { "primary": "#A52A2A", "secondary": "#FFD700" }, "strengthRating": 61 },
+      { "id": "qldu18-gc-suns", "name": "Gold Coast Suns Academy U18", "abbreviation": "GCA", "colors": { "primary": "#FF6600", "secondary": "#CC0000" }, "strengthRating": 60 },
+      { "id": "qldu18-north", "name": "North QLD U18", "abbreviation": "NQU", "colors": { "primary": "#003399", "secondary": "#FFD700" }, "strengthRating": 52 },
+      { "id": "qldu18-south", "name": "South East QLD U18", "abbreviation": "SQU", "colors": { "primary": "#006400", "secondary": "#FFD700" }, "strengthRating": 54 },
+      { "id": "qldu18-west", "name": "Western Districts QLD U18", "abbreviation": "WQU", "colors": { "primary": "#CC0000", "secondary": "#000000" }, "strengthRating": 48 },
+      { "id": "qldu18-sunshine", "name": "Sunshine Coast U18", "abbreviation": "SCQ", "colors": { "primary": "#FF6600", "secondary": "#003399" }, "strengthRating": 50 },
+      { "id": "qldu18-ipswich", "name": "Ipswich U18", "abbreviation": "IPS", "colors": { "primary": "#800080", "secondary": "#FFFFFF" }, "strengthRating": 49 },
+      { "id": "qldu18-gold-coast", "name": "Gold Coast U18", "abbreviation": "GCU", "colors": { "primary": "#FFD700", "secondary": "#003399" }, "strengthRating": 51 }
+    ]
+  },
+  {
+    "id": "qld-school",
+    "name": "GPS Schools QLD",
+    "state": "QLD",
+    "level": "school",
+    "ageGroup": "both",
+    "rounds": 10,
+    "clubs": [
+      { "id": "qldsch-bbc", "name": "Brisbane Boys College", "abbreviation": "BBC", "colors": { "primary": "#003399", "secondary": "#FFD700" }, "strengthRating": 56 },
+      { "id": "qldsch-ga", "name": "Gregory Terrace", "abbreviation": "GTE", "colors": { "primary": "#003DA5", "secondary": "#FFFFFF" }, "strengthRating": 54 },
+      { "id": "qldsch-bgs", "name": "Brisbane Grammar School", "abbreviation": "BGQ", "colors": { "primary": "#000080", "secondary": "#FFFFFF" }, "strengthRating": 55 },
+      { "id": "qldsch-sc", "name": "Southport School", "abbreviation": "SPS", "colors": { "primary": "#CC0000", "secondary": "#000000" }, "strengthRating": 53 },
+      { "id": "qldsch-ts", "name": "The Southport School", "abbreviation": "TSS", "colors": { "primary": "#002B5C", "secondary": "#C0C0C0" }, "strengthRating": 52 },
+      { "id": "qldsch-ac", "name": "Anglican Church Grammar", "abbreviation": "ACG", "colors": { "primary": "#8B0000", "secondary": "#FFD700" }, "strengthRating": 51 }
+    ]
+  },
+  {
+    "id": "tas-u18",
+    "name": "TSL Colts U18",
+    "state": "TAS",
+    "level": "local",
+    "ageGroup": "u18",
+    "rounds": 12,
+    "clubs": [
+      { "id": "tasu18-north", "name": "North Launceston U18", "abbreviation": "NLU", "colors": { "primary": "#003399", "secondary": "#FFFFFF" }, "strengthRating": 52 },
+      { "id": "tasu18-launceston", "name": "Launceston U18", "abbreviation": "LAU", "colors": { "primary": "#003DA5", "secondary": "#FFD700" }, "strengthRating": 54 },
+      { "id": "tasu18-clarence", "name": "Clarence U18", "abbreviation": "CLU", "colors": { "primary": "#CC0000", "secondary": "#FFFFFF" }, "strengthRating": 55 },
+      { "id": "tasu18-glenorchy", "name": "Glenorchy U18", "abbreviation": "GLU", "colors": { "primary": "#000080", "secondary": "#FFFFFF" }, "strengthRating": 51 },
+      { "id": "tasu18-nth-hobart", "name": "North Hobart U18", "abbreviation": "NHU", "colors": { "primary": "#CC0000", "secondary": "#000000" }, "strengthRating": 50 },
+      { "id": "tasu18-sandy-bay", "name": "Sandy Bay U18", "abbreviation": "SBU", "colors": { "primary": "#006400", "secondary": "#FFD700" }, "strengthRating": 49 }
+    ]
+  },
+  {
+    "id": "nt-u18",
+    "name": "AFLNT Juniors U18",
+    "state": "NT",
+    "level": "local",
+    "ageGroup": "u18",
+    "rounds": 12,
+    "clubs": [
+      { "id": "ntu18-darwin", "name": "Darwin U18", "abbreviation": "DWN", "colors": { "primary": "#CC0000", "secondary": "#FFD700" }, "strengthRating": 51 },
+      { "id": "ntu18-palmerston", "name": "Palmerston U18", "abbreviation": "PAL", "colors": { "primary": "#003399", "secondary": "#FFFFFF" }, "strengthRating": 49 },
+      { "id": "ntu18-st-mary", "name": "St Mary's U18", "abbreviation": "STM", "colors": { "primary": "#CC0000", "secondary": "#000000" }, "strengthRating": 53 },
+      { "id": "ntu18-waratah", "name": "Waratah U18", "abbreviation": "WRT", "colors": { "primary": "#006400", "secondary": "#FFFFFF" }, "strengthRating": 50 },
+      { "id": "ntu18-alice-springs", "name": "Alice Springs U18", "abbreviation": "ALS", "colors": { "primary": "#FFD700", "secondary": "#003399" }, "strengthRating": 47 },
+      { "id": "ntu18-tiwi", "name": "Tiwi Bombers U18", "abbreviation": "TIW", "colors": { "primary": "#CC0000", "secondary": "#003DA5" }, "strengthRating": 52 }
+    ]
+  }
+]

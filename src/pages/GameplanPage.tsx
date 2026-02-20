@@ -24,6 +24,7 @@ export function GameplanPage() {
   const updateWeeklyGameplanAdjustment = useGameStore((s) => s.updateWeeklyGameplanAdjustment)
   const clearWeeklyGameplanAdjustment = useGameStore((s) => s.clearWeeklyGameplanAdjustment)
   const generateWeeklyCounterGameplanForUser = useGameStore((s) => s.generateWeeklyCounterGameplanForUser)
+  const matchResults = useGameStore((s) => s.matchResults)
 
   const club = clubs[playerClubId]
   const gameplan = club?.gameplan ?? createDefaultGameplan()
@@ -63,6 +64,25 @@ export function GameplanPage() {
   const ruckmen = clubPlayers.filter(
     (p: Player) => isPlayerEligibleForPositionType(p, 'RK'),
   )
+
+  // Last 5 rounds K:H ratio for the user's club
+  const last5KH = useMemo(() => {
+    const clubMatches = matchResults
+      .filter((m) => m.result && (m.homeClubId === playerClubId || m.awayClubId === playerClubId))
+      .slice(-5)
+    if (clubMatches.length === 0) return null
+    let totalKicks = 0
+    let totalHandballs = 0
+    for (const m of clubMatches) {
+      const stats = m.homeClubId === playerClubId ? m.result!.homePlayerStats : m.result!.awayPlayerStats
+      for (const s of stats) {
+        totalKicks += s.kicks
+        totalHandballs += s.handballs
+      }
+    }
+    if (totalHandballs === 0) return null
+    return { kicks: totalKicks, handballs: totalHandballs, ratio: totalKicks / totalHandballs, games: clubMatches.length }
+  }, [matchResults, playerClubId])
 
   return (
     <div className="space-y-6">
@@ -582,6 +602,62 @@ export function GameplanPage() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Ball Distribution Style */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Ball Distribution Style</CardTitle>
+          <CardDescription>
+            Target K:H ratio influences how players distribute the ball during simulation (kicks vs handballs).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Last 5 rounds indicator */}
+            <div className="rounded-lg border bg-muted/30 p-3 space-y-1">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Last {last5KH?.games ?? 0} Rounds Avg K:H
+              </p>
+              {last5KH ? (
+                <>
+                  <p className="text-2xl font-bold tabular-nums">{last5KH.ratio.toFixed(1)}:1</p>
+                  <p className="text-xs text-muted-foreground">
+                    {last5KH.kicks} kicks · {last5KH.handballs} handballs
+                    {last5KH.ratio >= 2.0 ? ' — kick dominant' : last5KH.ratio <= 1.0 ? ' — handball heavy' : ' — balanced'}
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">No match data yet</p>
+              )}
+            </div>
+            {/* Target setting */}
+            <div className="space-y-2">
+              <Label htmlFor="target-kh">Target K:H Ratio</Label>
+              <Select
+                value={String(activePlan.targetKHRatio ?? 1.5)}
+                onValueChange={(v) => updatePlan({ targetKHRatio: parseFloat(v) })}
+              >
+                <SelectTrigger id="target-kh">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0.5">0.5:1 — Strong handball-first</SelectItem>
+                  <SelectItem value="0.75">0.75:1 — Handball-dominant</SelectItem>
+                  <SelectItem value="1.0">1.0:1 — Equal kicks and handballs</SelectItem>
+                  <SelectItem value="1.25">1.25:1 — Slightly kick-first</SelectItem>
+                  <SelectItem value="1.5">1.5:1 — Balanced (default)</SelectItem>
+                  <SelectItem value="2.0">2.0:1 — Kick dominant</SelectItem>
+                  <SelectItem value="2.5">2.5:1 — Strong kick-first</SelectItem>
+                  <SelectItem value="3.0">3.0:1 — Extreme kick-first</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Higher ratio = more kicks relative to handballs. Affects kick simulation probability each possession.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Tactical Summary */}
       <Card>

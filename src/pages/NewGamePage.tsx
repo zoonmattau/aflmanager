@@ -107,7 +107,8 @@ const OFFSEASON_STAGE_OPTIONS: Array<{ value: OffseasonPhase; label: string }> =
   { value: 'ready', label: 'Season Ready' },
 ]
 
-function getGameStartDateForStage(seasonStartDate: string, stage: OffseasonPhase): string {
+function getGameStartDateForStage(seasonStartDate: string, stage: OffseasonPhase | 'season-start'): string {
+  if (stage === 'season-start') return seasonStartDate
   const year = parseInt(seasonStartDate.slice(0, 4), 10) || 2026
   const offseasonStartDate = computeDefaultGameStartDate(year)
   return addDays(offseasonStartDate, OFFSEASON_STAGE_START_OFFSETS[stage] ?? 0)
@@ -426,7 +427,7 @@ export function NewGamePage() {
   const customLeagueTemplates = useAppStore((s) => s.customLeagueTemplates)
   const realClubs = clubsData as ClubData[]
 
-  const [gameStartStage, setGameStartStage] = useState<OffseasonPhase>(() =>
+  const [gameStartStage, setGameStartStage] = useState<OffseasonPhase | 'season-start'>(() =>
     inferOffseasonStageFromDate(settings.seasonStartDate, settings.gameStartDate),
   )
 
@@ -1192,7 +1193,7 @@ export function NewGamePage() {
                     <Select
                       value={gameStartStage}
                       onValueChange={(val) => {
-                        const stage = val as OffseasonPhase
+                        const stage = val as OffseasonPhase | 'season-start'
                         setGameStartStage(stage)
                         setSettings((prev) => ({
                           ...prev,
@@ -1209,6 +1210,9 @@ export function NewGamePage() {
                             {stage.label} ({formatDate(getGameStartDateForStage(settings.seasonStartDate, stage.value))})
                           </SelectItem>
                         ))}
+                        <SelectItem value="season-start">
+                          Season Day 1 ({formatDate(settings.seasonStartDate)})
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                     <p className="rounded-md border border-zinc-700 bg-zinc-800/30 px-3 py-2 text-sm text-zinc-200">
@@ -2347,7 +2351,7 @@ export function NewGamePage() {
                 />
                 <SummaryRow
                   label="Game Start"
-                  value={`${OFFSEASON_STAGE_OPTIONS.find((o) => o.value === gameStartStage)?.label ?? 'Offseason'} (${formatDate(settings.gameStartDate)})`}
+                  value={`${gameStartStage === 'season-start' ? 'Season Day 1' : (OFFSEASON_STAGE_OPTIONS.find((o) => o.value === gameStartStage)?.label ?? 'Offseason')} (${formatDate(settings.gameStartDate)})`}
                 />
                 <SummaryRow
                   label="Blockbusters"

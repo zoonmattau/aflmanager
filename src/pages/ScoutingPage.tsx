@@ -2,6 +2,7 @@ import { useMemo, useState, useCallback, Fragment } from 'react'
 import { useGameStore } from '@/stores/gameStore'
 import type { Scout, ScoutingRegion, DraftProspect, ScoutingReport } from '@/types/draft'
 import type { PlayerAttributes } from '@/types/player'
+import type { YouthPathwayState, YouthCompId } from '@/types/youthPathway'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -920,6 +921,116 @@ function SummaryCards({
 }
 
 // ---------------------------------------------------------------------------
+// Youth Pathway Scout Tab
+// ---------------------------------------------------------------------------
+
+function YouthScoutingTab({
+  youthPathway,
+  myScouts,
+  playerClubId,
+  onAssign,
+  onUnassign,
+}: {
+  youthPathway: YouthPathwayState
+  myScouts: Scout[]
+  playerClubId: string
+  onAssign: (scoutId: string, compId: YouthCompId) => void
+  onUnassign: (scoutId: string) => void
+}) {
+  const comps = Object.values(youthPathway.competitions)
+  const allPlayers = Object.values(youthPathway.players)
+
+  function getAssignedScout(compId: string) {
+    const assignment = youthPathway.scoutAssignments.find((a) => a.compId === compId)
+    if (!assignment) return null
+    return myScouts.find((s) => s.id === assignment.scoutId) ?? null
+  }
+
+  function getYouthAssignment(scoutId: string) {
+    return youthPathway.scoutAssignments.find((a) => a.scoutId === scoutId) ?? null
+  }
+
+  return (
+    <Card className="mt-4">
+      <CardHeader>
+        <CardTitle className="text-base">Youth Competition Assignments</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Assign scouts to youth competitions to discover future draft prospects early.
+        </p>
+      </CardHeader>
+      <CardContent className="p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Competition</TableHead>
+              <TableHead>State</TableHead>
+              <TableHead>Level</TableHead>
+              <TableHead>Rounds</TableHead>
+              <TableHead>Discovered</TableHead>
+              <TableHead>Scout Assigned</TableHead>
+              <TableHead>Est. Finds/Rnd</TableHead>
+              <TableHead></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {comps.map((comp) => {
+              const discovered = allPlayers.filter(
+                (p) => p.compId === comp.id && p.discoveredByClubIds.includes(playerClubId),
+              ).length
+              const assignedScout = getAssignedScout(comp.id)
+              const unassignedScouts = myScouts.filter((s) => !getYouthAssignment(s.id) && !s.assignedRegion)
+              return (
+                <TableRow key={comp.id}>
+                  <TableCell className="font-medium text-sm">{comp.name}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{comp.state}</TableCell>
+                  <TableCell className="text-sm capitalize">{comp.level}</TableCell>
+                  <TableCell className="text-sm">{comp.season.completedRounds}/{comp.rounds}</TableCell>
+                  <TableCell className="text-sm">{discovered > 0 ? discovered : '—'}</TableCell>
+                  <TableCell>
+                    {assignedScout ? (
+                      <Badge variant="secondary" className="text-xs">
+                        {assignedScout.firstName} {assignedScout.lastName}
+                      </Badge>
+                    ) : (
+                      <Select value="" onValueChange={(val) => onAssign(val, comp.id)}>
+                        <SelectTrigger className="h-7 text-xs w-40">
+                          <SelectValue placeholder="Assign scout…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {unassignedScouts.length === 0 ? (
+                            <SelectItem value="_none" disabled>No available scouts</SelectItem>
+                          ) : (
+                            unassignedScouts.map((s) => (
+                              <SelectItem key={s.id} value={s.id}>
+                                {s.firstName} {s.lastName} ({s.skill})
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {assignedScout ? `~${Math.round(assignedScout.skill / 10) + 1}` : '—'}
+                  </TableCell>
+                  <TableCell>
+                    {assignedScout && (
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => onUnassign(assignedScout.id)}>
+                        Unassign
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Main Page Component
 // ---------------------------------------------------------------------------
 
@@ -931,6 +1042,9 @@ export function ScoutingPage() {
   const hireScoutAction = useGameStore((s) => s.hireScoutAction)
   const fireScoutAction = useGameStore((s) => s.fireScoutAction)
   const assignScoutRegionAction = useGameStore((s) => s.assignScoutRegionAction)
+  const youthPathway = useGameStore((s) => s.youthPathway)
+  const assignScoutToYouthComp = useGameStore((s) => s.assignScoutToYouthComp)
+  const unassignScoutFromYouthComp = useGameStore((s) => s.unassignScoutFromYouthComp)
   const runScoutingSessionAction = useGameStore((s) => s.runScoutingSessionAction)
 
   const club = clubs[playerClubId]
@@ -1002,6 +1116,7 @@ export function ScoutingPage() {
           <TabsTrigger value="scouts">My Scouts</TabsTrigger>
           <TabsTrigger value="prospects">Prospect Reports</TabsTrigger>
           <TabsTrigger value="shortlists">Shortlists</TabsTrigger>
+          {youthPathway && <TabsTrigger value="youth">Youth Pathway</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="scouts">
@@ -1025,6 +1140,18 @@ export function ScoutingPage() {
         <TabsContent value="shortlists">
           <ShortlistManager targetTypeFilter="prospect" title="Scouting Watchlists" />
         </TabsContent>
+
+        {youthPathway && (
+          <TabsContent value="youth">
+            <YouthScoutingTab
+              youthPathway={youthPathway}
+              myScouts={myScouts}
+              playerClubId={playerClubId}
+              onAssign={(scoutId, compId) => assignScoutToYouthComp(scoutId, compId)}
+              onUnassign={(scoutId) => unassignScoutFromYouthComp(scoutId)}
+            />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   )

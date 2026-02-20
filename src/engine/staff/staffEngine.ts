@@ -554,7 +554,87 @@ export function getMedicalStaffImpact(
 }
 
 // ---------------------------------------------------------------------------
-// 6. getStaffByRole
+// 6. getReservesStaffImpact
+// ---------------------------------------------------------------------------
+
+export interface ReservesStaffImpact {
+  /** True when a reserves coach is present and will drive delegation tactics. */
+  philosophyDriven: boolean
+  /** Tactics the reserves coach would prefer (used when delegation is enabled). */
+  suggestedTactics: {
+    tempo: 'slow' | 'balanced' | 'fast'
+    aggression: 'low' | 'balanced' | 'high'
+    youthFocus: boolean
+  }
+  /** Flat bonus to tactical effectiveness from the reserves coach (0–0.5). */
+  tacticalBonus: number
+  /** Extra weight given to young players in auto-selection (0–0.5). */
+  selectionYouthBias: number
+  /** Multiplier applied to injury probability — lower is better (default 1.0). */
+  injuryRiskMultiplier: number
+  /** Additional fitness points recovered per resting week (default 0). */
+  restingFitnessBonus: number
+  /** Multiplier on attribute development triggers (default 1.0). */
+  developmentChanceMultiplier: number
+  /** Extra probability of a bonus attribute upgrade per session (default 0). */
+  developmentExtraUpgradeChance: number
+}
+
+export function getReservesStaffImpact(
+  staff: StaffMember[],
+  clubId: string,
+): ReservesStaffImpact {
+  const clubStaff = staff.filter((s) => s.clubId === clubId)
+  const reservesCoach = clubStaff.find((s) => s.role === 'reserves-coach') ?? null
+
+  const impact: ReservesStaffImpact = {
+    philosophyDriven: false,
+    suggestedTactics: { tempo: 'balanced', aggression: 'balanced', youthFocus: false },
+    tacticalBonus: 0,
+    selectionYouthBias: 0,
+    injuryRiskMultiplier: 1.0,
+    restingFitnessBonus: 0,
+    developmentChanceMultiplier: 1.0,
+    developmentExtraUpgradeChance: 0,
+  }
+
+  if (!reservesCoach) return impact
+
+  impact.philosophyDriven = true
+
+  switch (reservesCoach.philosophy) {
+    case 'attacking':
+      impact.suggestedTactics = { tempo: 'fast', aggression: 'high', youthFocus: false }
+      break
+    case 'defensive':
+      impact.suggestedTactics = { tempo: 'slow', aggression: 'low', youthFocus: false }
+      break
+    case 'development':
+      impact.suggestedTactics = { tempo: 'balanced', aggression: 'balanced', youthFocus: true }
+      break
+    default:
+      impact.suggestedTactics = { tempo: 'balanced', aggression: 'balanced', youthFocus: false }
+  }
+
+  // Tactical bonus: 0–0.5 based on reserves coach tactical rating
+  impact.tacticalBonus = reservesCoach.ratings.tactical / 200
+
+  // Youth bias active for development coaches
+  if (reservesCoach.philosophy === 'development') {
+    impact.selectionYouthBias = reservesCoach.ratings.development / 200
+  }
+
+  // Fitness and development impacts scale off reserves coach's secondary ratings
+  impact.injuryRiskMultiplier = Math.max(0.75, 1.0 - reservesCoach.ratings.fitness / 400)
+  impact.restingFitnessBonus = reservesCoach.ratings.fitness / 200
+  impact.developmentChanceMultiplier = 1.0 + reservesCoach.ratings.development / 400
+  impact.developmentExtraUpgradeChance = reservesCoach.ratings.manManagement / 2000
+
+  return impact
+}
+
+// ---------------------------------------------------------------------------
+// 7. getStaffByRole
 // ---------------------------------------------------------------------------
 
 /**

@@ -304,6 +304,26 @@ export interface MatchReport {
   awayBoxScore?: MatchReportPlayerStat[]
 }
 
+export interface H2HMeeting {
+  year: number
+  round: number
+  score0: number  // score for clubId0 (alphabetically first)
+  score1: number  // score for clubId1 (alphabetically second)
+  isFinal: boolean
+}
+
+export interface H2HRecord {
+  clubId0: string  // alphabetically sorted, comes first
+  clubId1: string  // alphabetically sorted, comes second
+  wins0: number
+  wins1: number
+  draws: number
+  streak: { clubId: string; length: number } | null
+  last10: H2HMeeting[]
+  biggestWin0: { margin: number; year: number; round: number } | null
+  biggestWin1: { margin: number; year: number; round: number } | null
+  lastMeeting: H2HMeeting | null
+}
 export interface GameHistory {
   seasons: SeasonRecord[]
   draftHistory: DraftHistoryEntry[]
@@ -317,4 +337,5 @@ export interface GameHistory {
   seasonArchives: import('@/types/historyArchive').SeasonArchive[]
   matchReports: MatchReport[]
   financialHistory?: import('@/types/historyArchive').FinancialSeasonRecord[]
+  h2hRecords?: Record<string, H2HRecord>
 }

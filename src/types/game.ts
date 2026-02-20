@@ -576,3 +576,18 @@ export interface CompletedTrade {
   clubsInvolved?: string[]
   multiClubMoves?: TradePlayerMove[]
 }
+
+export type PositionGroupKey = 'DEF' | 'MID' | 'FWD' | 'RK'
+
+export interface PositionGroupBenchmark {
+  group: PositionGroupKey
+  sampleSize: number
+  disposals: number
+  goals: number
+  marks: number
+  tackles: number
+  clearances: number
+  hitouts: number
+  contestedPossessions: number
+  rating: number
+}

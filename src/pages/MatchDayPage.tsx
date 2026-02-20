@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback } from 'react'
+import { h2hKey, isRivalryMatch } from '@/engine/history/h2hTracker'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -338,6 +339,7 @@ export function MatchDayPage() {
   const swapFixturesInRound = useGameStore((s) => s.swapFixturesInRound)
 
   const matchReports = useGameStore((s) => s.history.matchReports)
+  const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
 
   const [lastMatchResult, setLastMatchResult] = useState<Match | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
@@ -383,6 +385,17 @@ export function MatchDayPage() {
     })
     return map
   }, [ladder])
+
+  const isRivalryFixture = useMemo(
+    () => selectedFixture ? isRivalryMatch(selectedFixture.homeClubId, selectedFixture.awayClubId, clubs) : false,
+    [selectedFixture, clubs],
+  )
+
+  const allTimeH2H = useMemo(() => {
+    if (!selectedFixture) return null
+    const key = h2hKey(selectedFixture.homeClubId, selectedFixture.awayClubId)
+    return h2hRecords[key] ?? null
+  }, [selectedFixture, h2hRecords])
 
   const previewData = useMemo(() => {
     if (!selectedFixture) return null
@@ -1058,10 +1071,41 @@ export function MatchDayPage() {
               </Card>
 
               <Card>
-                <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-1"><Shield className="h-3.5 w-3.5" />Previous Meetings</CardTitle></CardHeader>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Shield className="h-3.5 w-3.5" />
+                    H2H Record
+                    {isRivalryFixture && (
+                      <span className="ml-auto text-[10px] font-semibold uppercase tracking-wide rounded px-1.5 py-0.5 bg-red-500/15 text-red-600 border border-red-500/30">
+                        Rivalry Match
+                      </span>
+                    )}
+                  </CardTitle>
+                </CardHeader>
                 <CardContent className="space-y-2 text-xs">
+                  {allTimeH2H ? (
+                    <div className="mb-2 flex items-center gap-4">
+                      <div className="text-center">
+                        <p className="text-base font-bold">{allTimeH2H.wins0}</p>
+                        <p className="text-[10px] text-muted-foreground">{homeClub?.abbreviation}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-base font-bold text-muted-foreground">{allTimeH2H.draws}</p>
+                        <p className="text-[10px] text-muted-foreground">D</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-base font-bold">{allTimeH2H.wins1}</p>
+                        <p className="text-[10px] text-muted-foreground">{awayClub?.abbreviation}</p>
+                      </div>
+                      {allTimeH2H.streak && allTimeH2H.streak.length >= 2 && (
+                        <div className="ml-auto text-[10px] font-semibold text-muted-foreground">
+                          {clubs[allTimeH2H.streak.clubId]?.abbreviation} on {allTimeH2H.streak.length}-game streak
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
                   {previewData.meetings.length === 0 ? (
-                    <p className="text-muted-foreground">No previous meetings recorded yet.</p>
+                    <p className="text-muted-foreground">No previous meetings this season.</p>
                   ) : (
                     previewData.meetings.map((m) => {
                       if (!m.result) return null

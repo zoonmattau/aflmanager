@@ -118,6 +118,7 @@ export interface ClubGameplan {
   forwardLine: 'press' | 'hold' | 'run' | 'zone'
   ruckNomination: RuckNomination
   rotations: 'low' | 'medium' | 'high'
+  targetKHRatio?: number
 }
 
 export interface ClubHallOfFameEntry {

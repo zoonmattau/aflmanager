@@ -45,7 +45,9 @@ import {
   MessageSquare,
   TrendingUp,
   X,
+  AlertTriangle,
 } from 'lucide-react'
+import { getInjuryRiskLevel, injuryRiskDisplay, getDurabilityRating, durabilityRatingColor, getTotalGamesMissed } from '@/lib/injuryRisk'
 import { diffDays } from '@/engine/calendar/calendarEngine'
 import { calculatePlayerValue } from '@/engine/contracts/negotiation'
 import { buildYearByYearFromStructure, calculateIncentiveValue } from '@/engine/contracts/contractStructures'
@@ -509,6 +511,27 @@ function NegotiationDialog({
                       <span className="font-medium">{selectedPlayer.morale}</span>
                     </div>
                   </div>
+                  {/* Age & Durability Risk flag */}
+                  {(() => {
+                    const riskLevel = getInjuryRiskLevel(selectedPlayer)
+                    const dur = getDurabilityRating(selectedPlayer)
+                    const missed = getTotalGamesMissed(selectedPlayer)
+                    const showFlag = selectedPlayer.age >= 28 && (riskLevel === 'high' || riskLevel === 'very-high' || dur === 'C' || dur === 'D')
+                    if (!showFlag) return null
+                    const { bgClass, label: riskLabel } = injuryRiskDisplay(riskLevel)
+                    return (
+                      <div className={`flex items-start gap-2 rounded border px-3 py-2 text-xs ${bgClass}`}>
+                        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                        <span>
+                          <span className="font-semibold">Age & Durability Risk</span>
+                          {' '}— {selectedPlayer.age}yo, {riskLabel},
+                          {' '}Durability <span className={durabilityRatingColor(dur)}>{dur}</span>
+                          {missed > 0 && `, ${missed} career game${missed !== 1 ? 's' : ''} missed`}.
+                          Consider shorter term or performance clauses.
+                        </span>
+                      </div>
+                    )
+                  })()}
                   <Button onClick={handleStartNegotiation} className="w-full">
                     Start Negotiation
                   </Button>

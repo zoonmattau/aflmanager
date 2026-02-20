@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
+import { h2hKey, h2hPerspective } from '@/engine/history/h2hTracker'
 import { useParams } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
 import type { ClubBudgetAllocation, ClubFacilities, ClubHallOfFameEntry, BudgetDepartment } from '@/types/club'
@@ -1531,9 +1532,10 @@ export function ClubPage() {
             </CardContent>
           </Card>
 
-          {/* Rivals H2H This Season */}
+          {/* Rivals H2H All-Time */}
           {(() => {
             const rivalIds = club?.rivalryClubIds ?? []
+            const h2hRecords = history.h2hRecords ?? {}
             if (rivalIds.length === 0) {
               return (
                 <Card>
@@ -1550,35 +1552,14 @@ export function ClubPage() {
 
             return (
               <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Head-to-Head This Season</h3>
+                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">All-Time Head-to-Head</h3>
                 {rivalIds.map((rivalId) => {
                   const rival = clubs[rivalId]
                   if (!rival) return null
 
-                  // Compute H2H from matchResults
-                  const h2hMatches = matchResults.filter((m) =>
-                    m.result &&
-                    ((m.homeClubId === clubId && m.awayClubId === rivalId) ||
-                     (m.awayClubId === clubId && m.homeClubId === rivalId)),
-                  )
-
-                  let wins = 0, losses = 0, draws = 0
-                  let pointsFor = 0, pointsAgainst = 0
-                  for (const m of h2hMatches) {
-                    if (!m.result) continue
-                    const isHome = m.homeClubId === clubId
-                    const myScore = isHome ? m.result.homeTotalScore : m.result.awayTotalScore
-                    const theirScore = isHome ? m.result.awayTotalScore : m.result.homeTotalScore
-                    pointsFor += myScore
-                    pointsAgainst += theirScore
-                    if (myScore > theirScore) wins++
-                    else if (myScore < theirScore) losses++
-                    else draws++
-                  }
-
-                  const played = wins + losses + draws
-                  const avgFor = played > 0 ? (pointsFor / played).toFixed(0) : '—'
-                  const avgAgainst = played > 0 ? (pointsAgainst / played).toFixed(0) : '—'
+                  const key = h2hKey(clubId, rivalId)
+                  const record = h2hRecords[key]
+                  const pov = record ? h2hPerspective(record, clubId) : null
 
                   return (
                     <Card key={rivalId}>
@@ -1595,49 +1576,49 @@ export function ClubPage() {
                             </div>
                           </div>
 
-                          {played === 0 ? (
-                            <p className="text-xs text-muted-foreground">Not yet played</p>
+                          {!pov || pov.played === 0 ? (
+                            <p className="text-xs text-muted-foreground">No meetings recorded</p>
                           ) : (
                             <div className="flex items-center gap-4 text-sm">
                               <div className="text-center">
-                                <p className="font-bold text-green-500">{wins}</p>
+                                <p className="font-bold text-green-500">{pov.wins}</p>
                                 <p className="text-[10px] text-muted-foreground">W</p>
                               </div>
                               <div className="text-center">
-                                <p className="font-bold text-yellow-500">{draws}</p>
+                                <p className="font-bold text-yellow-500">{pov.draws}</p>
                                 <p className="text-[10px] text-muted-foreground">D</p>
                               </div>
                               <div className="text-center">
-                                <p className="font-bold text-red-500">{losses}</p>
+                                <p className="font-bold text-red-500">{pov.losses}</p>
                                 <p className="text-[10px] text-muted-foreground">L</p>
                               </div>
-                              <div className="border-l pl-4 text-center">
-                                <p className="font-semibold text-xs">{avgFor} / {avgAgainst}</p>
-                                <p className="text-[10px] text-muted-foreground">Avg PF / PA</p>
-                              </div>
+                              {pov.streak && pov.streak.length >= 2 && (
+                                <div className={pov.streak.type === 'W' ? 'rounded px-2 py-0.5 text-[10px] font-semibold bg-green-500/15 text-green-600' : 'rounded px-2 py-0.5 text-[10px] font-semibold bg-red-500/15 text-red-600'}>
+                                  {pov.streak.length}{pov.streak.type}
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
 
-                        {/* Recent H2H results */}
-                        {h2hMatches.length > 0 && (
+                        {pov && pov.biggestWin && (
+                          <p className="mt-2 text-[11px] text-muted-foreground">
+                            Biggest win: +{pov.biggestWin.margin} pts ({pov.biggestWin.year} Rd{pov.biggestWin.round})
+                          </p>
+                        )}
+
+                        {/* Last 10 meetings */}
+                        {pov && pov.last10.length > 0 && (
                           <div className="mt-3 space-y-1">
-                            {h2hMatches.slice(-3).map((m) => {
-                              if (!m.result) return null
-                              const isHome = m.homeClubId === clubId
-                              const myScore = isHome ? m.result.homeTotalScore : m.result.awayTotalScore
-                              const theirScore = isHome ? m.result.awayTotalScore : m.result.homeTotalScore
-                              const won = myScore > theirScore
-                              const isDraw = myScore === theirScore
-                              return (
-                                <div key={m.id} className="flex items-center justify-between rounded border px-2 py-1 text-xs">
-                                  <span className="text-muted-foreground">Rd {m.round} ({isHome ? 'H' : 'A'})</span>
-                                  <span className={`font-semibold ${won ? 'text-green-500' : isDraw ? 'text-yellow-500' : 'text-red-500'}`}>
-                                    {won ? 'W' : isDraw ? 'D' : 'L'} {myScore}-{theirScore}
-                                  </span>
-                                </div>
-                              )
-                            })}
+                            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Last {pov.last10.length} meetings</p>
+                            {[...pov.last10].reverse().map((m, idx) => (
+                              <div key={idx} className="flex items-center justify-between rounded border px-2 py-1 text-xs">
+                                <span className="text-muted-foreground">{m.year} {m.isFinal ? 'Final' : 'Rd ' + m.round}</span>
+                                <span className={m.result === 'W' ? 'font-semibold text-green-500' : m.result === 'D' ? 'font-semibold text-yellow-500' : 'font-semibold text-red-500'}>
+                                  {m.result} {m.myScore}-{m.theirScore}
+                                </span>
+                              </div>
+                            ))}
                           </div>
                         )}
                       </CardContent>

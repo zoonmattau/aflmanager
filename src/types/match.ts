@@ -38,6 +38,7 @@ export interface MatchPlayerStats {
   bounces: number
   clangers: number
   goalAssists: number
+  matchRating?: number
 }
 
 export interface MatchKeyEvent {

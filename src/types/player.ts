@@ -371,4 +371,6 @@ export interface Player {
   contractTier?: PlayerContractTier
   stateLeagueContract?: StateLeagueContract | null
   contractHistory?: PlayerContractHistoryEntry[]
+  matchRatingHistory?: number[]
+  lastMatchRating?: number
 }

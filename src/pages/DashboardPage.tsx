@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect } from 'react'
+import { h2hKey, isRivalryMatch, h2hPerspective } from '@/engine/history/h2hTracker'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -405,6 +406,7 @@ export function DashboardPage() {
   const simToEnd = useGameStore((s) => s.simToEnd)
   const simFinalsRound = useGameStore((s) => s.simFinalsRound)
   const matchResults = useGameStore((s) => s.matchResults)
+const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
   const calendar = useGameStore((s) => s.calendar)
   const weekSchedule = useGameStore((s) => s.weekSchedule)
   const setDaySlot = useGameStore((s) => s.setDaySlot)
@@ -502,6 +504,19 @@ export function DashboardPage() {
       oppScore: isUserHome ? m.result!.awayTotalScore : m.result!.homeTotalScore,
     }
   }, [matchResults, playerClubId, opponentId])
+
+  const isRivalry = useMemo(
+    () => opponentId ? isRivalryMatch(playerClubId, opponentId, clubs) : false,
+    [opponentId, playerClubId, clubs],
+  )
+
+  const allTimeH2H = useMemo(() => {
+    if (!opponentId) return null
+    const key = h2hKey(playerClubId, opponentId)
+    const record = h2hRecords[key]
+    if (!record) return null
+    return h2hPerspective(record, playerClubId)
+  }, [playerClubId, opponentId, h2hRecords])
 
   const isBye = ((nextRound?.byeClubIds ?? []).includes(playerClubId))
     || (nextRound && !nextFixture && phase === 'regular-season')
@@ -1431,6 +1446,8 @@ export function DashboardPage() {
               userForm={userForm}
               userLadderEntry={ladderEntry ?? null}
               headToHead={headToHead}
+              isRivalry={isRivalry}
+              allTimeH2H={allTimeH2H}
               playerClubId={playerClubId}
               players={players}
               clubs={clubs}
@@ -1478,73 +1495,113 @@ export function DashboardPage() {
 
       {/* Secondary: Ladder + Hub */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm font-medium">Ladder Snapshot</CardTitle>
-              <Button variant="link" size="sm" className="text-xs h-auto p-0" onClick={() => navigate('/ladder')}>
-                Full Ladder <ArrowRight className="ml-1 h-3 w-3" />
-              </Button>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
-              {hasTop4FinalsAdvantage && (
-                <span className="inline-flex items-center gap-1">
-                  <span className="h-2 w-2 rounded-sm bg-cyan-500/60" />
-                  Top 4
-                </span>
-              )}
-              {finalsQualifyingTeams > 0 && (
-                <span className="inline-flex items-center gap-1">
-                  <span className="h-2 w-2 rounded-sm bg-emerald-500/50" />
-                  Finals
-                </span>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="max-h-[300px] overflow-y-auto space-y-1 pr-1">
-              {ladder.map((entry, i) => {
-                const ladderClub = clubs[entry.clubId]
-                const isPlayer = entry.clubId === playerClubId
-                const inFinalsZone = i < finalsQualifyingTeams
-                const inTop4Zone = hasTop4FinalsAdvantage && i < 4
-                const inLowerFinalsZone = inFinalsZone && !inTop4Zone
-                const isTop4CutLine = hasTop4FinalsAdvantage && i === 3
-                const isFinalsCutLine = finalsQualifyingTeams > 0 && i === finalsQualifyingTeams - 1
-                return (
-                  <div
-                    key={entry.clubId}
-                    className={`flex items-center justify-between rounded px-3 py-1 text-sm ${
-                      inTop4Zone ? 'bg-cyan-500/12' : ''
-                    } ${
-                      inLowerFinalsZone ? 'bg-emerald-500/5' : ''
-                    } ${isPlayer ? 'bg-accent font-semibold' : ''} ${
-                      isTop4CutLine ? 'border-b-2 border-dashed border-cyan-500/50' : ''
-                    } ${
-                      isFinalsCutLine ? 'border-b-2 border-dashed border-emerald-500/40' : ''
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="w-5 text-right text-muted-foreground">{i + 1}</span>
-                      <div
-                        className="h-3 w-3 rounded-full"
-                        style={{ backgroundColor: ladderClub?.colors.primary }}
-                      />
-                      <span>{ladderClub?.abbreviation}</span>
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                      <span>{entry.wins}-{entry.draws}-{entry.losses}</span>
-                      <span className="w-12 text-right">{entry.percentage.toFixed(1)}%</span>
-                      <Badge variant="secondary" className="w-8 justify-center">
-                        {entry.points}
-                      </Badge>
-                    </div>
+        {(() => {
+          const userLadderIdx = ladder.findIndex((e) => e.clubId === playerClubId)
+          const MAX_SHOW = Math.max(9, finalsQualifyingTeams + 1)
+          const visibleItems = (() => {
+            const topN = ladder.slice(0, MAX_SHOW).map((e, i) => ({ entry: e, idx: i }))
+            if (userLadderIdx < MAX_SHOW) return topN
+            return [...topN, { entry: ladder[userLadderIdx], idx: userLadderIdx }]
+          })()
+          const eighth = finalsQualifyingTeams > 0 ? ladder[finalsQualifyingTeams - 1] : null
+          const ninth = finalsQualifyingTeams > 0 ? ladder[finalsQualifyingTeams] : null
+          const userIsInFinalsZone = userLadderIdx >= 0 && userLadderIdx < finalsQualifyingTeams
+          const userEntry = ladder[userLadderIdx]
+          const ptGap = userEntry && eighth && ninth
+            ? userIsInFinalsZone
+              ? userEntry.points - (ninth?.points ?? 0)
+              : (eighth?.points ?? 0) - userEntry.points
+            : null
+          const teamAbove = userLadderIdx > 0 ? ladder[userLadderIdx - 1] : null
+          const teamBelow = userLadderIdx >= 0 && userLadderIdx < ladder.length - 1 ? ladder[userLadderIdx + 1] : null
+          const pctAbove = teamAbove && userEntry ? (teamAbove.percentage - userEntry.percentage).toFixed(1) : null
+          const pctBelow = teamBelow && userEntry ? (userEntry.percentage - teamBelow.percentage).toFixed(1) : null
+          return (
+            <Card className="cursor-pointer" onClick={() => navigate('/ladder')}>
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-medium">Ladder Snapshot</CardTitle>
+                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                    Full Ladder <ArrowRight className="h-3 w-3" />
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+                  {hasTop4FinalsAdvantage && (
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2 w-2 rounded-sm bg-cyan-500/60" />Top 4
+                    </span>
+                  )}
+                  {finalsQualifyingTeams > 0 && (
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2 w-2 rounded-sm bg-emerald-500/50" />Finals
+                    </span>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="pb-3">
+                <div className="space-y-0.5">
+                  {visibleItems.map(({ entry, idx }, vi) => {
+                    const ladderClub = clubs[entry.clubId]
+                    const isPlayer = entry.clubId === playerClubId
+                    const inFinalsZone = idx < finalsQualifyingTeams
+                    const inTop4Zone = hasTop4FinalsAdvantage && idx < 4
+                    const inLowerFinalsZone = inFinalsZone && !inTop4Zone
+                    const isTop4CutLine = hasTop4FinalsAdvantage && idx === 3
+                    const isFinalsCutLine = finalsQualifyingTeams > 0 && idx === finalsQualifyingTeams - 1
+                    const isGapRow = vi > 0 && visibleItems[vi - 1].idx < idx - 1
+                    return (
+                      <div key={entry.clubId}>
+                        {isGapRow && (
+                          <div className="py-0.5 text-center text-[10px] text-muted-foreground">· · ·</div>
+                        )}
+                        <div
+                          className={[
+                            'flex items-center justify-between rounded px-2 py-1 text-sm',
+                            inTop4Zone ? 'bg-cyan-500/10' : '',
+                            inLowerFinalsZone ? 'bg-emerald-500/5' : '',
+                            isPlayer ? 'bg-primary/10 ring-1 ring-primary/30 font-semibold' : '',
+                            isTop4CutLine ? 'border-b border-dashed border-cyan-500/50' : '',
+                            isFinalsCutLine ? 'border-b border-dashed border-emerald-500/40' : '',
+                          ].join(' ')}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-5 text-right text-xs text-muted-foreground">{idx + 1}</span>
+                            <div
+                              className="h-3 w-3 rounded-full flex-shrink-0"
+                              style={{ backgroundColor: ladderClub?.colors.primary }}
+                            />
+                            <span className="text-xs">{ladderClub?.abbreviation}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            {isPlayer && pctAbove !== null && (
+                              <span className="text-[10px] text-emerald-500">▲{pctAbove}%</span>
+                            )}
+                            <span className="tabular-nums">{entry.wins}-{entry.draws}-{entry.losses}</span>
+                            <span className="w-11 text-right tabular-nums">{entry.percentage.toFixed(1)}%</span>
+                            <span className="w-6 text-right font-semibold tabular-nums text-foreground">{entry.points}</span>
+                            {isPlayer && pctBelow !== null && (
+                              <span className="text-[10px] text-red-400">▼{pctBelow}%</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                {/* Gap to finals boundary */}
+                {ptGap !== null && finalsQualifyingTeams > 0 && ladder.length > finalsQualifyingTeams && (
+                  <div className={`mt-2 text-center text-xs rounded px-2 py-1 ${userIsInFinalsZone ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10' : 'text-red-500 bg-red-500/10'}`}>
+                    {userIsInFinalsZone
+                      ? `${ptGap} pts clear of ${finalsQualifyingTeams + 1}th`
+                      : ptGap === 0
+                        ? `Equal on points with ${finalsQualifyingTeams}th (percentage decides)`
+                        : `${ptGap} pts behind ${finalsQualifyingTeams}th`}
                   </div>
-                )
-              })}
-            </div>
-          </CardContent>
-        </Card>
+                )}
+              </CardContent>
+            </Card>
+          )
+        })()}
 
         <Card>
           <CardHeader className="pb-2">
@@ -1982,6 +2039,8 @@ interface MatchupCardProps {
   userForm: string[]
   userLadderEntry: LadderEntry | null
   headToHead: { userScore: number; oppScore: number } | null
+  isRivalry: boolean
+  allTimeH2H: import('@/engine/history/h2hTracker').H2HPerspective | null
   playerClubId: string
   players: Record<string, Player>
   clubs: Record<string, Club>
@@ -2039,6 +2098,8 @@ function MatchupCard({
   userForm,
   userLadderEntry,
   headToHead,
+  isRivalry,
+  allTimeH2H,
   playerClubId,
   players,
   clubs,
@@ -2242,6 +2303,13 @@ function MatchupCard({
             {nextFixture.venue}
           </p>
 
+          {isRivalry && (
+            <div className="mt-3 flex items-center justify-center gap-2 rounded border border-red-500/30 bg-red-500/8 px-3 py-2 text-xs font-semibold text-red-600">
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+              Rivalry Match
+            </div>
+          )}
+
           {showStrategies && (
             <div className="mt-3 rounded border p-2.5 space-y-1.5">
               <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Strategy Notes</p>
@@ -2344,9 +2412,22 @@ function MatchupCard({
               <div>{oppPfPg} / {oppPaPg}</div>
             </div>
 
-            {headToHead && (
+            {allTimeH2H && allTimeH2H.played > 0 && (
               <div className="mt-3 text-center text-xs text-muted-foreground border-t pt-2">
-                <span className="font-medium">H2H this season: </span>
+                <span className="font-medium">All-time H2H: </span>
+                <span className="font-semibold text-green-600">{allTimeH2H.wins}W</span>
+                <span className="mx-1 text-muted-foreground">/</span>
+                <span className="font-semibold">{allTimeH2H.draws}D</span>
+                <span className="mx-1 text-muted-foreground">/</span>
+                <span className="font-semibold text-red-600">{allTimeH2H.losses}L</span>
+                {allTimeH2H.streak && allTimeH2H.streak.length >= 2 && (
+                  <span className="ml-2 font-semibold">({allTimeH2H.streak.length}{allTimeH2H.streak.type} streak)</span>
+                )}
+              </div>
+            )}
+            {headToHead && (
+              <div className="mt-1 text-center text-xs text-muted-foreground">
+                <span className="font-medium">Last meeting: </span>
                 <span className="font-semibold text-foreground">{headToHead.userScore}</span>
                 {' - '}
                 <span className="font-semibold text-foreground">{headToHead.oppScore}</span>

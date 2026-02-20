@@ -55,6 +55,7 @@ import { TableViewManagerControl } from '@/components/table-view/TableViewManage
 import { ShortlistAssignMenu, ShortlistManager } from '@/components/shortlists/ShortlistManager'
 import type { BoardApprovalResult } from '@/types/boardApproval'
 import { BoardApprovalPanel } from '@/components/board/BoardApprovalPanel'
+import { getDurabilityRating, durabilityRatingColor, getInjuryRiskLevel, injuryRiskDisplay } from '@/lib/injuryRisk'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1096,11 +1097,28 @@ function TradeInboxTab() {
                       {incoming.length === 0 ? (
                         <p className="text-muted-foreground text-xs">No direct incoming players</p>
                       ) : (
-                        incoming.map(({ player }) => (
-                          <p key={player!.id}>
-                            {player!.firstName} {player!.lastName} ({player!.position.primary})
-                          </p>
-                        ))
+                        incoming.map(({ player }) => {
+                          const p = player!
+                          const dur = getDurabilityRating(p)
+                          const risk = getInjuryRiskLevel(p)
+                          const { iconColor } = injuryRiskDisplay(risk)
+                          return (
+                            <div key={p.id} className="flex items-center gap-1.5 text-sm flex-wrap">
+                              <span>{p.firstName} {p.lastName} ({p.position.primary}, {p.age}yo)</span>
+                              <span className={`text-[11px] ${durabilityRatingColor(dur)}`} title="Durability Rating">
+                                Dur:{dur}
+                              </span>
+                              {risk !== 'low' && (
+                                <span className={`text-[11px] ${iconColor}`}>{risk === 'very-high' ? '⚠ High injury risk' : '⚠ Injury risk'}</span>
+                              )}
+                              {p.injury && (
+                                <Badge variant="outline" className="text-[10px] border-red-500/30 bg-red-500/15 text-red-600 px-1">
+                                  {p.injury.type} ({p.injury.weeksRemaining}w)
+                                </Badge>
+                              )}
+                            </div>
+                          )
+                        })
                       )}
                     </div>
                     <div>
@@ -1108,11 +1126,18 @@ function TradeInboxTab() {
                       {outgoing.length === 0 ? (
                         <p className="text-muted-foreground text-xs">No direct outgoing players</p>
                       ) : (
-                        outgoing.map(({ player }) => (
-                          <p key={player!.id}>
-                            {player!.firstName} {player!.lastName} ({player!.position.primary})
-                          </p>
-                        ))
+                        outgoing.map(({ player }) => {
+                          const p = player!
+                          const dur = getDurabilityRating(p)
+                          return (
+                            <div key={p.id} className="flex items-center gap-1.5 text-sm flex-wrap">
+                              <span>{p.firstName} {p.lastName} ({p.position.primary}, {p.age}yo)</span>
+                              <span className={`text-[11px] ${durabilityRatingColor(dur)}`} title="Durability Rating">
+                                Dur:{dur}
+                              </span>
+                            </div>
+                          )
+                        })
                       )}
                     </div>
                   </div>

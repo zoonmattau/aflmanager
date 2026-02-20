@@ -34,6 +34,9 @@ import { ReservesPage } from '@/pages/ReservesPage'
 import { ReservesMatchPreviewPage } from '@/pages/ReservesMatchPreviewPage'
 import { StateLeaguePage } from '@/pages/StateLeaguePage'
 import { BrownlowNightPage } from '@/pages/BrownlowNightPage'
+import { AwardsNightPage } from '@/pages/AwardsNightPage'
+import { AwardsHistoryPage } from '@/pages/AwardsHistoryPage'
+import { WorldHubPage } from '@/pages/WorldHubPage'
 import { PlayerDevelopmentReportPage } from '@/pages/PlayerDevelopmentReportPage'
 import { InjuryReportPage } from '@/pages/InjuryReportPage'
 import { CoachingJobsPage } from '@/pages/CoachingJobsPage'
@@ -116,6 +119,9 @@ function GameRoutes() {
         <Route path="/offseason" element={<OffseasonPage />} />
         <Route path="/expansion" element={<ExpansionPage />} />
         <Route path="/brownlow-night" element={<BrownlowNightPage />} />
+        <Route path="/awards-night" element={<AwardsNightPage />} />
+        <Route path="/awards-history" element={<AwardsHistoryPage />} />
+        <Route path="/world-hub" element={<WorldHubPage />} />
         <Route path="/development-report" element={<PlayerDevelopmentReportPage />} />
         <Route path="/injury-report" element={<InjuryReportPage />} />
         <Route path="/compare" element={<PlayerComparisonPage />} />

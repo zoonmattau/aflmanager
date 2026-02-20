@@ -1,19 +1,30 @@
 import { useMemo, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ArrowLeft, ArrowLeftRight, Heart, Zap, TrendingUp, Shield, AlertTriangle, Trophy, Info } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import type { Player, PlayerJumperPreferenceLevel, PlayerPositionType } from '@/types/player'
+import type { Player, PlayerJumperPreferenceLevel, PlayerPositionType, PlayerTrainingFocus } from '@/types/player'
+import {
+  PLAYER_TRAINING_FOCUS_LABELS,
+  PLAYER_TRAINING_FOCUS_OPTIONS,
+} from '@/engine/players/trainingFocus'
+import { computeProjectionContext } from '@/lib/trainingProjection'
+import { TrainingProjectionPanel } from '@/components/training/TrainingProjectionPanel'
 import { getPlayerEligiblePositionTypes } from '@/engine/player/positionEligibility'
 import { getOverallRating, getPlayerStarRating } from '@/engine/player/playerRating'
 import { PlayerStarRating } from '@/components/player/PlayerStarRating'
 import { getPositionBadgeClass } from '@/lib/positionColor'
 import { ShortlistAssignMenu } from '@/components/shortlists/ShortlistManager'
 import { ATTR_CATEGORIES, attrColor, attrBgColor } from '@/lib/attributeCategories'
+import { matchRatingColorClass } from '@/engine/match/matchRatings'
+import { getPlayerRecentGames } from '@/lib/formGuide'
+import { getTotalGamesMissed, getRecurringBodyRegions, bodyRegionLabel, getInjuryRiskLevel, injuryRiskDisplay } from '@/lib/injuryRisk'
+import { FormDots } from '@/components/player/FormDots'
 
 function moraleLabel(morale: number): string {
   if (morale >= 90) return 'Ecstatic'
@@ -120,6 +131,7 @@ export function PlayerProfilePage() {
   const navigate = useNavigate()
   const players = useGameStore((s) => s.players)
   const clubs = useGameStore((s) => s.clubs)
+  const staff = useGameStore((s) => s.staff)
   const history = useGameStore((s) => s.history)
   const currentYear = useGameStore((s) => s.currentYear)
   const awards = useGameStore((s) => s.awards)
@@ -132,8 +144,11 @@ export function PlayerProfilePage() {
   const setPlayerTradeAvailability = useGameStore((s) => s.setPlayerTradeAvailability)
   const clearPlayerTradeAvailability = useGameStore((s) => s.clearPlayerTradeAvailability)
   const delistPlayerOffseason = useGameStore((s) => s.delistPlayerOffseason)
+  const matchResults = useGameStore((s) => s.matchResults)
   const [actionError, setActionError] = useState<string | null>(null)
   const [actionSuccess, setActionSuccess] = useState<string | null>(null)
+  const [previewFocus, setPreviewFocus] = useState<PlayerTrainingFocus | null | '__current__'>('__current__')
+  const setPlayerTrainingFocus = useGameStore((s) => s.setPlayerTrainingFocus)
 
   const playerId = useMemo(() => {
     const candidates = [
@@ -156,6 +171,13 @@ export function PlayerProfilePage() {
 
   const hasAnyPlayers = useMemo(() => Object.keys(players).length > 0, [players])
   const player = playerId ? players[playerId] : null
+
+  // Last 10 games for this player
+  const recentGames = useMemo(
+    () => (playerId ? getPlayerRecentGames(playerId, matchResults, 10) : []),
+    [playerId, matchResults],
+  )
+
 
   // Find draft info from history
   const draftInfo = useMemo(() => {
@@ -262,6 +284,14 @@ export function PlayerProfilePage() {
   const jumperHistory = [...player.jumperHistory].sort((a, b) => b.year - a.year)
   const isUserClubPlayer = player.clubId === playerClubId
   const tradeListing = tradeBlock.listings[player.id]
+
+  // Projection context (coaching + facilities for the player's club)
+  const projCtx = useMemo(() => {
+    const playerClub = clubs[player.clubId]
+    if (!playerClub) return null
+    const clubStaff = Object.values(staff).filter((s) => s.clubId === player.clubId)
+    return computeProjectionContext(playerClub, clubStaff)
+  }, [clubs, staff, player.clubId])
   const inDelistingsPhase = phase === 'offseason' && offseasonState?.currentPhase === 'delistings'
 
   function setSuccess(message: string) {
@@ -416,6 +446,57 @@ export function PlayerProfilePage() {
         )}
       </div>
 
+      {/* ── Injury History Summary ───────────────────────────────────────── */}
+      {(player.injuryHistory?.length ?? 0) > 0 && (() => {
+        const totalMissed = getTotalGamesMissed(player)
+        const recurringRegions = getRecurringBodyRegions(player)
+        const riskLevel = getInjuryRiskLevel(player)
+        const { label: riskLabel, bgClass } = injuryRiskDisplay(riskLevel)
+        const recent = [...(player.injuryHistory ?? [])].reverse().slice(0, 5)
+        return (
+          <Card>
+            <CardContent className="py-3 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-semibold">Injury History</p>
+                <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-medium ${bgClass}`}>
+                  {riskLabel}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {player.injuryHistory!.length} career injur{player.injuryHistory!.length === 1 ? 'y' : 'ies'}
+                  {totalMissed > 0 && ` · ${totalMissed} game${totalMissed !== 1 ? 's' : ''} missed`}
+                </span>
+              </div>
+
+              {recurringRegions.length > 0 && (
+                <div className="flex items-center gap-1.5 text-xs text-amber-600">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  <span>Recurring {recurringRegions.map(bodyRegionLabel).join(' & ')} issues</span>
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-1.5">
+                {recent.map((h, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center gap-1 rounded border border-border/50 bg-muted/30 px-2 py-0.5 text-[11px]"
+                  >
+                    <span className="font-medium">{h.type}</span>
+                    <span className="text-muted-foreground capitalize">{h.severity}</span>
+                    <span className="text-muted-foreground">{h.initialWeeks}w</span>
+                    {(h.gamesMissed ?? 0) > 0 && (
+                      <span className="text-muted-foreground">{h.gamesMissed} gm</span>
+                    )}
+                    {h.recurring && (
+                      <span className="text-amber-600 font-semibold">↩</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )
+      })()}
+
       <Card>
         <CardHeader className="py-3">
           <CardTitle className="text-sm">Profile Actions</CardTitle>
@@ -479,9 +560,10 @@ export function PlayerProfilePage() {
       </Card>
 
       <Tabs defaultValue="stats" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-2 md:grid-cols-6">
+        <TabsList className="grid w-full grid-cols-2 md:grid-cols-7">
           <TabsTrigger value="stats">Stats</TabsTrigger>
           <TabsTrigger value="ratings">Ratings</TabsTrigger>
+          <TabsTrigger value="development">Development</TabsTrigger>
           <TabsTrigger value="contract">Contract</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
           <TabsTrigger value="awards">Awards</TabsTrigger>
@@ -489,6 +571,69 @@ export function PlayerProfilePage() {
         </TabsList>
 
         <TabsContent value="stats" className="space-y-4">
+          {/* Last 10 games table */}
+          {recentGames.length > 0 && (
+            <Card>
+              <CardHeader className="py-3">
+                <CardTitle className="text-sm flex items-center gap-3">
+                  Last {recentGames.length} Games
+                  <FormDots ratings={player.matchRatingHistory} />
+                  {player.lastMatchRating !== undefined && (
+                    <span className={`text-base font-mono font-bold tabular-nums ${matchRatingColorClass(player.lastMatchRating)}`}>
+                      {player.lastMatchRating.toFixed(1)}
+                    </span>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-xs space-y-0">
+                  <div className="grid grid-cols-[3.5rem_3.5rem_2rem_3rem_2.5rem_2.5rem_2.5rem_2.5rem_2.5rem_3rem] gap-x-2 text-muted-foreground font-medium pb-1 border-b border-border/50">
+                    <span>Round</span>
+                    <span>Opp</span>
+                    <span></span>
+                    <span className="text-right">Disp</span>
+                    <span className="text-right">G</span>
+                    <span className="text-right">M</span>
+                    <span className="text-right">T</span>
+                    <span className="text-right">HO</span>
+                    <span className="text-right">CL</span>
+                    <span className="text-right">Rating</span>
+                  </div>
+                  {recentGames.map((g) => {
+                    const opp = clubs[g.opponentClubId]
+                    const rating = g.stats.matchRating
+                    return (
+                      <div
+                        key={g.matchId}
+                        className="grid grid-cols-[3.5rem_3.5rem_2rem_3rem_2.5rem_2.5rem_2.5rem_2.5rem_2.5rem_3rem] gap-x-2 items-center py-1 border-b border-border/30 last:border-0 hover:bg-muted/30"
+                      >
+                        <span className="text-muted-foreground">
+                          {g.isFinal ? 'Final' : `Rd ${g.round + 1}`}
+                        </span>
+                        <span className="font-medium truncate">{opp?.abbreviation ?? '???'}</span>
+                        <span>
+                          {g.won === true
+                            ? <span className="font-bold text-green-500">W</span>
+                            : g.won === false
+                              ? <span className="font-bold text-red-500">L</span>
+                              : <span className="font-bold text-zinc-500">D</span>}
+                        </span>
+                        <span className="text-right tabular-nums font-mono">{g.stats.disposals}</span>
+                        <span className="text-right tabular-nums font-mono">{g.stats.goals}</span>
+                        <span className="text-right tabular-nums font-mono">{g.stats.marks}</span>
+                        <span className="text-right tabular-nums font-mono">{g.stats.tackles}</span>
+                        <span className="text-right tabular-nums font-mono">{g.stats.hitouts}</span>
+                        <span className="text-right tabular-nums font-mono">{g.stats.clearances}</span>
+                        <span className={`text-right tabular-nums font-mono font-bold ${matchRatingColorClass(rating)}`}>
+                          {rating !== undefined ? rating.toFixed(1) : '—'}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
           <div className="grid gap-4 md:grid-cols-2">
             <Card>
               <CardHeader className="py-3">
@@ -540,6 +685,112 @@ export function PlayerProfilePage() {
               </Card>
             ))}
           </div>
+        </TabsContent>
+
+        <TabsContent value="development" className="space-y-4">
+          {projCtx ? (
+            <div className="grid gap-4 md:grid-cols-2">
+              {/* Focus selector */}
+              <Card>
+                <CardHeader className="py-3">
+                  <CardTitle className="text-sm">Development Focus</CardTitle>
+                  <CardDescription className="text-xs">
+                    {isUserClubPlayer
+                      ? 'Assign a focus to prioritise growth in specific skill areas.'
+                      : 'Preview what this player\'s development would look like under different focuses.'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-muted-foreground font-medium">
+                      {isUserClubPlayer ? 'Assigned Focus' : 'Preview Focus'}
+                    </label>
+                    {isUserClubPlayer ? (
+                      <Select
+                        value={player.trainingFocus ?? '__none__'}
+                        onValueChange={(v) => {
+                          const nextFocus = v === '__none__' ? null : (v as PlayerTrainingFocus)
+                          setPlayerTrainingFocus(player.id, nextFocus)
+                        }}
+                      >
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="Select focus..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">No assigned focus</SelectItem>
+                          {PLAYER_TRAINING_FOCUS_OPTIONS.map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {PLAYER_TRAINING_FOCUS_LABELS[option]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Select
+                        value={
+                          previewFocus === '__current__'
+                            ? (player.trainingFocus ?? '__none__')
+                            : (previewFocus ?? '__none__')
+                        }
+                        onValueChange={(v) => {
+                          setPreviewFocus(v === '__none__' ? null : (v as PlayerTrainingFocus))
+                        }}
+                      >
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="Select focus to preview..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">No focus</SelectItem>
+                          {PLAYER_TRAINING_FOCUS_OPTIONS.map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {PLAYER_TRAINING_FOCUS_LABELS[option]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+
+                  {/* Current focus badge */}
+                  {player.trainingFocus && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Current:</span>
+                      <Badge className="bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30 text-xs">
+                        {PLAYER_TRAINING_FOCUS_LABELS[player.trainingFocus]}
+                      </Badge>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Projection panel */}
+              <Card>
+                <CardHeader className="py-3">
+                  <CardTitle className="text-sm">Offseason Projection</CardTitle>
+                  <CardDescription className="text-xs">
+                    Expected attribute changes after one offseason cycle.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <TrainingProjectionPanel
+                    player={player}
+                    selectedFocus={
+                      isUserClubPlayer
+                        ? (player.trainingFocus ?? null)
+                        : (previewFocus === '__current__' ? (player.trainingFocus ?? null) : previewFocus)
+                    }
+                    ctx={projCtx}
+                  />
+                </CardContent>
+              </Card>
+            </div>
+          ) : (
+            <Card>
+              <CardContent className="py-6 text-center text-muted-foreground text-sm">
+                Development projection unavailable — club data not found.
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         <TabsContent value="contract">
@@ -921,7 +1172,7 @@ function StatsTable({
     return <p className="text-sm text-muted-foreground">No stats recorded.</p>
   }
 
-  const rows: { code: string; label: string; desc: string; total: number; avg: number | null }[] = [
+  const rows: { code: string; label: string; desc: string; total: number; avg: number | null; formatTotal?: (v: number) => string }[] = [
     { code: 'GP', label: 'Games Played', desc: 'Matches played.', total: gamesPlayed, avg: null },
     { code: 'AF', label: 'AFL Fantasy', desc: 'AFL Fantasy points total.', total: stats.aflFantasyPoints, avg: stats.aflFantasyPoints / gamesPlayed },
     { code: 'SC', label: 'SuperCoach', desc: 'SuperCoach-style points total.', total: stats.superCoachPoints, avg: stats.superCoachPoints / gamesPlayed },
@@ -930,6 +1181,14 @@ function StatsTable({
     { code: 'D', label: 'Disposals', desc: 'Kicks + handballs.', total: stats.disposals, avg: stats.disposals / gamesPlayed },
     { code: 'K', label: 'Kicks', desc: 'Total kicks.', total: stats.kicks, avg: stats.kicks / gamesPlayed },
     { code: 'HB', label: 'Handballs', desc: 'Total handballs.', total: stats.handballs, avg: stats.handballs / gamesPlayed },
+    {
+      code: 'K:H',
+      label: 'K:H Ratio',
+      desc: 'Kicks per handball — higher means more kick-dominant style. Season average.',
+      total: stats.handballs > 0 ? stats.kicks / stats.handballs : 0,
+      avg: null,
+      formatTotal: (v: number) => stats.handballs > 0 ? `${v.toFixed(1)}:1` : '-',
+    },
     { code: 'M', label: 'Marks', desc: 'Total marks.', total: stats.marks, avg: stats.marks / gamesPlayed },
     { code: 'CM', label: 'Contested Marks', desc: 'Marks taken under physical pressure.', total: stats.contestedMarks, avg: stats.contestedMarks / gamesPlayed },
     { code: 'T', label: 'Tackles', desc: 'Successful tackles.', total: stats.tackles, avg: stats.tackles / gamesPlayed },
@@ -989,7 +1248,9 @@ function StatsTable({
                 <TooltipContent side="right">{r.desc}</TooltipContent>
               </Tooltip>
             </span>
-            <span className="w-14 text-right font-mono">{r.total}</span>
+            <span className="w-14 text-right font-mono">
+              {r.formatTotal ? r.formatTotal(r.total) : r.total}
+            </span>
             <span className="w-14 text-right font-mono text-muted-foreground">
               {r.avg !== null ? r.avg.toFixed(1) : '-'}
             </span>

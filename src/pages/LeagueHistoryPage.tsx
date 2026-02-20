@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { h2hKey, h2hPerspective } from '@/engine/history/h2hTracker'
 import { Link } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -35,6 +36,7 @@ const FINALS_LABELS: Record<string, string> = {
 export function LeagueHistoryPage() {
   const history = useGameStore((s) => s.history)
   const clubs = useGameStore((s) => s.clubs)
+  const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
   const players = useGameStore((s) => s.players)
   const tradeHistory = useGameStore((s) => s.tradeHistory)
 
@@ -82,6 +84,7 @@ export function LeagueHistoryPage() {
           <TabsTrigger value="trades">Trades</TabsTrigger>
           <TabsTrigger value="awards">Awards</TabsTrigger>
           <TabsTrigger value="reports">Reports</TabsTrigger>
+          <TabsTrigger value="h2h">H2H</TabsTrigger>
         </TabsList>
 
         <TabsContent value="premiers">
@@ -104,6 +107,9 @@ export function LeagueHistoryPage() {
         </TabsContent>
         <TabsContent value="reports">
           <ReportsTab years={reportYears} />
+        </TabsContent>
+        <TabsContent value="h2h">
+          <H2HTab h2hRecords={h2hRecords} clubs={clubs} />
         </TabsContent>
       </Tabs>
       {selectedReport && (
@@ -679,6 +685,77 @@ export function LeagueHistoryPage() {
       </Card>
     )
   }
+}
+
+// ---------- H2H Tab ----------
+
+function H2HTab({
+  h2hRecords,
+  clubs,
+}: {
+  h2hRecords: Record<string, import('@/types/history').H2HRecord>
+  clubs: Record<string, import('@/types/club').Club>
+}) {
+  const sortedClubs = useMemo(
+    () => Object.values(clubs).sort((a, b) => a.name.localeCompare(b.name)),
+    [clubs],
+  )
+
+  if (sortedClubs.length === 0) {
+    return <EmptyState message="No club data available." />
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold">Head-to-Head Matrix</h2>
+        <p className="text-sm text-muted-foreground">All-time W-L record between every pair of clubs (row club vs column club).</p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-[11px]">
+          <thead>
+            <tr>
+              <th className="w-20 p-1 text-left text-muted-foreground"></th>
+              {sortedClubs.map((c) => (
+                <th key={c.id} className="p-1 text-center font-medium" title={c.name}>
+                  <span className="inline-block w-8 truncate">{c.abbreviation}</span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sortedClubs.map((rowClub) => (
+              <tr key={rowClub.id} className="border-t">
+                <td className="p-1 font-medium text-muted-foreground whitespace-nowrap">{rowClub.abbreviation}</td>
+                {sortedClubs.map((colClub) => {
+                  if (rowClub.id === colClub.id) {
+                    return <td key={colClub.id} className="p-1 text-center bg-muted/30">—</td>
+                  }
+                  const key = h2hKey(rowClub.id, colClub.id)
+                  const record = h2hRecords[key]
+                  if (!record) {
+                    return <td key={colClub.id} className="p-1 text-center text-muted-foreground">-</td>
+                  }
+                  const pov = h2hPerspective(record, rowClub.id)
+                  const color = pov.wins > pov.losses
+                    ? 'text-green-600 font-semibold'
+                    : pov.losses > pov.wins
+                      ? 'text-red-600'
+                      : 'text-muted-foreground'
+                  return (
+                    <td key={colClub.id} className="p-1 text-center" title={colClub.name + ': ' + pov.wins + 'W ' + pov.draws + 'D ' + pov.losses + 'L'}>
+                      <span className={color}>{pov.wins}-{pov.losses}</span>
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-muted-foreground">Format: W-L (wins-losses) from the row club's perspective. Hover for full W-D-L breakdown.</p>
+    </div>
+  )
 }
 
 // ---------- Shared Components ----------

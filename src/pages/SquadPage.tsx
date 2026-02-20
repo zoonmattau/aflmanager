@@ -46,11 +46,10 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AlertTriangle, ArrowUpDown, Shield } from 'lucide-react'
 import { PlayerStarRating } from '@/components/player/PlayerStarRating'
 import { getPositionBadgeClass, getPositionFilterButtonClass } from '@/lib/positionColor'
-import { calcDisposalEfficiency, calcKickingAccuracy, calcContestedPossessionPct, fmtPct } from '@/lib/efficiencyStats'
+import { calcDisposalEfficiency, calcKickingAccuracy, calcContestedPossessionPct, calcKickToHandballRatio, fmtPct, fmtKHRatio } from '@/lib/efficiencyStats'
+import { getInjuryRiskLevel, injuryRiskDisplay } from '@/lib/injuryRisk'
 import { matchRatingColorClass } from '@/engine/match/matchRatings'
 import { ClubBFLeaderboardWidget } from '@/components/squad/ClubBFLeaderboardWidget'
-import type { PositionGroupBenchmark, PositionGroupKey } from '@/types/game'
-import { getPositionGroup } from '@/engine/benchmarks/positionBenchmarks'
 
 const columnHelper = createColumnHelper<Player>()
 
@@ -152,8 +151,6 @@ function buildColumns(
   view: SquadView,
   reservesStatsByPlayer: Record<string, { gamesPlayed: number }>,
   statsDisplayMode: 'totals' | 'averages',
-  vsAvgMode: boolean,
-  benchmarks: Record<PositionGroupKey, PositionGroupBenchmark> | undefined,
   assignment?: {
     enabled: boolean
     getAssignedSlot: (playerId: string) => AssignmentSlot | null
@@ -343,6 +340,15 @@ function buildColumns(
         },
         size: avg ? 72 : 64,
       }),
+      columnHelper.accessor((row) => calcKickToHandballRatio(row.seasonStats.kicks, row.seasonStats.handballs) ?? 0, {
+        id: 'kh_ratio',
+        header: 'K:H',
+        cell: (i) => {
+          const p = i.row.original
+          return <span className="text-xs tabular-nums">{fmtKHRatio(calcKickToHandballRatio(p.seasonStats.kicks, p.seasonStats.handballs))}</span>
+        },
+        size: 60,
+      }),
       columnHelper.accessor((row) => avg ? (row.seasonStats.gamesPlayed > 0 ? row.seasonStats.tackles / row.seasonStats.gamesPlayed : 0) : row.seasonStats.tackles, {
         id: 'tack_ctx',
         header: avg ? 'Tck/G' : 'Tackles',
@@ -485,6 +491,27 @@ function buildColumns(
     }),
     columnHelper.accessor('form', { header: 'Form', cell: (i) => <span className={attrColor(i.getValue())}>{i.getValue()}</span>, size: 58 }),
     columnHelper.accessor('morale', { header: 'Morale', cell: (i) => <span className={attrColor(i.getValue())}>{i.getValue()}</span>, size: 62 }),
+    columnHelper.accessor((row) => getInjuryRiskLevel(row), {
+      id: 'inj_risk',
+      header: 'Inj Risk',
+      cell: (i) => {
+        const level = i.getValue()
+        const { label, iconColor } = injuryRiskDisplay(level)
+        const p = i.row.original
+        const count = p.injuryHistory?.length ?? 0
+        const proneness = p.hiddenAttributes.injuryProneness
+        return (
+          <span
+            title={`${label} · Proneness ${proneness} · ${count} career injur${count === 1 ? 'y' : 'ies'}`}
+            className="flex items-center gap-1"
+          >
+            <Shield className={`h-3.5 w-3.5 ${iconColor}`} />
+            <span className={`text-[10px] ${iconColor}`}>{label.split(' ')[0]}</span>
+          </span>
+        )
+      },
+      size: 90,
+    }),
     ...status,
   ]
 }

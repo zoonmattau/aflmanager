@@ -950,6 +950,7 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
     homeCaptainPresent, awayCaptainPresent,
     possessionsBase, pointsPerGoal, pointsPerBehind,
     suspensionStrictness, positionOverrides,
+    resolvedHomeGameplan, resolvedAwayGameplan,
   } = ctx
   const { homeClubId, awayClubId, isFinal } = input
 
@@ -983,6 +984,7 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
     const defendingPlayers = homeWins ? awayPlayers : homePlayers
     const attMods = homeWins ? homeMods : awayMods
     const defMods = homeWins ? awayMods : homeMods
+    const attackingGameplan = homeWins ? resolvedHomeGameplan : resolvedAwayGameplan
     const matchupInside50Mult = homeWins ? matchup.homeInside50Mult : matchup.awayInside50Mult
     const matchupAccuracyMult = homeWins ? matchup.homeAccuracyMult : matchup.awayAccuracyMult
     const matchupMarkMult = homeWins ? matchup.homeMarkMult : matchup.awayMarkMult
@@ -1021,7 +1023,9 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
     const roughPenalty = tacticalFocus?.roughPressure ?? 0
     const pressurePenalty = tagPenalty + roughPenalty * 0.6
 
-    const isKick = rng.chance(0.55)
+    const targetKH = attackingGameplan.targetKHRatio ?? 1.5
+    const kickProbFromTarget = targetKH / (targetKH + 1)
+    const isKick = rng.chance(Math.max(0.30, Math.min(0.80, kickProbFromTarget)))
     if (isKick) {
       attackingStats[primaryStatIndex].kicks++
     } else {

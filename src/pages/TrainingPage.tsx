@@ -5,13 +5,15 @@ import type { StaffMember } from '@/types/staff'
 import type { TrainingGroup, TrainingWeekPlan } from '@/engine/training/trainingEngine'
 import { getDefaultTrainingWeekPlan } from '@/engine/training/trainingEngine'
 import {
-  PLAYER_TRAINING_FOCUS_ATTRIBUTES,
   PLAYER_TRAINING_FOCUS_LABELS,
   PLAYER_TRAINING_FOCUS_OPTIONS,
 } from '@/engine/players/trainingFocus'
 import { addDays } from '@/engine/calendar/calendarEngine'
 import { getTrainingInjuryRisk } from '@/engine/players/trainingInjuries'
 import { getMedicalStaffImpact } from '@/engine/staff/staffEngine'
+import { computeProjectionContext } from '@/lib/trainingProjection'
+import { TrainingProjectionPanel } from '@/components/training/TrainingProjectionPanel'
+import type { Club } from '@/types/club'
 import { WeekPlannerGrid } from '@/components/training/WeekPlannerGrid'
 import { WeekLoadSummary } from '@/components/training/WeekLoadSummary'
 import { EnhancedSquadFitness } from '@/components/training/EnhancedSquadFitness'
@@ -91,36 +93,6 @@ function fitnessColor(val: number): string {
   return 'text-red-600 dark:text-red-400'
 }
 
-const FOCUS_ATTR_LABELS: Record<string, string> = {
-  endurance: 'End',
-  recovery: 'Rec',
-  workRate: 'Work',
-  acceleration: 'Acc',
-  strength: 'Str',
-  hardness: 'Hard',
-  oneOnOne: '1v1',
-  tackling: 'Tackle',
-  kickingEfficiency: 'Kick Eff',
-  kickingDistance: 'Kick Dist',
-  setShot: 'Set Shot',
-  dropPunt: 'Drop Punt',
-  snap: 'Snap',
-  fieldKicking: 'Field Kick',
-  contested: 'Cont Ball',
-  clearance: 'Clear',
-  groundBallGet: 'Ground Ball',
-  markingOverhead: 'Overhead',
-  markingLeading: 'Lead Mark',
-  markingContested: 'Cont Mark',
-  markingUncontested: 'Uncont Mark',
-  pressure: 'Pressure',
-  hitouts: 'Hitouts',
-  ruckCreative: 'Ruck Craft',
-  followUp: 'Follow-up',
-  centreBounce: 'Centre',
-  boundaryThrowIn: 'Throw-in',
-  stoppage: 'Stoppage',
-}
 
 const POSITION_LABELS: Record<PlayerPositionType, string> = {
   BP: 'Back Pocket',
@@ -475,9 +447,18 @@ function UpskillingTab({ clubPlayers }: { clubPlayers: Player[] }) {
   )
 }
 
-function PlayerFocusTab({ clubPlayers }: { clubPlayers: Player[] }) {
+function PlayerFocusTab({
+  clubPlayers,
+  club,
+  clubStaff,
+}: {
+  clubPlayers: Player[]
+  club: Club
+  clubStaff: Record<string, StaffMember>
+}) {
   const setPlayerTrainingFocus = useGameStore((s) => s.setPlayerTrainingFocus)
   const [error, setError] = useState<string | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const sortedPlayers = useMemo(
     () => [...clubPlayers].sort((a, b) => {
@@ -485,6 +466,11 @@ function PlayerFocusTab({ clubPlayers }: { clubPlayers: Player[] }) {
       return a.lastName.localeCompare(b.lastName)
     }),
     [clubPlayers],
+  )
+
+  const projCtx = useMemo(
+    () => computeProjectionContext(club, Object.values(clubStaff)),
+    [club, clubStaff],
   )
 
   const handleFocusChange = useCallback((playerId: string, value: string) => {
@@ -504,23 +490,21 @@ function PlayerFocusTab({ clubPlayers }: { clubPlayers: Player[] }) {
           <CardTitle className="text-base">Player Development Focus</CardTitle>
           <CardDescription>
             Assign one focus per player. Focused attributes gain faster in weekly training and offseason growth.
+            Click "Show Projection" on any player to preview expected attribute changes.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-muted-foreground">
-            Available focuses: Endurance, Strength, Kicking, Contested Ball, Marking, Tackling, Ruck Craft.
-          </p>
-          {error ? <p className="text-xs text-red-500 mt-2">{error}</p> : null}
+          {error ? <p className="text-xs text-red-500">{error}</p> : null}
         </CardContent>
       </Card>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {sortedPlayers.map((player) => {
           const focus = player.trainingFocus ?? null
-          const focusAttrs = focus ? PLAYER_TRAINING_FOCUS_ATTRIBUTES[focus] : []
+          const isExpanded = expandedId === player.id
 
           return (
-            <Card key={player.id}>
+            <Card key={player.id} className={cn(isExpanded && 'ring-1 ring-primary/30')}>
               <CardContent className="pt-4 space-y-3">
                 <div className="flex items-start justify-between gap-2">
                   <div>
@@ -561,17 +545,24 @@ function PlayerFocusTab({ clubPlayers }: { clubPlayers: Player[] }) {
                   </Select>
                 </div>
 
-                <div className="flex flex-wrap gap-1.5">
-                  {focusAttrs.length === 0 ? (
-                    <span className="text-[10px] text-muted-foreground">No focus bonus applied.</span>
-                  ) : (
-                    focusAttrs.map((attr) => (
-                      <Badge key={attr} variant="secondary" className="text-[10px]">
-                        {FOCUS_ATTR_LABELS[attr] ?? attr}
-                      </Badge>
-                    ))
-                  )}
-                </div>
+                <Button
+                  variant={isExpanded ? 'secondary' : 'outline'}
+                  size="sm"
+                  className="h-7 text-xs w-full"
+                  onClick={() => setExpandedId(isExpanded ? null : player.id)}
+                >
+                  {isExpanded ? 'Hide Projection' : 'Show Projection'}
+                </Button>
+
+                {isExpanded && (
+                  <div className="border-t border-border/40 pt-3">
+                    <TrainingProjectionPanel
+                      player={player}
+                      selectedFocus={focus}
+                      ctx={projCtx}
+                    />
+                  </div>
+                )}
               </CardContent>
             </Card>
           )
@@ -813,7 +804,7 @@ export function TrainingPage() {
         </TabsContent>
 
         <TabsContent value="focus">
-          <PlayerFocusTab clubPlayers={clubPlayers} />
+          <PlayerFocusTab clubPlayers={clubPlayers} club={club} clubStaff={clubStaff} />
         </TabsContent>
 
         <TabsContent value="injury-risk">

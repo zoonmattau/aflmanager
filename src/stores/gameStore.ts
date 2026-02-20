@@ -56,6 +56,7 @@ import {
   refreshRecordsBookLeaderboards,
   updateRecordsBookForMatches,
 } from '@/engine/history/recordsBook'
+import { buildH2HFromMatchReports } from '@/engine/history/h2hTracker'
 import { getFinalsFormatById } from '@/engine/season/finalsFormats'
 import { applyInjuryEvent, rollMatchInjuries, healInjuries } from '@/engine/players/injuries'
 import {
@@ -93,6 +94,7 @@ import {
   detectCareerMilestones,
 } from '@/engine/awards/awardsEngine'
 import { awardClubBFVotes } from '@/engine/awards/clubBFEngine'
+import { computeMatchRatings } from '@/engine/match/matchRatings'
 import { addDays, buildSeasonCalendar, computeDefaultGameStartDate, getYear } from '@/engine/calendar/calendarEngine'
 import {
   initializeStateLeagues,
@@ -785,6 +787,7 @@ const DEFAULT_HISTORY: GameHistory = {
   seasonArchives: [],
   matchReports: [],
   financialHistory: [],
+  h2hRecords: {},
 }
 
 const DEFAULT_META: GameMeta = {
@@ -5989,16 +5992,22 @@ export const useGameStore = create<GameStore>()(
               stateLeagueContractTargetCount: previousStateLeagueContractTargetCount,
             }
             s.clubs = ledgered
-            // Reset season finance tracking for all clubs
+            // Reset season finance tracking for all clubs.
+            // Replace the whole finances object so Immer handles the write at the club-draft
+            // level — avoids "object is not extensible" when finances came from a frozen
+            // prior-state object via ensureDraftPickLedger's shallow club spread.
             for (const club of Object.values(s.clubs)) {
-              club.finances.matchDayAccumulated = 0
-              club.finances.broadcastAccumulated = 0
-              club.finances.finalsRevenueAccumulated = 0
-              club.finances.specialEventsAccumulated = 0
-              club.finances.momentumModifier = 0
-              club.finances.seasonRevenue = undefined
-              club.finances.seasonExpenses = undefined
-              club.finances.seasonPnL = undefined
+              club.finances = {
+                ...club.finances,
+                matchDayAccumulated: 0,
+                broadcastAccumulated: 0,
+                finalsRevenueAccumulated: 0,
+                specialEventsAccumulated: 0,
+                momentumModifier: 0,
+                seasonRevenue: undefined,
+                seasonExpenses: undefined,
+                seasonPnL: undefined,
+              }
             }
             // Advance inflation index for the new season
             {
@@ -7863,6 +7872,7 @@ export const useGameStore = create<GameStore>()(
             currentYear: s.currentYear,
             history: s.history,
           })
+          s.history.h2hRecords = buildH2HFromMatchReports(s.history.matchReports)
         })
 
         // Update ladder with settings-driven points
@@ -8380,10 +8390,27 @@ export const useGameStore = create<GameStore>()(
             }
           }
 
-          // Award Brownlow and Club B&F votes for each match
+          // Award Brownlow/B&F votes and compute match ratings for each match
+          const playerMap = new Map(Object.entries(s.players))
           for (const m of result.matches) {
             if (!m.result) continue
             const allPlayerStats = [...m.result.homePlayerStats, ...m.result.awayPlayerStats]
+            // Compute FM-style match ratings and stamp onto stats
+            const ratings = computeMatchRatings(allPlayerStats, playerMap)
+            for (const statList of [m.result.homePlayerStats, m.result.awayPlayerStats]) {
+              for (const ps of statList) {
+                const r = ratings.get(ps.playerId)
+                if (r !== undefined) {
+                  ps.matchRating = r
+                  const player = s.players[ps.playerId]
+                  if (player) {
+                    if (!player.matchRatingHistory) player.matchRatingHistory = []
+                    player.matchRatingHistory.push(r)
+                    if (player.matchRatingHistory.length > 23) player.matchRatingHistory.shift()
+                  }
+                }
+              }
+            }
             const brownlowRound = awardBrownlowVotes(m.id, s.currentRound, allPlayerStats)
             s.brownlowTracker.push(brownlowRound)
             const bfRounds = awardClubBFVotes(m.id, s.currentRound, allPlayerStats, s.players)
@@ -8942,6 +8969,7 @@ export const useGameStore = create<GameStore>()(
               currentYear: s.currentYear,
               history: s.history,
             })
+            s.history.h2hRecords = buildH2HFromMatchReports(s.history.matchReports)
             s.meta.lastSaved = new Date().toISOString()
           })
 
@@ -10292,6 +10320,7 @@ export const useGameStore = create<GameStore>()(
             currentYear: merged.currentYear ?? 2026,
             history,
           })
+          history.h2hRecords = buildH2HFromMatchReports(history.matchReports ?? [])
         }
 
         if (merged.newsLog) {
