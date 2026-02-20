@@ -32,6 +32,8 @@ const ROLE_DISPLAY_NAMES: Record<StaffRole, string> = {
   physio: 'Physio',
   doctor: 'Doctor',
   'reserves-coach': 'Reserves Coach',
+  'reserves-fitness-coach': 'Reserves Fitness Coach',
+  'reserves-development-coach': 'Reserves Dev Coach',
 }
 
 const RATING_LABELS: Record<keyof StaffRatings, string> = {

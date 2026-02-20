@@ -247,6 +247,12 @@ function getRoleParams(role: StaffRole): {
 
     case 'reserves-coach':
       return { ratingMin: 35, ratingMax: 70, salaryMin: 80_000, salaryMax: 200_000 }
+
+    case 'reserves-fitness-coach':
+      return { ratingMin: 30, ratingMax: 65, salaryMin: 60_000, salaryMax: 180_000, specialtyOverrides: { fitness: { min: 55, max: 85 } } }
+
+    case 'reserves-development-coach':
+      return { ratingMin: 30, ratingMax: 65, salaryMin: 60_000, salaryMax: 180_000, specialtyOverrides: { development: { min: 55, max: 85 } } }
   }
 }
 

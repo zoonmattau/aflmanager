@@ -47,6 +47,8 @@ const ROLE_DISPLAY_NAMES: Record<StaffRole, string> = {
   physio: 'Physio',
   doctor: 'Doctor',
   'reserves-coach': 'Reserves Coach',
+  'reserves-fitness-coach': 'Reserves Fitness Coach',
+  'reserves-development-coach': 'Reserves Dev Coach',
 }
 
 /** All coaching positions in display order (assistant-coach appears 3 times) */
@@ -424,6 +426,8 @@ export function StaffPage() {
       physio: [],
       doctor: [],
       'reserves-coach': [],
+      'reserves-fitness-coach': [],
+      'reserves-development-coach': [],
     }
     for (const s of clubStaff) {
       roleStaffMap[s.role].push(s)

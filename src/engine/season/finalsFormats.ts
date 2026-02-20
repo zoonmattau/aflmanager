@@ -111,6 +111,125 @@ const aflTop8: FinalsFormat = {
   ],
 }
 
+// ── AFL Top 10 (wildcard weekend system) ────────────────────────────────────
+
+const aflTop10: FinalsFormat = {
+  id: 'afl-top-10',
+  name: 'AFL Top 10',
+  description: 'New AFL top 10 finals system. Wildcard weekend (7v10, 8v9), then qualifying finals for top 4 (double chance) and elimination finals for 5th and 6th, followed by semis, prelims, and grand final.',
+  qualifyingTeams: 10,
+  grandFinalVenue: 'MCG',
+  weeks: [
+    {
+      weekNumber: 1,
+      label: 'Wildcard Weekend',
+      matchups: [
+        {
+          label: 'WC1',
+          finalType: 'EF',
+          home: { type: 'ladder', rank: 7 },
+          away: { type: 'ladder', rank: 10 },
+          isElimination: true,
+        },
+        {
+          label: 'WC2',
+          finalType: 'EF',
+          home: { type: 'ladder', rank: 8 },
+          away: { type: 'ladder', rank: 9 },
+          isElimination: true,
+        },
+      ],
+    },
+    {
+      weekNumber: 2,
+      label: 'Qualifying & Elimination Finals',
+      matchups: [
+        {
+          label: 'QF1',
+          finalType: 'QF',
+          home: { type: 'ladder', rank: 1 },
+          away: { type: 'ladder', rank: 2 },
+          isElimination: false,
+        },
+        {
+          label: 'QF2',
+          finalType: 'QF',
+          home: { type: 'ladder', rank: 3 },
+          away: { type: 'ladder', rank: 4 },
+          isElimination: false,
+        },
+        {
+          label: 'EF1',
+          finalType: 'EF',
+          home: { type: 'ladder', rank: 5 },
+          away: { type: 'result', weekRef: 1, matchRef: 0, outcome: 'winner' },
+          isElimination: true,
+        },
+        {
+          label: 'EF2',
+          finalType: 'EF',
+          home: { type: 'ladder', rank: 6 },
+          away: { type: 'result', weekRef: 1, matchRef: 1, outcome: 'winner' },
+          isElimination: true,
+        },
+      ],
+    },
+    {
+      weekNumber: 3,
+      label: 'Semi Finals',
+      matchups: [
+        {
+          label: 'SF1',
+          finalType: 'SF',
+          home: { type: 'result', weekRef: 2, matchRef: 0, outcome: 'loser' },
+          away: { type: 'result', weekRef: 2, matchRef: 2, outcome: 'winner' },
+          isElimination: true,
+        },
+        {
+          label: 'SF2',
+          finalType: 'SF',
+          home: { type: 'result', weekRef: 2, matchRef: 1, outcome: 'loser' },
+          away: { type: 'result', weekRef: 2, matchRef: 3, outcome: 'winner' },
+          isElimination: true,
+        },
+      ],
+    },
+    {
+      weekNumber: 4,
+      label: 'Preliminary Finals',
+      matchups: [
+        {
+          label: 'PF1',
+          finalType: 'PF',
+          home: { type: 'result', weekRef: 2, matchRef: 0, outcome: 'winner' },
+          away: { type: 'result', weekRef: 3, matchRef: 0, outcome: 'winner' },
+          isElimination: true,
+        },
+        {
+          label: 'PF2',
+          finalType: 'PF',
+          home: { type: 'result', weekRef: 2, matchRef: 1, outcome: 'winner' },
+          away: { type: 'result', weekRef: 3, matchRef: 1, outcome: 'winner' },
+          isElimination: true,
+        },
+      ],
+    },
+    {
+      weekNumber: 5,
+      label: 'Grand Final',
+      matchups: [
+        {
+          label: 'GF',
+          finalType: 'GF',
+          home: { type: 'result', weekRef: 4, matchRef: 0, outcome: 'winner' },
+          away: { type: 'result', weekRef: 4, matchRef: 1, outcome: 'winner' },
+          isElimination: true,
+        },
+      ],
+    },
+  ],
+}
+
 // ── Page-McIntyre Top 4 ─────────────────────────────────────────────────────
 
 const pageMcIntyreTop4: FinalsFormat = {
@@ -405,6 +524,7 @@ const roundRobin: FinalsFormat = {
 
 export const FINALS_FORMATS: FinalsFormat[] = [
   aflTop8,
+  aflTop10,
   pageMcIntyreTop4,
   top6,
   straightKnockout,

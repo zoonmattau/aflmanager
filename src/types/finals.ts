@@ -6,6 +6,7 @@
 
 export type FinalsFormatId =
   | 'afl-top-8'
+  | 'afl-top-10'
   | 'page-mcintyre-top-4'
   | 'top-6'
   | 'straight-knockout'

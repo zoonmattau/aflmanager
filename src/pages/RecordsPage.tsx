@@ -270,6 +270,38 @@ export function RecordsPage() {
     }
   }, [players])
 
+  // Fantasy & SC avg/game leaderboards
+  const fantasyScLeaderboards = useMemo(() => {
+    const allPlayers = Object.values(players)
+    const seasonQ = allPlayers.filter((p) => p.seasonStats.gamesPlayed >= 1)
+    const careerQ = allPlayers.filter((p) => p.careerStats.gamesPlayed >= 5)
+
+    type FscEntry = { playerId: string; playerName: string; clubId: string; avg: number; games: number }
+
+    const mapAvg = (
+      arr: typeof allPlayers,
+      stat: 'superCoachPoints' | 'aflFantasyPoints',
+      bucket: 'seasonStats' | 'careerStats',
+    ): FscEntry[] =>
+      arr
+        .map((p) => ({
+          playerId: p.id,
+          playerName: `${p.firstName} ${p.lastName}`,
+          clubId: p.clubId,
+          avg: p[bucket].gamesPlayed > 0 ? Math.round(p[bucket][stat] / p[bucket].gamesPlayed) : 0,
+          games: p[bucket].gamesPlayed,
+        }))
+        .sort((a, b) => b.avg - a.avg)
+        .slice(0, 10)
+
+    return {
+      seasonSc: mapAvg(seasonQ, 'superCoachPoints', 'seasonStats'),
+      seasonFantasy: mapAvg(seasonQ, 'aflFantasyPoints', 'seasonStats'),
+      careerSc: mapAvg(careerQ, 'superCoachPoints', 'careerStats'),
+      careerFantasy: mapAvg(careerQ, 'aflFantasyPoints', 'careerStats'),
+    }
+  }, [players])
+
   const statKeys = useMemo(() => Object.keys(STAT_LABELS) as RecordsLeaderboardStat[], [])
 
   const clubLabel = (clubId: string) =>
@@ -615,6 +647,80 @@ export function RecordsPage() {
               </Table>
             )}
           </div>
+        </div>
+      </Section>
+
+      {/* Fantasy & SuperCoach Leaderboards */}
+      <Section title="Fantasy & SuperCoach" defaultOpen={false}>
+        <div className="px-4 pt-3 pb-2">
+          <Tabs defaultValue="season">
+            <TabsList className="mb-3">
+              <TabsTrigger value="season">This Season</TabsTrigger>
+              <TabsTrigger value="career">All-Time Career</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="season">
+              {fantasyScLeaderboards.seasonSc.length === 0 ? (
+                <p className="text-sm text-muted-foreground italic py-2">
+                  No season games played yet — sim some rounds to populate this leaderboard.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      SuperCoach Avg/Game (min 1 GP)
+                    </h4>
+                    <FscLeaderboardTable
+                      entries={fantasyScLeaderboards.seasonSc}
+                      statLabel="SC Avg"
+                      clubLabel={clubLabel}
+                    />
+                  </div>
+                  <div>
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      AFL Fantasy Avg/Game (min 1 GP)
+                    </h4>
+                    <FscLeaderboardTable
+                      entries={fantasyScLeaderboards.seasonFantasy}
+                      statLabel="Fant Avg"
+                      clubLabel={clubLabel}
+                    />
+                  </div>
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="career">
+              {fantasyScLeaderboards.careerSc.length === 0 ? (
+                <p className="text-sm text-muted-foreground italic py-2">
+                  No career data yet — complete a season to see all-time leaders.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      SuperCoach Avg/Game (min 5 GP)
+                    </h4>
+                    <FscLeaderboardTable
+                      entries={fantasyScLeaderboards.careerSc}
+                      statLabel="SC Avg"
+                      clubLabel={clubLabel}
+                    />
+                  </div>
+                  <div>
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      AFL Fantasy Avg/Game (min 5 GP)
+                    </h4>
+                    <FscLeaderboardTable
+                      entries={fantasyScLeaderboards.careerFantasy}
+                      statLabel="Fant Avg"
+                      clubLabel={clubLabel}
+                    />
+                  </div>
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
         </div>
       </Section>
 

@@ -882,6 +882,77 @@ function MakeTradeTab() {
                   theirValue={theirValue}
                 />
 
+                {/* Fantasy Value Panel */}
+                {(sendPlayers.length > 0 || receivePlayers.length > 0) && (
+                  <div className="rounded-md border p-3 space-y-2 bg-muted/20">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Fantasy Value (avg/game this season)
+                    </p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-muted-foreground">You Send</p>
+                        {sendPlayers.length === 0 ? (
+                          <p className="text-xs text-muted-foreground italic">—</p>
+                        ) : (
+                          sendPlayers.map((p) => {
+                            const gp = p.seasonStats.gamesPlayed
+                            const sc = gp > 0 ? Math.round(p.seasonStats.superCoachPoints / gp) : null
+                            const fa = gp > 0 ? Math.round(p.seasonStats.aflFantasyPoints / gp) : null
+                            return (
+                              <div key={p.id} className="flex items-center justify-between gap-2">
+                                <span className="text-xs text-muted-foreground truncate">
+                                  {p.firstName[0]}. {p.lastName}
+                                </span>
+                                <span className="text-xs font-mono whitespace-nowrap">
+                                  {sc != null ? (
+                                    <>
+                                      <span className="text-blue-500">SC {sc}</span>
+                                      <span className="text-muted-foreground mx-1">·</span>
+                                      <span className="text-emerald-500">F {fa}</span>
+                                    </>
+                                  ) : (
+                                    <span className="text-muted-foreground">No season data</span>
+                                  )}
+                                </span>
+                              </div>
+                            )
+                          })
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-muted-foreground">You Receive</p>
+                        {receivePlayers.length === 0 ? (
+                          <p className="text-xs text-muted-foreground italic">—</p>
+                        ) : (
+                          receivePlayers.map((p) => {
+                            const gp = p.seasonStats.gamesPlayed
+                            const sc = gp > 0 ? Math.round(p.seasonStats.superCoachPoints / gp) : null
+                            const fa = gp > 0 ? Math.round(p.seasonStats.aflFantasyPoints / gp) : null
+                            return (
+                              <div key={p.id} className="flex items-center justify-between gap-2">
+                                <span className="text-xs text-muted-foreground truncate">
+                                  {p.firstName[0]}. {p.lastName}
+                                </span>
+                                <span className="text-xs font-mono whitespace-nowrap">
+                                  {sc != null ? (
+                                    <>
+                                      <span className="text-blue-500">SC {sc}</span>
+                                      <span className="text-muted-foreground mx-1">·</span>
+                                      <span className="text-emerald-500">F {fa}</span>
+                                    </>
+                                  ) : (
+                                    <span className="text-muted-foreground">No season data</span>
+                                  )}
+                                </span>
+                              </div>
+                            )
+                          })
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Salary Impact */}
                 <SalaryImpact
                   sendPlayers={sendPlayers}

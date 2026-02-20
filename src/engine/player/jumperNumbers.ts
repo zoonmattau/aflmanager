@@ -43,18 +43,18 @@ export function findNextAvailableJumperNumber(
 
 export function upsertPlayerJumperHistory(player: Player, year: number): void {
   if (!player.clubId) return
-  if (!player.jumperHistory) player.jumperHistory = []
-  const existing = player.jumperHistory.find((entry) => entry.year === year && entry.clubId === player.clubId)
-  if (existing) {
-    existing.jumperNumber = player.jerseyNumber
+  const history = player.jumperHistory ?? []
+  const newEntry = { year, clubId: player.clubId, jumperNumber: player.jerseyNumber }
+  const idx = history.findIndex((entry) => entry.year === year && entry.clubId === player.clubId)
+  if (idx !== -1) {
+    // Replace the whole array rather than mutating the existing entry, which
+    // may be a frozen object from a prior Zustand state snapshot.
+    const next = history.slice()
+    next[idx] = newEntry
+    player.jumperHistory = next
     return
   }
-  player.jumperHistory.push({
-    year,
-    clubId: player.clubId,
-    jumperNumber: player.jerseyNumber,
-  })
-  player.jumperHistory.sort((a, b) => a.year - b.year)
+  player.jumperHistory = [...history, newEntry].sort((a, b) => a.year - b.year)
 }
 
 export function autoAssignClubJumperNumbers(

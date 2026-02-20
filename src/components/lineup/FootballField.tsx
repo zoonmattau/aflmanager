@@ -23,6 +23,7 @@ export interface FootballFieldProps {
   oppositionClubId: string | null
   showOpposition: boolean
   onOppositionPlayerClick?: (playerId: string) => void
+  onPlayerClick?: (playerId: string) => void
   selectedSlot?: string | null
   onSelectSlot?: (slot: string) => void
   onAssign: (slot: string, playerId: string) => void
@@ -42,6 +43,7 @@ export function FootballField({
   oppositionClubId,
   showOpposition,
   onOppositionPlayerClick,
+  onPlayerClick,
   selectedSlot,
   onSelectSlot,
   onAssign,
@@ -192,6 +194,7 @@ export function FootballField({
               player={player}
               slot={pos.slot}
               suitability={getPositionSuitability(player, pos.slot)}
+              onProfileClick={onPlayerClick ? () => onPlayerClick(player.id) : undefined}
             />
           </div>
         ) : (
@@ -332,6 +335,7 @@ export function FootballField({
                           player={player}
                           slot={slot}
                           suitability={getPositionSuitability(player, slot)}
+                          onProfileClick={onPlayerClick ? () => onPlayerClick(player.id) : undefined}
                         />
                       </div>
                     ) : (
@@ -398,6 +402,7 @@ export function FootballField({
                           player={player}
                           slot={slot}
                           suitability={getPositionSuitability(player, slot)}
+                          onProfileClick={onPlayerClick ? () => onPlayerClick(player.id) : undefined}
                         />
                       </div>
                     ) : (

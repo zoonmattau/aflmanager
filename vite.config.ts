@@ -10,4 +10,15 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    rollupOptions: {
+      // Tauri-specific packages are conditionally loaded at runtime only;
+      // externalize them so the web build doesn't try to bundle them.
+      external: [
+        '@tauri-apps/plugin-fs',
+        '@tauri-apps/plugin-dialog',
+        '@tauri-apps/api/core',
+      ],
+    },
+  },
 })

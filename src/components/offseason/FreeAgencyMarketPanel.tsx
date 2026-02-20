@@ -172,6 +172,19 @@ function ListingRow({
                   Unsigned
                 </Badge>
               )}
+              {listing.status === 'matching-pending' && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-amber-400 border-amber-500/30">
+                  Matching Pending
+                </Badge>
+              )}
+              <Badge
+                variant="outline"
+                className={listing.isRestricted
+                  ? 'text-[10px] px-1.5 py-0 text-orange-400 border-orange-500/30'
+                  : 'text-[10px] px-1.5 py-0 text-sky-400 border-sky-500/30'}
+              >
+                {listing.isRestricted ? 'RFA' : 'UFA'}
+              </Badge>
               {hasUserBid && !isResolved && (
                 <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-primary border-primary/30">
                   Your Bid

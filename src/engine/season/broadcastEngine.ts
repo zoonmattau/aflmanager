@@ -53,14 +53,16 @@ export const BROADCAST_SATISFACTION_BY_TIER: Record<BroadcastTier, number> = {
 // ---------------------------------------------------------------------------
 
 const CHANNEL_BY_MATCH_DAY: Record<MatchDay, BroadcastChannel> = {
-  Thursday:           'PayTV',
-  Friday:             'FTA',
-  'Saturday-Early':   'Streaming',
-  'Saturday-Twilight': 'PayTV',
-  'Saturday-Night':   'FTA',
-  'Sunday-Early':     'Streaming',
-  'Sunday-Twilight':  'PayTV',
-  Monday:             'None',
+  Thursday:              'PayTV',
+  Friday:                'FTA',
+  'Saturday-Early':      'Streaming',
+  'Saturday-Afternoon':  'PayTV',
+  'Saturday-Twilight':   'PayTV',
+  'Saturday-Night':      'FTA',
+  'Sunday-Early':        'Streaming',
+  'Sunday-Afternoon':    'PayTV',
+  'Sunday-Twilight':     'PayTV',
+  Monday:                'None',
 }
 
 // ---------------------------------------------------------------------------

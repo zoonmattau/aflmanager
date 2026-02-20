@@ -79,6 +79,7 @@ export interface OffseasonProgressionValidation {
 
 const MILESTONE_DEFS: { offset: number; label: string; phase: OffseasonPhase }[] = [
   { offset: 0, label: 'Awards Night', phase: 'season-end' },
+  { offset: 3, label: 'All-Australian Selection Night', phase: 'season-end' },
   { offset: 7, label: 'Retirements Announced', phase: 'retirements' },
   { offset: 10, label: 'Delistings Deadline', phase: 'delistings' },
   { offset: 14, label: 'Trade Period Opens', phase: 'trade-period' },

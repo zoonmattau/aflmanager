@@ -2,9 +2,11 @@ export type MatchDay =
   | 'Thursday'
   | 'Friday'
   | 'Saturday-Early'
+  | 'Saturday-Afternoon'
   | 'Saturday-Twilight'
   | 'Saturday-Night'
   | 'Sunday-Early'
+  | 'Sunday-Afternoon'
   | 'Sunday-Twilight'
   | 'Monday'
 

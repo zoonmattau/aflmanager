@@ -53,7 +53,8 @@
       "draftPhilosophy": "positional-need",
       "riskTolerance": "moderate",
       "tradeActivity": "moderate"
-    }
+    },
+    "state": "SA"
   },
   {
     "id": "brisbane",
@@ -109,7 +110,8 @@
       "draftPhilosophy": "best-available",
       "riskTolerance": "aggressive",
       "tradeActivity": "active"
-    }
+    },
+    "state": "QLD"
   },
   {
     "id": "carlton",
@@ -164,7 +166,8 @@
       "draftPhilosophy": "best-available",
       "riskTolerance": "moderate",
       "tradeActivity": "active"
-    }
+    },
+    "state": "VIC"
   },
   {
     "id": "collingwood",
@@ -219,7 +222,8 @@
       "draftPhilosophy": "positional-need",
       "riskTolerance": "aggressive",
       "tradeActivity": "moderate"
-    }
+    },
+    "state": "VIC"
   },
   {
     "id": "essendon",
@@ -274,7 +278,8 @@
       "draftPhilosophy": "best-available",
       "riskTolerance": "aggressive",
       "tradeActivity": "active"
-    }
+    },
+    "state": "VIC"
   },
   {
     "id": "fremantle",
@@ -330,7 +335,8 @@
       "draftPhilosophy": "high-upside",
       "riskTolerance": "moderate",
       "tradeActivity": "moderate"
-    }
+    },
+    "state": "WA"
   },
   {
     "id": "geelong",
@@ -385,7 +391,8 @@
       "draftPhilosophy": "best-available",
       "riskTolerance": "aggressive",
       "tradeActivity": "active"
-    }
+    },
+    "state": "VIC"
   },
   {
     "id": "goldcoast",
@@ -441,7 +448,8 @@
       "draftPhilosophy": "high-upside",
       "riskTolerance": "moderate",
       "tradeActivity": "passive"
-    }
+    },
+    "state": "QLD"
   },
   {
     "id": "gws",
@@ -497,7 +505,8 @@
       "draftPhilosophy": "positional-need",
       "riskTolerance": "moderate",
       "tradeActivity": "moderate"
-    }
+    },
+    "state": "NSW"
   },
   {
     "id": "hawthorn",
@@ -553,7 +562,8 @@
       "draftPhilosophy": "best-available",
       "riskTolerance": "aggressive",
       "tradeActivity": "active"
-    }
+    },
+    "state": "VIC"
   },
   {
     "id": "melbourne",
@@ -608,7 +618,8 @@
       "draftPhilosophy": "positional-need",
       "riskTolerance": "moderate",
       "tradeActivity": "moderate"
-    }
+    },
+    "state": "VIC"
   },
   {
     "id": "northmelbourne",
@@ -664,7 +675,8 @@
       "draftPhilosophy": "high-upside",
       "riskTolerance": "conservative",
       "tradeActivity": "passive"
-    }
+    },
+    "state": "VIC"
   },
   {
     "id": "portadelaide",
@@ -720,7 +732,8 @@
       "draftPhilosophy": "positional-need",
       "riskTolerance": "moderate",
       "tradeActivity": "moderate"
-    }
+    },
+    "state": "SA"
   },
   {
     "id": "richmond",
@@ -775,7 +788,8 @@
       "draftPhilosophy": "high-upside",
       "riskTolerance": "moderate",
       "tradeActivity": "active"
-    }
+    },
+    "state": "VIC"
   },
   {
     "id": "stkilda",
@@ -831,7 +845,8 @@
       "draftPhilosophy": "best-available",
       "riskTolerance": "moderate",
       "tradeActivity": "moderate"
-    }
+    },
+    "state": "VIC"
   },
   {
     "id": "sydney",
@@ -886,7 +901,8 @@
       "draftPhilosophy": "positional-need",
       "riskTolerance": "conservative",
       "tradeActivity": "moderate"
-    }
+    },
+    "state": "NSW"
   },
   {
     "id": "westcoast",
@@ -941,7 +957,8 @@
       "draftPhilosophy": "high-upside",
       "riskTolerance": "moderate",
       "tradeActivity": "active"
-    }
+    },
+    "state": "WA"
   },
   {
     "id": "westernbulldogs",
@@ -997,6 +1014,7 @@
       "draftPhilosophy": "best-available",
       "riskTolerance": "aggressive",
       "tradeActivity": "active"
-    }
+    },
+    "state": "VIC"
   }
 ]

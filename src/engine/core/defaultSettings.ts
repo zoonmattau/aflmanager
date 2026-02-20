@@ -26,7 +26,7 @@ export const DEFAULT_MATCH_SLOTS: MatchTimeSlot[] = [
   { id: 'sat-early-1235',     day: 'Saturday-Early',    time: '12:35pm', enabled: true },
   { id: 'sat-early-110',      day: 'Saturday-Early',    time: '1:10pm', enabled: true },
   { id: 'sat-early-120',      day: 'Saturday-Early',    time: '1:20pm', enabled: true },
-  { id: 'sat-twilight-320',   day: 'Saturday-Twilight', time: '3:20pm', enabled: true },
+  { id: 'sat-twilight-320',   day: 'Saturday-Afternoon', time: '3:20pm', enabled: true },
   { id: 'sat-twilight-415',   day: 'Saturday-Twilight', time: '4:15pm', enabled: true },
   { id: 'sat-twilight-440',   day: 'Saturday-Twilight', time: '4:40pm', enabled: true },
   { id: 'sat-night-710',      day: 'Saturday-Night',    time: '7:10pm', enabled: true },
@@ -36,7 +36,7 @@ export const DEFAULT_MATCH_SLOTS: MatchTimeSlot[] = [
   { id: 'sat-night-810',      day: 'Saturday-Night',    time: '8:10pm', enabled: true },
   { id: 'sun-early-1210',     day: 'Sunday-Early',      time: '12:10pm', enabled: true },
   { id: 'sun-early-110',      day: 'Sunday-Early',      time: '1:10pm', enabled: true },
-  { id: 'sun-twilight-320',   day: 'Sunday-Twilight',   time: '3:20pm', enabled: true },
+  { id: 'sun-twilight-320',   day: 'Sunday-Afternoon',  time: '3:20pm', enabled: true },
   { id: 'sun-twilight-620',   day: 'Sunday-Twilight',   time: '6:20pm', enabled: true },
   { id: 'mon-afternoon',      day: 'Monday',            time: '3:20pm', enabled: true },
 ]

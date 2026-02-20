@@ -1,5 +1,15 @@
-import type { ClubGameplan, TacticalIdentity } from '@/types/club'
+import type { ClubGameplan, PlayStyleRules, TacticalIdentity } from '@/types/club'
 import { getAlignedGameplan } from '@/engine/core/tacticalIdentity'
+
+export const DEFAULT_PLAY_STYLE: PlayStyleRules = {
+  forwardLeading: 'diagonal',
+  tapDirection: 'read-and-react',
+  stoppageMovement: 'balanced',
+  switchFrequency: 'normal',
+  noUTurns: false,
+  handbballToRunner: false,
+  noKickBackAcrossGoal: false,
+}
 
 /**
  * Returns a ClubGameplan with sensible default values.
@@ -22,6 +32,7 @@ export function createDefaultGameplan(): ClubGameplan {
       aroundTheGround: false,
     },
     rotations: 'medium',
+    playStyle: { ...DEFAULT_PLAY_STYLE },
   }
 }
 

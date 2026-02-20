@@ -10,6 +10,8 @@ export type StaffRole =
   | 'physio'
   | 'doctor'
   | 'reserves-coach'
+  | 'reserves-fitness-coach'
+  | 'reserves-development-coach'
 
 export interface StaffRatings {
   tactical: number           // 1-100

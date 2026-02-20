@@ -87,6 +87,39 @@ function generateFacilities(rng: SeededRNG): ClubFacilities {
   }
 }
 
+// ---------------------------------------------------------------------------
+// AFL club facility generation — prestige-weighted, seeded random
+// ---------------------------------------------------------------------------
+
+function aflClubPrestige(club: Club): number {
+  const prem = club.premierships ?? 0
+  const est  = club.established ?? 2000
+  let tier: number
+  if      (prem >= 10) tier = 5
+  else if (prem >= 6)  tier = 4
+  else if (prem >= 3)  tier = 3
+  else if (prem >= 1)  tier = 2
+  else                 tier = 1
+  if (est < 1990)  tier = Math.min(5, tier + 1)  // old, wealthy clubs
+  if (est >= 2010) tier = Math.max(1, tier - 1)  // brand-new expansion
+  return tier
+}
+
+/** Generate varied, prestige-weighted facilities for a real AFL club. */
+export function generateAflFacilities(club: Club, rng: SeededRNG): ClubFacilities {
+  const tier = aflClubPrestige(club)
+  const lo   = Math.max(1, tier - 1)
+  const hi   = Math.min(5, tier + 1)
+  return {
+    trainingGround: rng.nextInt(lo, hi),
+    gym:            rng.nextInt(lo, hi),
+    medicalCentre:  rng.nextInt(lo, hi),
+    recoveryPool:   rng.nextInt(Math.max(1, lo - 1), hi),  // slightly wider range
+    analysisSuite:  rng.nextInt(Math.max(1, lo - 1), hi),
+    youthAcademy:   rng.nextInt(lo, hi),
+  }
+}
+
 function generateFinances(rng: SeededRNG): ClubFinances {
   const salaryCap = 15_500_000
   return {

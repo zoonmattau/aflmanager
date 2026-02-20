@@ -277,6 +277,12 @@ export function AwardsHistoryPage() {
       {/* ── ALL-AUSTRALIAN ── */}
       {activeTab === 'all-australian' && (
         <div className="space-y-4">
+          <div className="flex justify-end">
+            <Button variant="outline" size="sm" onClick={() => navigate('/all-australian-night')}>
+              <Users className="mr-2 h-4 w-4" />
+              AA Selection Night
+            </Button>
+          </div>
           {sorted.map((r) => (
             <Card key={r.year}>
               <CardHeader className="py-3">

@@ -198,6 +198,7 @@ export function analyzeClubListNeeds(playersById: Record<string, Player>, clubId
 
   const deficits = roleNeedsByClub(playersById, clubId)
   const roleNeeds = (Object.keys(deficits) as PlayerPreferredRole[])
+    .filter((role) => role !== 'utility')
     .map((role) => buildRoleNeed(role, deficits[role] ?? 0, clubPlayers))
     .filter((x): x is ClubNeed => Boolean(x))
     .sort((a, b) => b.priorityScore - a.priorityScore)

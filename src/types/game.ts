@@ -99,7 +99,7 @@ export interface CustomFinalsStructure {
 }
 
 export interface FinalsSettings {
-  finalsFormat: 'afl-top-8' | 'page-mcintyre-top-4' | 'top-6' | 'straight-knockout' | 'round-robin' | 'custom'
+  finalsFormat: 'afl-top-8' | 'afl-top-10' | 'page-mcintyre-top-4' | 'top-6' | 'straight-knockout' | 'round-robin' | 'custom'
   finalsQualifyingTeams: number  // default 8
   grandFinalVenueMode: 'fixed' | 'random' | 'top-club'
   grandFinalVenue: string        // venue used when mode is 'fixed', default 'MCG'

@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useGameStore } from '@/stores/gameStore'
 import type { GameSettings, RealismSettings } from '@/types/game'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import type { AflDistributionConfig, DistributionModel } from '@/types/distributions'
 import { DEFAULT_DISTRIBUTION_CONFIG, getDistributionPreviewTable } from '@/engine/clubs/distributionEngine'
 import type { MatchDay } from '@/types/season'
@@ -85,9 +93,11 @@ const MATCH_DAY_OPTIONS: MatchDay[] = [
   'Thursday',
   'Friday',
   'Saturday-Early',
+  'Saturday-Afternoon',
   'Saturday-Twilight',
   'Saturday-Night',
   'Sunday-Early',
+  'Sunday-Afternoon',
   'Sunday-Twilight',
   'Monday',
 ]
@@ -127,6 +137,7 @@ const REALISM_LABELS: Record<keyof RealismSettings, string> = {
   tribunalLegalRepresentation: 'Tribunal Legal Representation',
   tribunalPriorRecord: 'Tribunal Prior Record',
   allowLoans: 'Allow Club Loans',
+  contractTampering: 'Contract Tampering',
 }
 
 function formatMatchDay(day: MatchDay): string {
@@ -187,8 +198,11 @@ export function GameSettingsPage() {
   const stateLeagues = useGameStore((s) => s.stateLeagues)
   const updateGameSettings = useGameStore((s) => s.updateGameSettings)
   const updateClub = useGameStore((s) => s.updateClub)
+  const enableBetting = useGameStore((s) => s.enableBetting)
+  const disableBetting = useGameStore((s) => s.disableBetting)
   const [draft, setDraft] = useState<GameSettings>(settings)
   const [savedTick, setSavedTick] = useState(0)
+  const [ageGateOpen, setAgeGateOpen] = useState(false)
   const [sectionsOpen, setSectionsOpen] = useState({
     finals: true,
     timeSlots: false,
@@ -1362,7 +1376,107 @@ export function GameSettingsPage() {
           </CardContent>
           )}
         </Card>
+
+        {/* Betting System */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Simulated Betting Markets</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Enable in-game odds markets for matches, season futures, and award predictions.
+              This is a simulated feature — no real money is involved.
+            </p>
+
+            <div className="flex items-center justify-between gap-4">
+              <Label className="flex flex-col gap-0.5">
+                <span>Enable betting markets</span>
+                <span className="text-xs font-normal text-muted-foreground">18+ only. Simulated, no real money.</span>
+              </Label>
+              <Switch
+                checked={settings.betting?.enabled ?? false}
+                onCheckedChange={(checked) => {
+                  if (checked) {
+                    if (!settings.betting?.ageGateAccepted) {
+                      setAgeGateOpen(true)
+                    } else {
+                      enableBetting(true)
+                    }
+                  } else {
+                    disableBetting()
+                  }
+                }}
+              />
+            </div>
+
+            {settings.betting?.enabled && (
+              <>
+                <div className="space-y-2">
+                  <Label>
+                    Bookmaker margin: {Math.round((settings.betting.margin ?? 0.05) * 100)}%
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">(overround applied to all markets)</span>
+                  </Label>
+                  <Slider
+                    min={0}
+                    max={15}
+                    step={1}
+                    value={[Math.round((settings.betting.margin ?? 0.05) * 100)]}
+                    onValueChange={([val]) => {
+                      updateGameSettings({
+                        ...settings,
+                        betting: { ...(settings.betting!), margin: (val ?? 5) / 100 },
+                      })
+                    }}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between gap-4">
+                  <Label className="flex flex-col gap-0.5">
+                    <span>Total points markets</span>
+                    <span className="text-xs font-normal text-muted-foreground">Show over/under totals for each match</span>
+                  </Label>
+                  <Switch
+                    checked={settings.betting?.totalPointsMarkets ?? false}
+                    onCheckedChange={(checked) => {
+                      updateGameSettings({
+                        ...settings,
+                        betting: { ...(settings.betting!), totalPointsMarkets: checked },
+                      })
+                    }}
+                  />
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
       </div>
+
+      {/* 18+ Age Gate Dialog */}
+      <Dialog open={ageGateOpen} onOpenChange={setAgeGateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Age Confirmation Required</DialogTitle>
+            <DialogDescription>
+              Simulated betting markets are intended for players aged 18 and over.
+              This feature involves no real money and is for entertainment purposes only.
+              By continuing, you confirm that you are 18 years of age or older.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAgeGateOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                setAgeGateOpen(false)
+                enableBetting(true)
+              }}
+            >
+              I am 18+ — Enable Markets
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <p className="text-xs text-muted-foreground">Settings saved: {savedTick}</p>
     </div>

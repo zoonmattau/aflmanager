@@ -16,7 +16,7 @@ export function WorldFixturesPage() {
   const currentRound = useGameStore((s) => s.currentRound)
 
   const allRounds = useMemo(() => {
-    const regular = season.rounds.map((r, i) => ({ label: `Round ${i + 1}`, index: i, isFinals: false }))
+    const regular = season.rounds.map((_r, i) => ({ label: `Round ${i + 1}`, index: i, isFinals: false }))
     const finals = season.finalsRounds.map((r, i) => ({ label: r.name, index: i, isFinals: true }))
     return [...regular, ...finals]
   }, [season])
@@ -41,14 +41,6 @@ export function WorldFixturesPage() {
     if (!roundInfo || roundInfo.isFinals) return []
     return season.rounds[roundInfo.index]?.byeClubIds ?? []
   }, [roundInfo, season])
-
-  const matchResultsMap = useMemo(() => {
-    const map = new Map<string, (typeof matchResults)[0]>()
-    for (const m of matchResults) {
-      map.set(`${m.homeClubId}-${m.awayClubId}-${m.round}`, m)
-    }
-    return map
-  }, [matchResults])
 
   const filteredFixtures = useMemo(() => {
     if (filterClubId === 'all') return fixtures

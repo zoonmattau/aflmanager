@@ -70,12 +70,12 @@ function createExpansionClub(
     tier: inferTier(totalTeams),
     colors: { ...data.colors },
     facilities: {
-      trainingGround: 3,
-      gym: 3,
-      medicalCentre: 3,
-      recoveryPool: 3,
-      analysisSuite: 3,
-      youthAcademy: 3,
+      trainingGround: 1,
+      gym: 1,
+      medicalCentre: 1,
+      recoveryPool: 1,
+      analysisSuite: 1,
+      youthAcademy: 1,
     },
     finances: {
       salaryCap: settings.salaryCapAmount,

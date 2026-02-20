@@ -88,6 +88,8 @@ function CompCard({
 // Talent League summary: mini-ladder + scouted players side-by-side
 // ---------------------------------------------------------------------------
 
+const EMPTY_YOUTH_PLAYERS: Record<string, import('@/types/youthPathway').YouthPlayer> = {}
+
 function TalentLeagueSummary({
   comp,
   playerClubId,
@@ -96,7 +98,7 @@ function TalentLeagueSummary({
   playerClubId: string
 }) {
   const navigate = useNavigate()
-  const players  = useGameStore((s) => s.youthPathway?.players ?? {})
+  const players  = useGameStore((s) => s.youthPathway?.players) ?? EMPTY_YOUTH_PLAYERS
 
   const ladderRows = comp.season.ladder.slice(0, 12).map((e, i) => ({
     ...e,
@@ -470,12 +472,16 @@ export function YouthPathwayPage() {
                             <TableRow
                               key={player.id}
                               className="cursor-pointer hover:bg-muted/50"
-                              onClick={() => navigate(`/youth-pathway/competition/${player.compId}`)}
+                              onClick={() => navigate(`/youth-pathway/player/${encodeURIComponent(player.id)}`)}
                             >
                               <TableCell className="text-sm font-medium">
                                 {player.firstName} {player.lastName}
                                 {converted && (
-                                  <Badge variant="outline" className="ml-1.5 text-[10px] py-0 px-1 border-green-500 text-green-600">
+                                  <Badge
+                                    variant="outline"
+                                    className="ml-1.5 text-[10px] py-0 px-1 border-green-500 text-green-600 cursor-pointer"
+                                    onClick={(e) => { e.stopPropagation(); navigate('/scouting') }}
+                                  >
                                     Prospect
                                   </Badge>
                                 )}
@@ -633,7 +639,7 @@ export function YouthPathwayPage() {
                         <TableRow
                           key={player.id}
                           className={`cursor-pointer hover:bg-muted/50 ${scouted ? 'bg-blue-500/5' : ''}`}
-                          onClick={() => navigate(`/youth-pathway/competition/${player.compId}`)}
+                          onClick={() => navigate(`/youth-pathway/player/${encodeURIComponent(player.id)}`)}
                         >
                           <TableCell>
                             <div className="flex items-center gap-1.5">

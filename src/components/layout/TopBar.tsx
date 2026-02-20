@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Sun, Moon, Calendar, Hash, Save, Home, Menu } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Sun, Moon, Calendar, Hash, Save, Home, Menu, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTheme } from '@/components/layout/ThemeProvider'
 import { useGameStore } from '@/stores/gameStore'
@@ -22,6 +23,7 @@ import {
 } from '@/components/ui/dialog'
 
 export function TopBar() {
+  const navigate = useNavigate()
   const { resolvedTheme, setTheme } = useTheme()
   const currentYear = useGameStore((s) => s.currentYear)
   const currentRound = useGameStore((s) => s.currentRound)
@@ -101,6 +103,15 @@ export function TopBar() {
             ) : (
               <Moon className="h-4 w-4" />
             )}
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate('/game-settings')}
+            aria-label="Game settings"
+          >
+            <Settings className="h-4 w-4" />
           </Button>
 
           <DropdownMenu>

@@ -1,10 +1,11 @@
 import type { Player } from '@/types/player'
+import type { RFAMatchingRight } from '@/types/contract'
 import type { Club } from '@/types/club'
 import type { GameSettings, NewsItem } from '@/types/game'
 import type { LadderEntry } from '@/types/season'
 import type { SeededRNG } from '@/engine/core/rng'
 import { calculatePlayerValue } from '@/engine/contracts/negotiation'
-import { processEndOfSeasonContracts } from '@/engine/contracts/freeAgency'
+import { processEndOfSeasonContracts, isPlayerRFA } from '@/engine/contracts/freeAgency'
 import { MINIMUM_SALARY } from '@/engine/core/constants'
 import { validateContractOffer } from '@/engine/salary/salaryCapEngine'
 import { resolveListConstraints, canAddToSeniorList } from '@/engine/rules/listRules'
@@ -28,7 +29,7 @@ export interface FreeAgentListing {
   previousClubId: string
   isRestricted: boolean
   bids: ClubBid[]
-  status: 'open' | 'signed' | 'unsigned'
+  status: 'open' | 'signed' | 'unsigned' | 'matching-pending'
   signedClubId?: string
 }
 
@@ -170,7 +171,7 @@ export function buildFreeAgentMarket(
   players: Record<string, Player>,
   _clubs: Record<string, Club>,
   resignedPlayerIds: Set<string>,
-  _currentYear: number,
+  currentYear: number,
 ): FreeAgencyMarketState {
   // Clone and process end-of-season contracts to identify expired
   const playersCopy: Record<string, Player> = {}
@@ -204,7 +205,7 @@ export function buildFreeAgentMarket(
       demandedAav,
       demandedYears: determineDemandedYears(player),
       previousClubId: player.clubId,
-      isRestricted: player.contract.isRestricted && player.age < 27,
+      isRestricted: isPlayerRFA(player, currentYear),
       bids: [],
       status: 'open',
     })
@@ -461,18 +462,22 @@ export function resolveMarket(
   ladder: LadderEntry[],
   rng: SeededRNG,
   currentYear: number,
+  playerClubId?: string,
 ): {
   market: FreeAgencyMarketState
   updatedPlayers: Record<string, Player>
   compensationPicks: CompensationPick[]
   news: NewsItem[]
+  pendingMatchingRights: RFAMatchingRight[]
 } {
-  // Clone players
+  // Clone players — deep-clone nested mutable arrays so downstream mutations
+  // (contract decrements, jumperHistory updates) don't hit frozen Zustand state.
   const updatedPlayers: Record<string, Player> = {}
   for (const [id, p] of Object.entries(players)) {
     updatedPlayers[id] = {
       ...p,
       contract: { ...p.contract, yearByYear: [...p.contract.yearByYear] },
+      jumperHistory: (p.jumperHistory ?? []).map((h) => ({ ...h })),
     }
   }
 
@@ -481,6 +486,7 @@ export function resolveMarket(
 
   const compensationPicks: CompensationPick[] = []
   const news: NewsItem[] = []
+  const pendingMatchingRights: RFAMatchingRight[] = []
 
   const resolvedListings = market.listings.map((listing) => {
     if (listing.bids.length === 0) {
@@ -540,6 +546,64 @@ export function resolveMarket(
     )
 
     const winner = scoredBids[0]
+
+    // RFA matching rights check
+    if (
+      listing.isRestricted &&
+      listing.previousClubId &&
+      listing.previousClubId !== winner.clubId &&
+      listing.previousClubId !== ''
+    ) {
+      const holdingClub = listing.previousClubId
+
+      if (holdingClub === playerClubId) {
+        // User holds matching rights — defer signing, create pending matching right
+        const rightId = generateId('rfa', rng)
+        pendingMatchingRights.push({
+          id: rightId,
+          playerId: listing.playerId,
+          playerName: listing.playerName,
+          holdingClubId: holdingClub,
+          offeringClubId: winner.clubId,
+          aav: winner.aav,
+          years: winner.years,
+          yearByYear: [...winner.yearByYear],
+          offeredAt: `${currentYear}-11-01`,
+          status: 'pending',
+        })
+        return { ...listing, bids: scoredBids, status: 'matching-pending' as const }
+      } else {
+        // AI holds matching rights — auto-decide using player valuation
+        const playerValue = calculatePlayerValue(player)
+        const shouldMatch = playerValue * 1.05 >= winner.aav  // match if value justifies it
+        if (shouldMatch) {
+          // AI matches — sign to previous club
+          updatedPlayers[listing.playerId] = {
+            ...updatedPlayers[listing.playerId],
+            clubId: holdingClub,
+            contract: {
+              yearsRemaining: winner.years,
+              aav: winner.aav,
+              yearByYear: [...winner.yearByYear],
+              isRestricted: false,
+            },
+            morale: Math.min(100, (updatedPlayers[listing.playerId].morale ?? 50) + 8),
+          }
+          const matchClubName = clubs[holdingClub]?.name ?? holdingClub
+          news.push({
+            id: generateId('news', rng),
+            date: `${currentYear}-11-01`,
+            headline: `${listing.playerName} retained — ${matchClubName} matches offer`,
+            body: `${matchClubName} has exercised its matching rights to retain restricted free agent ${listing.playerName} on a ${winner.years}-year deal worth ${winner.aav.toLocaleString()} per year.`,
+            category: 'contract',
+            clubIds: [holdingClub, winner.clubId],
+            playerIds: [listing.playerId],
+          })
+          return { ...listing, bids: scoredBids, status: 'signed' as const, signedClubId: holdingClub }
+        }
+        // AI declines — fall through to normal signing below
+      }
+    }
 
     // Apply signing
     const yearByYear = [...winner.yearByYear]
@@ -616,5 +680,6 @@ export function resolveMarket(
     updatedPlayers,
     compensationPicks,
     news,
+    pendingMatchingRights,
   }
 }

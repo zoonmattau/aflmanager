@@ -7,7 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Settings } from 'lucide-react'
-import type { ClubGameplan } from '@/types/club'
+import type { ClubGameplan, PlayStyleRules } from '@/types/club'
+import { DEFAULT_PLAY_STYLE } from '@/engine/gameplan/defaults'
 import type { Player } from '@/types/player'
 import { applyGameplanAdjustment } from '@/engine/coaching/tacticalAdjustments'
 import { createDefaultGameplan } from '@/engine/gameplan/defaults'
@@ -155,6 +156,7 @@ export function GameplanPage() {
           <TabsTrigger value="set-pieces">Set Pieces</TabsTrigger>
           <TabsTrigger value="line-tactics">Line Tactics</TabsTrigger>
           <TabsTrigger value="ruck-rotations">Ruck &amp; Rotations</TabsTrigger>
+          <TabsTrigger value="play-style">Play Style</TabsTrigger>
         </TabsList>
 
         {/* Tab 1: General */}
@@ -482,7 +484,7 @@ export function GameplanPage() {
         </TabsContent>
 
         {/* Tab 4: Ruck & Rotations */}
-        <TabsContent value="ruck-rotations">
+        <TabsContent value="ruck-rotations" className="mt-0">
           <div className="grid gap-6 md:grid-cols-2">
             <Card>
               <CardHeader>
@@ -600,6 +602,189 @@ export function GameplanPage() {
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+        {/* Tab 5: Play Style */}
+        <TabsContent value="play-style">
+          {(() => {
+            const ps: PlayStyleRules = { ...DEFAULT_PLAY_STYLE, ...activePlan.playStyle }
+            const updatePS = (patch: Partial<PlayStyleRules>) =>
+              updatePlan({ playStyle: { ...ps, ...patch } })
+            return (
+              <div className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  {/* Forward Leading */}
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm">Forward Leading Lanes</CardTitle>
+                      <CardDescription className="text-xs">
+                        How your forwards set up and move to create scoring options
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <Select
+                        value={ps.forwardLeading}
+                        onValueChange={(v) => updatePS({ forwardLeading: v as PlayStyleRules['forwardLeading'] })}
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="straight">Straight — Direct leads toward the ball carrier</SelectItem>
+                          <SelectItem value="diagonal">Diagonal — Angled leads across the corridor</SelectItem>
+                          <SelectItem value="hold-spread">Hold &amp; Spread — Hold position, spread wide for long ball</SelectItem>
+                          <SelectItem value="rotate">Rotate — Constant rotation through the forward line</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="mt-1.5 text-[11px] text-muted-foreground">
+                        {ps.forwardLeading === 'straight' && '+ More inside 50 entries. − Defenders can read the lead pattern.'}
+                        {ps.forwardLeading === 'diagonal' && '+ Harder for defenders to read. + Better marking position.'}
+                        {ps.forwardLeading === 'hold-spread' && '+ Better set-shot accuracy. − Fewer corridor options.'}
+                        {ps.forwardLeading === 'rotate' && '+ Creates uncontested space. + Good for fast tempo teams.'}
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Tap Direction */}
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm">Tap Direction</CardTitle>
+                      <CardDescription className="text-xs">
+                        Preferred ruck tap direction at centre bounces and ball-ups
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <Select
+                        value={ps.tapDirection}
+                        onValueChange={(v) => updatePS({ tapDirection: v as PlayStyleRules['tapDirection'] })}
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="forward">Forward — Tap to advantage, direct entries</SelectItem>
+                          <SelectItem value="backward">Backward — Tap back to midfielder in space</SelectItem>
+                          <SelectItem value="read-and-react">Read &amp; React — Best available option</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="mt-1.5 text-[11px] text-muted-foreground">
+                        {ps.tapDirection === 'forward' && '+ More direct forward entries. − Opponents can pre-position.'}
+                        {ps.tapDirection === 'backward' && '+ Midfielder collects cleanly. − Slower to get ball forward.'}
+                        {ps.tapDirection === 'read-and-react' && '+ Optimal decision each time. Best for dominant ruck units.'}
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Stoppage Movement */}
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm">Stoppage Movement</CardTitle>
+                      <CardDescription className="text-xs">
+                        How players position around general play stoppages
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <Select
+                        value={ps.stoppageMovement}
+                        onValueChange={(v) => updatePS({ stoppageMovement: v as PlayStyleRules['stoppageMovement'] })}
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="flood-back">Flood Back — Defensive shape, numbers behind the ball</SelectItem>
+                          <SelectItem value="push-forward">Push Forward — Attack the clearance, flood forward targets</SelectItem>
+                          <SelectItem value="numbers">Numbers — Get extra bodies to the contest</SelectItem>
+                          <SelectItem value="balanced">Balanced — Read the situation</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="mt-1.5 text-[11px] text-muted-foreground">
+                        {ps.stoppageMovement === 'flood-back' && '+ Less exposed on turnovers. − Fewer forward options after clearance.'}
+                        {ps.stoppageMovement === 'push-forward' && '+ More targets after clearance. − Exposed on defensive turnovers.'}
+                        {ps.stoppageMovement === 'numbers' && '+ Win more contested ball. + More tackles at the contest.'}
+                        {ps.stoppageMovement === 'balanced' && 'Situation-dependent movement. No major tradeoffs.'}
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  {/* Switch Frequency */}
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm">Switch Frequency</CardTitle>
+                      <CardDescription className="text-xs">
+                        How often the team switches play to the wide or weak side
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <Select
+                        value={ps.switchFrequency}
+                        onValueChange={(v) => updatePS({ switchFrequency: v as PlayStyleRules['switchFrequency'] })}
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="often">Often — Frequently move ball to open side</SelectItem>
+                          <SelectItem value="normal">Normal — Switch when available</SelectItem>
+                          <SelectItem value="rarely">Rarely — Direct corridor play</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="mt-1.5 text-[11px] text-muted-foreground">
+                        {ps.switchFrequency === 'often' && '+ More uncontested possessions. + Better marking options. − Slower inside 50 entry.'}
+                        {ps.switchFrequency === 'normal' && 'Balanced approach — switch when the opportunity arises.'}
+                        {ps.switchFrequency === 'rarely' && '+ More inside 50 entries. − Congested corridors, more contested ball.'}
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* General play rules */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">General Play Rules</CardTitle>
+                    <CardDescription className="text-xs">
+                      Specific in-play movement and disposal instructions
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-start gap-3">
+                      <Switch
+                        id="no-uturns"
+                        checked={ps.noUTurns}
+                        onCheckedChange={(v) => updatePS({ noUTurns: v })}
+                        className="mt-0.5"
+                      />
+                      <div>
+                        <Label htmlFor="no-uturns" className="text-sm font-medium">No U-Turns</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Players maintain forward momentum — never stop and reverse direction when receiving. Creates cleaner disposal angles and reduces intercept risk.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <Switch
+                        id="handball-to-runner"
+                        checked={ps.handbballToRunner}
+                        onCheckedChange={(v) => updatePS({ handbballToRunner: v })}
+                        className="mt-0.5"
+                      />
+                      <div>
+                        <Label htmlFor="handball-to-runner" className="text-sm font-medium">Handball to Player Running Past</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Prefer handballing to a teammate in motion rather than a stationary target. Generates momentum, creates uncontested possession chains.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <Switch
+                        id="no-kick-back"
+                        checked={ps.noKickBackAcrossGoal}
+                        onCheckedChange={(v) => updatePS({ noKickBackAcrossGoal: v })}
+                        className="mt-0.5"
+                      />
+                      <div>
+                        <Label htmlFor="no-kick-back" className="text-sm font-medium">No Kick Back Across Goal</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Avoid kicking backward or across the face of goal in the forward 50. Reduces dangerous turnovers but slightly limits creative options.
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )
+          })()}
         </TabsContent>
       </Tabs>
 

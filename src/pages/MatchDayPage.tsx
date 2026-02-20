@@ -20,9 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { simulateMatch } from '@/engine/match/simulateMatch'
 import type { SimulateMatchInput } from '@/engine/match/simulateMatch'
-import { processMatchResults } from '@/engine/season/processResults'
 import { LiveMatchView } from '@/components/match/LiveMatchView'
 import { MatchReportModal } from '@/components/match/MatchReportModal'
 import { getOverallRating } from '@/engine/player/playerRating'
@@ -60,13 +58,17 @@ import {
   Eye,
 } from 'lucide-react'
 
+const EMPTY_H2H: Record<string, import('@/types/history').H2HRecord> = {}
+
 const MATCH_DAY_ORDER: MatchDay[] = [
   'Thursday',
   'Friday',
   'Saturday-Early',
+  'Saturday-Afternoon',
   'Saturday-Twilight',
   'Saturday-Night',
   'Sunday-Early',
+  'Sunday-Afternoon',
   'Sunday-Twilight',
   'Monday',
 ]
@@ -74,11 +76,13 @@ const MATCH_DAY_ORDER: MatchDay[] = [
 const MATCH_DAY_LABELS: Record<MatchDay, string> = {
   Thursday: 'Thursday Night',
   Friday: 'Friday Night',
-  'Saturday-Early': 'Saturday Afternoon',
+  'Saturday-Early': 'Saturday Early',
+  'Saturday-Afternoon': 'Saturday Afternoon',
   'Saturday-Twilight': 'Saturday Twilight',
   'Saturday-Night': 'Saturday Night',
   'Sunday-Early': 'Sunday Early',
-  'Sunday-Twilight': 'Sunday Afternoon',
+  'Sunday-Afternoon': 'Sunday Afternoon',
+  'Sunday-Twilight': 'Sunday Twilight',
   Monday: 'Monday',
 }
 
@@ -331,15 +335,13 @@ export function MatchDayPage() {
   const matchResults = useGameStore((s) => s.matchResults)
   const ladder = useGameStore((s) => s.ladder)
   const rngSeed = useGameStore((s) => s.rngSeed)
-  const addMatchResult = useGameStore((s) => s.addMatchResult)
-  const advanceRound = useGameStore((s) => s.advanceRound)
   const simCurrentRound = useGameStore((s) => s.simCurrentRound)
   const updateFixtureGame = useGameStore((s) => s.updateFixtureGame)
   const moveFixtureInRound = useGameStore((s) => s.moveFixtureInRound)
   const swapFixturesInRound = useGameStore((s) => s.swapFixturesInRound)
 
   const matchReports = useGameStore((s) => s.history.matchReports)
-  const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
+  const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
 
   const [lastMatchResult, setLastMatchResult] = useState<Match | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
@@ -572,31 +574,8 @@ export function MatchDayPage() {
   }
 
   const handleSimRound = () => {
-    const results: Match[] = round.fixtures.map((fixture, i) =>
-      simulateMatch({
-        homeClubId: fixture.homeClubId,
-        awayClubId: fixture.awayClubId,
-        venue: fixture.venue,
-        venueId: fixture.venueId,
-        matchDay: fixture.matchDay,
-        round: currentRound,
-        players,
-        clubs,
-        seed: rngSeed + currentRound * 100 + i,
-        matchRules: settings.matchRules,
-        realism: settings.realism,
-      }),
-    )
-
-    results.forEach((m) => addMatchResult(m))
-    processMatchResults(results, useGameStore.getState, useGameStore.setState)
-
-    const userMatch = results.find(
-      (m) => m.homeClubId === playerClubId || m.awayClubId === playerClubId,
-    )
-    if (userMatch) setLastMatchResult(userMatch)
-
-    advanceRound()
+    const result = simCurrentRound()
+    if (result.userMatch) setLastMatchResult(result.userMatch)
   }
 
   const handlePlayLive = () => {

@@ -24,6 +24,8 @@ import { Button } from '@/components/ui/button'
 import { MatchReportModal } from '@/components/match/MatchReportModal'
 import type { MatchReport } from '@/types/history'
 
+const EMPTY_H2H: Record<string, import('@/types/history').H2HRecord> = {}
+
 const FINALS_ORDER: Array<'QF' | 'EF' | 'SF' | 'PF' | 'GF'> = ['QF', 'EF', 'SF', 'PF', 'GF']
 const FINALS_LABELS: Record<string, string> = {
   QF: 'Qualifying Finals',
@@ -36,7 +38,7 @@ const FINALS_LABELS: Record<string, string> = {
 export function LeagueHistoryPage() {
   const history = useGameStore((s) => s.history)
   const clubs = useGameStore((s) => s.clubs)
-  const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
+  const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
   const players = useGameStore((s) => s.players)
   const tradeHistory = useGameStore((s) => s.tradeHistory)
 

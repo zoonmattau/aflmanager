@@ -8,6 +8,7 @@ import {
   Handshake,
   Globe,
   BookOpen,
+  Shirt,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -36,17 +37,32 @@ export const navGroups: NavGroup[] = [
     label: 'Team',
     icon: Users,
     defaultTo: '/squad',
-    matchPaths: ['/squad', '/lineup', '/gameplan', '/training', '/reserves', '/reserves/match-preview', '/injury-report', '/jumper-management', '/compare'],
+    matchPaths: ['/squad', '/lineup', '/gameplan', '/training', '/injury-report', '/jumper-management', '/compare'],
     items: [
       { to: '/squad', label: 'Squad' },
       { to: '/lineup', label: 'Lineup' },
       { to: '/gameplan', label: 'Gameplan' },
       { to: '/training', label: 'Training' },
-      { to: '/reserves', label: 'Reserves' },
-      { to: '/reserves/match-preview', label: 'Reserves Preview' },
       { to: '/injury-report', label: 'Injuries' },
       { to: '/compare', label: 'Compare' },
       { to: '/jumper-management', label: 'Jumper Numbers' },
+    ],
+  },
+  {
+    id: 'reserves',
+    label: 'Reserves',
+    icon: Shirt,
+    defaultTo: '/reserves',
+    matchPaths: ['/reserves'],
+    items: [
+      { to: '/reserves', label: 'Dashboard' },
+      { to: '/reserves/squad', label: 'Squad' },
+      { to: '/reserves/lineup', label: 'Lineup & Tactics' },
+      { to: '/reserves/development', label: 'Development' },
+      { to: '/reserves/fixtures', label: 'Fixtures & Ladder' },
+      { to: '/reserves/stats', label: 'Stats' },
+      { to: '/reserves/staff', label: 'Staff' },
+      { to: '/reserves/match-preview', label: 'Match Preview' },
     ],
   },
   {
@@ -54,7 +70,7 @@ export const navGroups: NavGroup[] = [
     label: 'Season',
     icon: Swords,
     defaultTo: '/fixture',
-    matchPaths: ['/fixture', '/match', '/ladder', '/calendar', '/tribunal', '/preseason-preview', '/offseason'],
+    matchPaths: ['/fixture', '/match', '/ladder', '/calendar', '/tribunal', '/preseason-preview', '/offseason', '/betting', '/state-of-origin'],
     items: [
       { to: '/fixture', label: 'Fixture' },
       { to: '/ladder', label: 'Ladder' },
@@ -62,6 +78,8 @@ export const navGroups: NavGroup[] = [
       { to: '/tribunal', label: 'Tribunal' },
       { to: '/preseason-preview', label: 'Season Preview' },
       { to: '/offseason', label: 'Offseason' },
+      { to: '/betting', label: 'Betting' },
+      { to: '/state-of-origin', label: 'State of Origin' },
     ],
   },
   {
@@ -87,11 +105,10 @@ export const navGroups: NavGroup[] = [
     label: 'Club',
     icon: Building2,
     defaultTo: '/club',
-    matchPaths: ['/club', '/expansion', '/membership'],
+    matchPaths: ['/club', '/membership'],
     items: [
       { to: '/club', label: 'Club' },
       { to: '/membership', label: 'Membership' },
-      { to: '/expansion', label: 'Expansion' },
     ],
   },
   {
@@ -99,12 +116,14 @@ export const navGroups: NavGroup[] = [
     label: 'World',
     icon: Globe,
     defaultTo: '/world-hub',
-    matchPaths: ['/world-hub', '/league', '/state-leagues', '/development-report'],
+    matchPaths: ['/world-hub', '/league', '/state-leagues', '/development-report', '/youth-pathway', '/expansion'],
     items: [
       { to: '/world-hub', label: 'Hub' },
       { to: '/league', label: 'League' },
       { to: '/state-leagues', label: 'State Leagues' },
+      { to: '/youth-pathway', label: 'Youth Pathway' },
       { to: '/development-report', label: 'Dev Report' },
+      { to: '/expansion', label: 'Expansion' },
     ],
   },
   {
@@ -112,11 +131,12 @@ export const navGroups: NavGroup[] = [
     label: 'History',
     icon: BookOpen,
     defaultTo: '/records',
-    matchPaths: ['/records', '/history', '/awards-history', '/rules', '/glossary'],
+    matchPaths: ['/records', '/history', '/awards-history', '/all-australian', '/rules', '/glossary'],
     items: [
       { to: '/records', label: 'Records' },
       { to: '/history', label: 'History' },
       { to: '/awards-history', label: 'Awards History' },
+      { to: '/all-australian/squad', label: 'AA Squad' },
       { to: '/rules', label: 'Rulebook' },
       { to: '/glossary', label: 'Glossary' },
     ],

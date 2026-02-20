@@ -853,11 +853,13 @@ const DAY_ORDER: Record<MatchDay, number> = {
   Thursday: 0,
   Friday: 1,
   'Saturday-Early': 2,
-  'Saturday-Twilight': 3,
-  'Saturday-Night': 4,
-  'Sunday-Early': 5,
-  'Sunday-Twilight': 6,
-  Monday: 7,
+  'Saturday-Afternoon': 3,
+  'Saturday-Twilight': 4,
+  'Saturday-Night': 5,
+  'Sunday-Early': 6,
+  'Sunday-Afternoon': 7,
+  'Sunday-Twilight': 8,
+  Monday: 9,
 }
 
 function normalizeRoundFixtures(
@@ -1055,21 +1057,21 @@ const BIG_CLUB_IDS = new Set([
 ])
 
 const FULL_ROUND_DAY_TEMPLATES: MatchDay[][] = [
-  ['Thursday', 'Friday', 'Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Twilight', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight'],
-  ['Thursday', 'Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Twilight', 'Saturday-Night', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight'],
-  ['Thursday', 'Friday', 'Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Night', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight'],
-  ['Thursday', 'Friday', 'Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight', 'Sunday-Twilight'],
+  ['Thursday', 'Friday', 'Friday', 'Saturday-Early', 'Saturday-Afternoon', 'Saturday-Twilight', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight'],
+  ['Thursday', 'Friday', 'Saturday-Early', 'Saturday-Afternoon', 'Saturday-Twilight', 'Saturday-Night', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight'],
+  ['Thursday', 'Friday', 'Friday', 'Saturday-Early', 'Saturday-Afternoon', 'Saturday-Night', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight'],
+  ['Thursday', 'Friday', 'Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Night', 'Sunday-Early', 'Sunday-Afternoon', 'Sunday-Twilight'],
 ]
 
 const REDUCED_ROUND_DAY_TEMPLATES: Record<number, MatchDay[]> = {
   1: ['Saturday-Night'],
   2: ['Friday', 'Saturday-Night'],
-  3: ['Friday', 'Saturday-Twilight', 'Sunday-Twilight'],
+  3: ['Friday', 'Saturday-Afternoon', 'Sunday-Twilight'],
   4: ['Friday', 'Saturday-Early', 'Saturday-Night', 'Sunday-Twilight'],
-  5: ['Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Night', 'Sunday-Twilight'],
-  6: ['Thursday', 'Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Night', 'Sunday-Twilight'],
-  7: ['Thursday', 'Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight'],
-  8: ['Thursday', 'Friday', 'Saturday-Early', 'Saturday-Twilight', 'Saturday-Twilight', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight'],
+  5: ['Friday', 'Saturday-Early', 'Saturday-Afternoon', 'Saturday-Night', 'Sunday-Twilight'],
+  6: ['Thursday', 'Friday', 'Saturday-Early', 'Saturday-Afternoon', 'Saturday-Night', 'Sunday-Twilight'],
+  7: ['Thursday', 'Friday', 'Saturday-Early', 'Saturday-Afternoon', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight'],
+  8: ['Thursday', 'Friday', 'Saturday-Early', 'Saturday-Afternoon', 'Saturday-Twilight', 'Saturday-Night', 'Sunday-Early', 'Sunday-Twilight'],
 }
 
 function parseTimeToMinutes(time: string): number {
@@ -1169,9 +1171,11 @@ function pickRoundSlots(
     Thursday: fixedDayUsage?.Thursday ?? 0,
     Friday: fixedDayUsage?.Friday ?? 0,
     'Saturday-Early': fixedDayUsage?.['Saturday-Early'] ?? 0,
+    'Saturday-Afternoon': fixedDayUsage?.['Saturday-Afternoon'] ?? 0,
     'Saturday-Twilight': fixedDayUsage?.['Saturday-Twilight'] ?? 0,
     'Saturday-Night': fixedDayUsage?.['Saturday-Night'] ?? 0,
     'Sunday-Early': fixedDayUsage?.['Sunday-Early'] ?? 0,
+    'Sunday-Afternoon': fixedDayUsage?.['Sunday-Afternoon'] ?? 0,
     'Sunday-Twilight': fixedDayUsage?.['Sunday-Twilight'] ?? 0,
     Monday: fixedDayUsage?.Monday ?? 0,
   }
@@ -1194,9 +1198,11 @@ function pickRoundSlots(
     Thursday: [],
     Friday: [],
     'Saturday-Early': [],
+    'Saturday-Afternoon': [],
     'Saturday-Twilight': [],
     'Saturday-Night': [],
     'Sunday-Early': [],
+    'Sunday-Afternoon': [],
     'Sunday-Twilight': [],
     Monday: [],
   }
@@ -1209,9 +1215,11 @@ function pickRoundSlots(
     Thursday: byDay.Thursday.length > 0 ? rng.nextInt(0, byDay.Thursday.length - 1) : 0,
     Friday: byDay.Friday.length > 0 ? rng.nextInt(0, byDay.Friday.length - 1) : 0,
     'Saturday-Early': byDay['Saturday-Early'].length > 0 ? rng.nextInt(0, byDay['Saturday-Early'].length - 1) : 0,
+    'Saturday-Afternoon': byDay['Saturday-Afternoon'].length > 0 ? rng.nextInt(0, byDay['Saturday-Afternoon'].length - 1) : 0,
     'Saturday-Twilight': byDay['Saturday-Twilight'].length > 0 ? rng.nextInt(0, byDay['Saturday-Twilight'].length - 1) : 0,
     'Saturday-Night': byDay['Saturday-Night'].length > 0 ? rng.nextInt(0, byDay['Saturday-Night'].length - 1) : 0,
     'Sunday-Early': byDay['Sunday-Early'].length > 0 ? rng.nextInt(0, byDay['Sunday-Early'].length - 1) : 0,
+    'Sunday-Afternoon': byDay['Sunday-Afternoon'].length > 0 ? rng.nextInt(0, byDay['Sunday-Afternoon'].length - 1) : 0,
     'Sunday-Twilight': byDay['Sunday-Twilight'].length > 0 ? rng.nextInt(0, byDay['Sunday-Twilight'].length - 1) : 0,
     Monday: byDay.Monday.length > 0 ? rng.nextInt(0, byDay.Monday.length - 1) : 0,
   }

@@ -13,11 +13,11 @@ import {
 } from '@/components/ui/tooltip'
 import { useNavigate } from 'react-router-dom'
 import {
-  Trophy,
+  Trophy, Calendar,
   Play, FastForward, SkipForward, ChevronLeft, ChevronRight, ArrowRight,
   Plus, Moon, X,
   Users, ClipboardList, Shield, BarChart3, Gamepad2,
-  AlertTriangle, GraduationCap, Scale, Mail, FileText, Cog, DollarSign,
+  AlertTriangle, GraduationCap, Scale, Mail, FileText, DollarSign,
   Newspaper, TrendingUp, TrendingDown, Minus,
 } from 'lucide-react'
 import type { Match } from '@/types/match'
@@ -71,6 +71,9 @@ import { isPlayerSuspended } from '@/engine/players/availability'
 import { canBeSelectedForAfl } from '@/engine/players/contracts'
 import { PLAYER_TRAINING_FOCUS_LABELS } from '@/engine/players/trainingFocus'
 import { applyMediaCoverage, deriveMediaStories } from '@/engine/media/mediaFeedEngine'
+
+// Stable fallback for optional h2hRecords (avoids new-reference-per-render in selector)
+const EMPTY_H2H: Record<string, import('@/types/history').H2HRecord> = {}
 
 // ---------------------------------------------------------------------------
 // Calendar constants
@@ -406,7 +409,9 @@ export function DashboardPage() {
   const simToEnd = useGameStore((s) => s.simToEnd)
   const simFinalsRound = useGameStore((s) => s.simFinalsRound)
   const matchResults = useGameStore((s) => s.matchResults)
-const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
+  const specialEvents = useGameStore((s) => s.specialEvents)
+const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
+  const seasonArchives = useGameStore((s) => s.history.seasonArchives)
   const calendar = useGameStore((s) => s.calendar)
   const weekSchedule = useGameStore((s) => s.weekSchedule)
   const setDaySlot = useGameStore((s) => s.setDaySlot)
@@ -432,6 +437,9 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
   const simHalfDay = useGameStore((s) => s.simOffseasonHalfDay)
   const simFullDay = useGameStore((s) => s.simOffseasonFullDay)
   const simToMilestone = useGameStore((s) => s.simOffseasonToMilestone)
+  const simSpecialEvent = useGameStore((s) => s.simSpecialEvent)
+  const advanceDateToNextCalendarEvent = useGameStore((s) => s.advanceDateToNextCalendarEvent)
+  const advanceOneDay = useGameStore((s) => s.advanceOneDay)
 
   // Offseason derived state
   const isOffseason = phase === 'offseason'
@@ -439,6 +447,8 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
   const effectiveDate = isOffseason ? offseasonDate : currentDate
 
   const [lastResult, setLastResult] = useState<Match | null>(null)
+  const [lastSpecialResult, setLastSpecialResult] = useState<import('@/types/specialEvents').SpecialEventMatchResult | null>(null)
+  const [lastSpecialEventTitle, setLastSpecialEventTitle] = useState<string | null>(null)
   const [simming, setSimming] = useState(false)
   const [premierMsg, setPremierMsg] = useState<string | null>(null)
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
@@ -504,6 +514,53 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
       oppScore: isUserHome ? m.result!.awayTotalScore : m.result!.homeTotalScore,
     }
   }, [matchResults, playerClubId, opponentId])
+
+  // Ladder position after each completed regular-season round
+  const ladderProgressionData = useMemo(() => {
+    if (!matchResults.length) return [] as { round: number; position: number }[]
+    const played = matchResults.filter((m) => m.result && !m.isFinal)
+    if (!played.length) return []
+    const maxRound = Math.max(...played.map((m) => m.round))
+    const result: { round: number; position: number }[] = []
+    for (let r = 1; r <= maxRound; r++) {
+      const roundMatches = played.filter((m) => m.round <= r)
+      const totals: Record<string, { pts: number; pf: number; pa: number }> = {}
+      for (const m of roundMatches) {
+        const res = m.result!
+        if (!totals[m.homeClubId]) totals[m.homeClubId] = { pts: 0, pf: 0, pa: 0 }
+        if (!totals[m.awayClubId]) totals[m.awayClubId] = { pts: 0, pf: 0, pa: 0 }
+        const homeWin = res.homeTotalScore > res.awayTotalScore
+        const draw = res.homeTotalScore === res.awayTotalScore
+        totals[m.homeClubId].pts += homeWin ? 4 : draw ? 2 : 0
+        totals[m.awayClubId].pts += homeWin ? 0 : draw ? 2 : 4
+        totals[m.homeClubId].pf += res.homeTotalScore
+        totals[m.homeClubId].pa += res.awayTotalScore
+        totals[m.awayClubId].pf += res.awayTotalScore
+        totals[m.awayClubId].pa += res.homeTotalScore
+      }
+      const sorted = Object.entries(totals).sort(([, a], [, b]) => {
+        if (b.pts !== a.pts) return b.pts - a.pts
+        const aPct = a.pa > 0 ? a.pf / a.pa : a.pf > 0 ? 999 : 0
+        const bPct = b.pa > 0 ? b.pf / b.pa : b.pf > 0 ? 999 : 0
+        return bPct - aPct
+      })
+      const pos = sorted.findIndex(([id]) => id === playerClubId) + 1
+      if (pos > 0) result.push({ round: r, position: pos })
+    }
+    return result
+  }, [matchResults, playerClubId])
+
+  // Historical end-of-season ladder position per year
+  const historicalPositionData = useMemo(() => {
+    if (!seasonArchives?.length) return [] as { year: number; position: number }[]
+    return seasonArchives
+      .map((archive) => {
+        const pos = archive.ladder.findIndex((e) => e.clubId === playerClubId) + 1
+        return pos > 0 ? { year: archive.year, position: pos } : null
+      })
+      .filter((d): d is { year: number; position: number } => d !== null)
+      .sort((a, b) => a.year - b.year)
+  }, [seasonArchives, playerClubId])
 
   const isRivalry = useMemo(
     () => opponentId ? isRivalryMatch(playerClubId, opponentId, clubs) : false,
@@ -812,6 +869,18 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
     setSimming(false)
   }
 
+  const handleSimPreseasonEvent = () => {
+    if (!nextEvent || nextEvent.type !== 'special-event') return
+    const eventInstanceId = nextEvent.data?.specialEventId as string | undefined
+    if (!eventInstanceId) return
+    setLastResult(null)
+    setLastSpecialResult(null)
+    const { result } = simSpecialEvent(eventInstanceId)
+    setLastSpecialResult(result)
+    setLastSpecialEventTitle(nextEvent.title)
+    advanceDateToNextCalendarEvent()
+  }
+
   const handleAutoFillTraining = () => {
     // Rotation of focuses the assistant coach picks, balanced across position groups
     const rotation: (TrainingFocus | 'rest')[] = [
@@ -845,6 +914,12 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
 
   // Next event context for the subtitle
   const nextEvent = useMemo(() => getNextEvent(calendar), [calendar])
+  // True when the next thing to do is a preseason special event (before Round 1)
+  const isPreseasonSpecialEvent = useMemo(() => {
+    if (!nextEvent || nextEvent.type !== 'special-event') return false
+    const seasonStart = settings.seasonStartDate ?? '2026-03-20'
+    return nextEvent.date < seasonStart
+  }, [nextEvent, settings.seasonStartDate])
 
   // Next match date derived from the season start and round schedule
   const nextMatchDate = useMemo(() => {
@@ -1103,15 +1178,6 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
                   </span>
                 )}
               </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={() => navigate('/game-settings')}
-                aria-label="Open game settings"
-              >
-                <Cog className="h-4 w-4" />
-              </Button>
             </div>
             <p className="text-muted-foreground">
               {isOffseason ? (
@@ -1143,7 +1209,7 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
               {isOffseason && offseasonState?.calendarState
                 ? formatOffseasonDateTime(offseasonState.calendarState)
                 : nextFixture
-                  ? `${nextFixture.matchDay} ${nextFixture.scheduledTime} · ${daysToNextMatch === null ? 'TBC' : daysToNextMatch === 0 ? 'Game day' : `${daysToNextMatch} day${daysToNextMatch === 1 ? '' : 's'} to match`}`
+                  ? `vs ${opponent?.abbreviation ?? opponentId} · #${ladderPosition} v #${opponentLadderPosition || '—'} · ${daysToNextMatch === null ? 'TBC' : daysToNextMatch === 0 ? 'Game day' : `${daysToNextMatch}d away`}`
                   : `Round ${currentRound + 1} of ${season.rounds.length}`
               }
             </p>
@@ -1180,17 +1246,68 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
                 </TooltipProvider>
               </div>
             </div>
-          ) : !seasonComplete ? (
+          ) : isPreseasonSpecialEvent ? (
             <div className="flex flex-col items-end gap-1">
               <Button
                 size="lg"
-                className="h-11 px-5 text-base font-bold"
-                onClick={handleSimWeek}
+                className="h-11 px-5 text-base font-bold bg-amber-600 hover:bg-amber-700"
+                onClick={handleSimPreseasonEvent}
                 disabled={simming || simulationActive}
               >
                 <Play className="mr-2 h-5 w-5" />
-                Continue
+                Simulate Event
               </Button>
+              <span className="text-[10px] text-muted-foreground">
+                {nextEvent?.title}
+              </span>
+            </div>
+          ) : !seasonComplete ? (
+            <div className="flex flex-col items-end gap-1">
+              <div className="flex gap-1">
+                <TooltipProvider delayDuration={300}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="lg"
+                        className="h-11 px-3.5"
+                        onClick={advanceOneDay}
+                        disabled={simming || simulationActive}
+                      >
+                        <Play className="h-5 w-5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Advance 1 Day</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="lg"
+                        variant="outline"
+                        className="h-11 px-3.5"
+                        onClick={advanceDateToNextCalendarEvent}
+                        disabled={simming || simulationActive}
+                      >
+                        <FastForward className="h-5 w-5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Skip to Next Event</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="lg"
+                        variant="outline"
+                        className="h-11 px-3.5"
+                        onClick={handleSimWeek}
+                        disabled={simming || simulationActive}
+                      >
+                        <SkipForward className="h-5 w-5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Simulate Round</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
               {nextEvent && (
                 <span className="text-[10px] text-muted-foreground">
                   Next: {nextEvent.title}
@@ -1221,9 +1338,9 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
             <div className="flex items-center gap-3">
               <CardTitle className="text-base">{weekLabel}</CardTitle>
               <Button
-                variant="ghost"
+                variant="outline"
                 size="sm"
-                className="text-xs h-6"
+                className="h-6 px-2 text-xs font-medium"
                 onClick={() => setWeekStart(getWeekStart(effectiveDate))}
               >
                 Today
@@ -1355,9 +1472,13 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
             <div className="ml-auto flex items-center gap-3">
               {!isOffseason && (
                 <Button
-                  variant="outline"
+                  variant={scheduledSlotCount === 0 ? 'default' : 'outline'}
                   size="sm"
-                  className="h-6 text-[10px] px-2"
+                  className={
+                    scheduledSlotCount === 0
+                      ? 'h-6 text-[10px] px-2 bg-amber-500 hover:bg-amber-600 text-white border-0 animate-pulse'
+                      : 'h-6 text-[10px] px-2'
+                  }
                   onClick={handleAutoFillTraining}
                 >
                   <ClipboardList className="mr-1 h-3 w-3" />
@@ -1390,24 +1511,93 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
               {selectedEvents.length === 0 ? (
                 <p className="text-xs text-muted-foreground">No events on this day.</p>
               ) : (
-                <div className="space-y-1.5">
-                  {selectedEvents.map((evt) => (
-                    <div key={evt.id} className="flex items-start gap-2">
-                      <div className={`h-2 w-2 rounded-full mt-1 flex-shrink-0 ${EVENT_COLORS[evt.type]}`} />
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium">{evt.title}</p>
-                        {evt.description && (
-                          <p className="text-xs text-muted-foreground">{evt.description}</p>
-                        )}
-                        <Badge
-                          variant={evt.resolved ? 'secondary' : 'outline'}
-                          className="text-[10px] mt-0.5"
-                        >
-                          {evt.resolved ? 'Completed' : 'Upcoming'}
-                        </Badge>
+                <div className="space-y-2">
+                  {selectedEvents.map((evt) => {
+                    // Find the played match for this calendar event
+                    const playedMatch = evt.type === 'match' && evt.resolved
+                      ? matchResults.find((m) =>
+                          m.date === evt.date && m.result !== null &&
+                          (m.homeClubId === playerClubId || m.awayClubId === playerClubId
+                            ? true
+                            : clubs[m.homeClubId] && clubs[m.awayClubId]),
+                        )
+                      : null
+
+                    // Find the SOO instance for special-event types
+                    const sooInstance = evt.type === 'special-event' && evt.data?.specialEventId
+                      ? specialEvents?.events.find((e) => e.id === (evt.data?.specialEventId as string))
+                      : null
+
+                    return (
+                      <div key={evt.id} className="rounded-md border bg-muted/20 p-2.5">
+                        <div className="flex items-start gap-2">
+                          <div className={`h-2 w-2 rounded-full mt-1.5 flex-shrink-0 ${EVENT_COLORS[evt.type]}`} />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium leading-tight">{evt.title}</p>
+                            {evt.description && (
+                              <p className="text-xs text-muted-foreground">{evt.description}</p>
+                            )}
+
+                            {/* Past match score */}
+                            {playedMatch?.result && (() => {
+                              const isHome = playedMatch.homeClubId === playerClubId
+                              const userScore = isHome ? playedMatch.result.homeTotalScore : playedMatch.result.awayTotalScore
+                              const oppScore = isHome ? playedMatch.result.awayTotalScore : playedMatch.result.homeTotalScore
+                              const won = userScore > oppScore
+                              const lost = userScore < oppScore
+                              return (
+                                <div className="mt-1.5 space-y-0.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`text-sm font-bold font-mono ${won ? 'text-green-500' : lost ? 'text-red-500' : 'text-muted-foreground'}`}>
+                                      {won ? 'W' : lost ? 'L' : 'D'}
+                                    </span>
+                                    <span className="text-sm font-mono font-bold">
+                                      {clubs[playedMatch.homeClubId]?.abbreviation} {playedMatch.result.homeTotalScore} – {playedMatch.result.awayTotalScore} {clubs[playedMatch.awayClubId]?.abbreviation}
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-muted-foreground font-mono">
+                                    {playedMatch.result.homeScores.map((q) => `${q.goals}.${q.behinds}`).join(' | ')}
+                                    {' vs '}
+                                    {playedMatch.result.awayScores.map((q) => `${q.goals}.${q.behinds}`).join(' | ')}
+                                  </div>
+                                  <Button variant="link" size="sm" className="h-5 px-0 text-xs" onClick={() => navigate('/fixture')}>
+                                    Full stats <ChevronRight className="ml-0.5 h-3 w-3" />
+                                  </Button>
+                                </div>
+                              )
+                            })()}
+
+                            {/* Past SOO score */}
+                            {sooInstance?.result && (() => {
+                              const { teamAScore, teamBScore, bestOnGround } = sooInstance.result
+                              const bog = bestOnGround ? players[bestOnGround] : null
+                              return (
+                                <div className="mt-1.5 space-y-0.5">
+                                  <div className="text-sm font-mono font-bold">
+                                    {sooInstance.teamA.name} {teamAScore.total} – {teamBScore.total} {sooInstance.teamB.name}
+                                  </div>
+                                  <div className="text-[10px] text-muted-foreground">
+                                    {teamAScore.goals}.{teamAScore.behinds} — {teamBScore.goals}.{teamBScore.behinds}
+                                    {bog && ` · BOG: ${bog.firstName} ${bog.lastName}`}
+                                  </div>
+                                  <Button variant="link" size="sm" className="h-5 px-0 text-xs" onClick={() => navigate('/state-of-origin')}>
+                                    View series <ChevronRight className="ml-0.5 h-3 w-3" />
+                                  </Button>
+                                </div>
+                              )
+                            })()}
+
+                            {/* Fallback badge for non-match resolved events */}
+                            {!playedMatch?.result && !sooInstance?.result && (
+                              <Badge variant={evt.resolved ? 'secondary' : 'outline'} className="text-[10px] mt-0.5">
+                                {evt.resolved ? 'Completed' : 'Upcoming'}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -1456,6 +1646,7 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
               interchangePlayers={settings.matchRules.interchangePlayers}
               substitutesEnabled={settings.matchRules.enableSubstitutes}
               potentialMatchups={potentialMatchups}
+              matchResults={matchResults}
             />
           )}
         </div>
@@ -1490,6 +1681,155 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
               </CardContent>
             </Card>
           )}
+          {/* Ladder progression sparkline — always visible */}
+          {(() => {
+            const hasData = ladderProgressionData.length >= 2
+            const totalRoundsInSeason = season.rounds.filter((r) => !r.isFinals).length
+            const h = 52
+            const w = 240
+            const padX = 4
+            const innerW = w - padX * 2
+            const innerH = h - 4
+            const toY = (p: number) => 2 + ((p - 1) / 17) * innerH
+            const toX = (r: number) => padX + ((r - 1) / (Math.max(totalRoundsInSeason - 1, 1))) * innerW
+            const finalsLine = toY(8.5)
+            const last = hasData ? ladderProgressionData[ladderProgressionData.length - 1] : null
+            const first = hasData ? ladderProgressionData[0] : null
+            const trending = hasData && last && first
+              ? last.position < first.position ? 'up' : last.position > first.position ? 'down' : 'flat'
+              : 'flat'
+            const strokeColor = trending === 'up' ? '#22c55e' : trending === 'down' ? '#ef4444' : '#6b7280'
+            const pts = hasData
+              ? ladderProgressionData.map((d) => `${toX(d.round)},${toY(d.position)}`).join(' ')
+              : ''
+            return (
+              <Card className="mt-3">
+                <CardHeader className="py-2 px-4">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-xs text-muted-foreground font-medium">
+                      {isOffseason ? 'Completed Season' : 'Season Position'}
+                    </CardTitle>
+                    {hasData && first && last && (
+                      <span className="text-[10px] text-muted-foreground">R{first.round}–R{last.round}</span>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-0 pb-3 px-4">
+                  {hasData ? (
+                    <>
+                      <svg viewBox={`0 0 ${w} ${h}`} className="w-full" style={{ height: h }}>
+                        <line x1={padX} y1={finalsLine} x2={w - padX} y2={finalsLine}
+                          stroke="#22c55e" strokeWidth="0.8" strokeDasharray="3 3" opacity="0.5" />
+                        <line x1={padX} y1={toY(4.5)} x2={w - padX} y2={toY(4.5)}
+                          stroke="#06b6d4" strokeWidth="0.8" strokeDasharray="3 3" opacity="0.4" />
+                        <polyline points={pts} fill="none" stroke={strokeColor} strokeWidth="1.8"
+                          strokeLinecap="round" strokeLinejoin="round" />
+                        {last && (
+                          <>
+                            <circle cx={toX(last.round)} cy={toY(last.position)} r="3" fill={strokeColor} />
+                            <text x={toX(last.round) + 5} y={toY(last.position) + 1}
+                              fontSize="8" fill={strokeColor} dominantBaseline="middle">
+                              {last.position}{['st','nd','rd'][last.position - 1] ?? 'th'}
+                            </text>
+                          </>
+                        )}
+                        <text x={padX} y={toY(1)} fontSize="7" fill="currentColor" opacity="0.3" dominantBaseline="middle">1</text>
+                        <text x={padX} y={toY(18)} fontSize="7" fill="currentColor" opacity="0.3" dominantBaseline="middle">18</text>
+                      </svg>
+                      <div className="flex gap-3 mt-1 text-[9px] text-muted-foreground">
+                        <span className="flex items-center gap-1"><span className="h-1.5 w-3 rounded bg-cyan-500/60 inline-block" />Top 4</span>
+                        <span className="flex items-center gap-1"><span className="h-1.5 w-3 rounded bg-green-500/60 inline-block" />Finals</span>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground py-3 text-center">No games played yet</p>
+                  )}
+                </CardContent>
+              </Card>
+            )
+          })()}
+          {/* Historical position graph — always visible */}
+          {(() => {
+            const hasHistory = historicalPositionData.length >= 1
+            const h = 52
+            const w = 240
+            const padX = 4
+            const innerW = w - padX * 2
+            const innerH = h - 4
+            const toY = (p: number) => 2 + ((p - 1) / 17) * innerH
+            const toX = (i: number) =>
+              historicalPositionData.length <= 1
+                ? w / 2
+                : padX + (i / (historicalPositionData.length - 1)) * innerW
+            const last = hasHistory ? historicalPositionData[historicalPositionData.length - 1] : null
+            const avgPos = hasHistory
+              ? historicalPositionData.reduce((s, d) => s + d.position, 0) / historicalPositionData.length
+              : 0
+            const finalsCount = historicalPositionData.filter((d) => d.position <= 8).length
+            return (
+              <Card className="mt-3">
+                <CardHeader className="py-2 px-4">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-xs text-muted-foreground font-medium">Historical Position</CardTitle>
+                    {hasHistory && last && (
+                      <span className="text-[10px] text-muted-foreground">
+                        {historicalPositionData.length === 1
+                          ? String(historicalPositionData[0].year)
+                          : `${historicalPositionData[0].year}–${last.year}`}
+                      </span>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-0 pb-3 px-4">
+                  {hasHistory ? (
+                    <>
+                      <svg viewBox={`0 0 ${w} ${h}`} className="w-full" style={{ height: h }}>
+                        <line x1={padX} y1={toY(8.5)} x2={w - padX} y2={toY(8.5)}
+                          stroke="#22c55e" strokeWidth="0.8" strokeDasharray="3 3" opacity="0.5" />
+                        <line x1={padX} y1={toY(4.5)} x2={w - padX} y2={toY(4.5)}
+                          stroke="#06b6d4" strokeWidth="0.8" strokeDasharray="3 3" opacity="0.4" />
+                        {historicalPositionData.length >= 2 && (
+                          <>
+                            <polyline
+                              points={[
+                                `${toX(0)},${h}`,
+                                ...historicalPositionData.map((d, i) => `${toX(i)},${toY(d.position)}`),
+                                `${toX(historicalPositionData.length - 1)},${h}`,
+                              ].join(' ')}
+                              fill="currentColor" className="text-primary/10"
+                            />
+                            <polyline
+                              points={historicalPositionData.map((d, i) => `${toX(i)},${toY(d.position)}`).join(' ')}
+                              fill="none" stroke="currentColor"
+                              className="text-primary" strokeWidth="1.6"
+                              strokeLinecap="round" strokeLinejoin="round"
+                            />
+                          </>
+                        )}
+                        {historicalPositionData.map((d, i) => (
+                          <circle key={d.year} cx={toX(i)} cy={toY(d.position)} r="2.8"
+                            fill="currentColor" className="text-primary" />
+                        ))}
+                        {historicalPositionData.map((d, i) => (
+                          <text key={`yr-${d.year}`} x={toX(i)} y={h - 0.5}
+                            fontSize="6.5" fill="currentColor" opacity="0.4"
+                            textAnchor="middle" dominantBaseline="auto">{d.year}</text>
+                        ))}
+                        <text x={padX} y={toY(1)} fontSize="7" fill="currentColor" opacity="0.3" dominantBaseline="middle">1</text>
+                        <text x={padX} y={toY(18)} fontSize="7" fill="currentColor" opacity="0.3" dominantBaseline="middle">18</text>
+                      </svg>
+                      <div className="flex gap-3 mt-1 text-[9px] text-muted-foreground">
+                        <span>Avg: {avgPos.toFixed(1)}</span>
+                        <span>Finals: {finalsCount}/{historicalPositionData.length}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground py-3 text-center">Complete a season to see history</p>
+                  )}
+                </CardContent>
+              </Card>
+            )
+          })()}
         </div>
       </div>
 
@@ -1497,12 +1837,7 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
         {(() => {
           const userLadderIdx = ladder.findIndex((e) => e.clubId === playerClubId)
-          const MAX_SHOW = Math.max(9, finalsQualifyingTeams + 1)
-          const visibleItems = (() => {
-            const topN = ladder.slice(0, MAX_SHOW).map((e, i) => ({ entry: e, idx: i }))
-            if (userLadderIdx < MAX_SHOW) return topN
-            return [...topN, { entry: ladder[userLadderIdx], idx: userLadderIdx }]
-          })()
+          const visibleItems = ladder.map((e, i) => ({ entry: e, idx: i }))
           const eighth = finalsQualifyingTeams > 0 ? ladder[finalsQualifyingTeams - 1] : null
           const ninth = finalsQualifyingTeams > 0 ? ladder[finalsQualifyingTeams] : null
           const userIsInFinalsZone = userLadderIdx >= 0 && userLadderIdx < finalsQualifyingTeams
@@ -1512,10 +1847,6 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
               ? userEntry.points - (ninth?.points ?? 0)
               : (eighth?.points ?? 0) - userEntry.points
             : null
-          const teamAbove = userLadderIdx > 0 ? ladder[userLadderIdx - 1] : null
-          const teamBelow = userLadderIdx >= 0 && userLadderIdx < ladder.length - 1 ? ladder[userLadderIdx + 1] : null
-          const pctAbove = teamAbove && userEntry ? (teamAbove.percentage - userEntry.percentage).toFixed(1) : null
-          const pctBelow = teamBelow && userEntry ? (userEntry.percentage - teamBelow.percentage).toFixed(1) : null
           return (
             <Card className="cursor-pointer" onClick={() => navigate('/ladder')}>
               <CardHeader className="pb-2">
@@ -1539,7 +1870,7 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
                 </div>
               </CardHeader>
               <CardContent className="pb-3">
-                <div className="space-y-0.5">
+                <div className="space-y-0.5 max-h-72 overflow-y-auto">
                   {visibleItems.map(({ entry, idx }, vi) => {
                     const ladderClub = clubs[entry.clubId]
                     const isPlayer = entry.clubId === playerClubId
@@ -1573,15 +1904,9 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
                             <span className="text-xs">{ladderClub?.abbreviation}</span>
                           </div>
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            {isPlayer && pctAbove !== null && (
-                              <span className="text-[10px] text-emerald-500">▲{pctAbove}%</span>
-                            )}
                             <span className="tabular-nums">{entry.wins}-{entry.draws}-{entry.losses}</span>
                             <span className="w-11 text-right tabular-nums">{entry.percentage.toFixed(1)}%</span>
                             <span className="w-6 text-right font-semibold tabular-nums text-foreground">{entry.points}</span>
-                            {isPlayer && pctBelow !== null && (
-                              <span className="text-[10px] text-red-400">▼{pctBelow}%</span>
-                            )}
                           </div>
                         </div>
                       </div>
@@ -1611,6 +1936,12 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
+            {!isOffseason && scheduledSlotCount === 0 && (
+              <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                No training scheduled this week — players will miss development gains.
+              </div>
+            )}
             {isOffseason ? (
               <div className="rounded border px-3 py-2 text-xs text-muted-foreground">
                 Offseason mode: run sessions from the offseason planner.
@@ -1652,7 +1983,11 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
                 Open Planner
               </Button>
               {!isOffseason && (
-                <Button variant="outline" size="sm" onClick={handleAutoFillTraining}>
+                <Button
+                  variant={scheduledSlotCount === 0 ? 'destructive' : 'outline'}
+                  size="sm"
+                  onClick={handleAutoFillTraining}
+                >
                   Auto-fill Week
                 </Button>
               )}
@@ -1966,6 +2301,36 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
         </Card>
       )}
 
+      {/* Preseason Special Event Result */}
+      {lastSpecialResult && lastSpecialEventTitle && (
+        <Card className="border-amber-500/40">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">{lastSpecialEventTitle}</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-1">
+            <div className="flex items-center justify-center gap-6">
+              <span className="font-bold">{lastSpecialResult.teamAScore.goals}.{lastSpecialResult.teamAScore.behinds}</span>
+              <div className="text-center">
+                <span className="text-xl font-bold font-mono">
+                  {lastSpecialResult.teamAScore.total} – {lastSpecialResult.teamBScore.total}
+                </span>
+              </div>
+              <span className="font-bold">{lastSpecialResult.teamBScore.goals}.{lastSpecialResult.teamBScore.behinds}</span>
+            </div>
+            {lastSpecialResult.userClubParticipants.length > 0 && (
+              <p className="mt-1.5 text-center text-xs text-muted-foreground">
+                {lastSpecialResult.userClubParticipants.length} of your players represented
+              </p>
+            )}
+            <div className="mt-2 text-center">
+              <Button variant="link" size="sm" onClick={() => navigate('/state-of-origin')}>
+                View Series <ChevronRight className="ml-1 h-3 w-3" />
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Last Match Result (hidden during offseason) */}
       {!isOffseason && lastResult?.result && (
         <Card>
@@ -2011,6 +2376,106 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords ?? {})
 }
 
 // ---------------------------------------------------------------------------
+// Venue Popover
+// ---------------------------------------------------------------------------
+
+function VenuePopover({
+  venue,
+  playerClubId,
+  matchResults,
+  clubs,
+}: {
+  venue: string
+  playerClubId: string
+  matchResults: Match[]
+  clubs: Record<string, Club>
+}) {
+  const venueMatches = matchResults
+    .filter((m) => m.venue === venue && m.result !== null)
+    .sort((a, b) => b.round - a.round)
+
+  const userMatches = venueMatches.filter(
+    (m) => m.homeClubId === playerClubId || m.awayClubId === playerClubId,
+  )
+
+  let w = 0, d = 0, l = 0
+  for (const m of userMatches) {
+    const isHome = m.homeClubId === playerClubId
+    const userScore = isHome ? m.result!.homeTotalScore : m.result!.awayTotalScore
+    const oppScore = isHome ? m.result!.awayTotalScore : m.result!.homeTotalScore
+    if (userScore > oppScore) w++
+    else if (userScore === oppScore) d++
+    else l++
+  }
+
+  const recentGames = venueMatches.slice(0, 5)
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button className="mt-3 mx-auto flex items-center gap-1.5 rounded px-2 py-0.5 text-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors">
+          <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z"/><circle cx="12" cy="10" r="3"/></svg>
+          {venue}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-72 p-0" align="center">
+        <div className="border-b px-3 py-2.5">
+          <p className="text-sm font-semibold">{venue}</p>
+          <p className="text-xs text-muted-foreground">{venueMatches.length} game{venueMatches.length !== 1 ? 's' : ''} played here</p>
+        </div>
+
+        {userMatches.length > 0 && (
+          <div className="border-b px-3 py-2.5">
+            <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Your record here</p>
+            <div className="flex gap-4 text-sm font-semibold">
+              <span className="text-green-500">{w}W</span>
+              {d > 0 && <span className="text-muted-foreground">{d}D</span>}
+              <span className="text-red-500">{l}L</span>
+              <span className="ml-auto text-xs text-muted-foreground font-normal">
+                {userMatches.length} game{userMatches.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {recentGames.length > 0 ? (
+          <div className="px-3 py-2.5 space-y-1.5">
+            <p className="mb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Recent games here</p>
+            {recentGames.map((m) => {
+              const home = clubs[m.homeClubId]
+              const away = clubs[m.awayClubId]
+              const userInvolved = m.homeClubId === playerClubId || m.awayClubId === playerClubId
+              return (
+                <div key={m.id} className={`flex items-center gap-2 rounded px-2 py-1 text-xs ${userInvolved ? 'bg-primary/8 font-medium' : ''}`}>
+                  <span className="w-5 text-[10px] text-muted-foreground font-mono">R{m.round}</span>
+                  <div
+                    className="h-2 w-2 rounded-full shrink-0"
+                    style={{ backgroundColor: home?.colors.primary ?? '#888' }}
+                  />
+                  <span className="flex-1 truncate">{home?.abbreviation ?? '?'}</span>
+                  <span className="font-mono tabular-nums">
+                    {m.result!.homeTotalScore}–{m.result!.awayTotalScore}
+                  </span>
+                  <span className="flex-1 truncate text-right">{away?.abbreviation ?? '?'}</span>
+                  <div
+                    className="h-2 w-2 rounded-full shrink-0"
+                    style={{ backgroundColor: away?.colors.primary ?? '#888' }}
+                  />
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+            No games played at this venue yet
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Matchup Card
 // ---------------------------------------------------------------------------
 
@@ -2049,6 +2514,7 @@ interface MatchupCardProps {
   interchangePlayers: number
   substitutesEnabled: boolean
   potentialMatchups: MatchupOption[]
+  matchResults: Match[]
 }
 
 function FormBadges({ form }: { form: string[] }) {
@@ -2108,9 +2574,11 @@ function MatchupCard({
   interchangePlayers,
   substitutesEnabled,
   potentialMatchups,
+  matchResults,
 }: MatchupCardProps) {
-  const [showStrategies, setShowStrategies] = useState(false)
+  const navigate = useNavigate()
   const [showPotential, setShowPotential] = useState(false)
+  const [confirmSimToEnd, setConfirmSimToEnd] = useState(false)
   const [selectedPotentialKey, setSelectedPotentialKey] = useState<string | null>(null)
   const selectedPotential = useMemo(() => {
     if (potentialMatchups.length === 0) return null
@@ -2199,15 +2667,29 @@ function MatchupCard({
             <p className="text-lg font-bold">Bye Week</p>
             <p className="text-sm text-muted-foreground mt-1">No match this round</p>
           </div>
-          <div className="mt-4 flex justify-center gap-2">
-            <Button onClick={onSimWeek} disabled={simming}>
-              <Play className="mr-1 h-4 w-4" />
-              Sim Week
-            </Button>
-            <Button variant="outline" onClick={onSimToEnd} disabled={simming}>
-              <FastForward className="mr-1 h-4 w-4" />
-              Sim to Finals
-            </Button>
+          <div className="mt-4 space-y-2">
+            <div className="flex justify-center gap-2">
+              <Button onClick={onSimWeek} disabled={simming}>
+                <Play className="mr-1 h-4 w-4" />
+                Sim Week
+              </Button>
+              {confirmSimToEnd ? (
+                <div className="flex items-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5">
+                  <span className="text-xs text-destructive">Sim all remaining rounds?</span>
+                  <Button size="sm" variant="destructive" className="h-6 px-2 text-xs" onClick={() => { setConfirmSimToEnd(false); onSimToEnd() }} disabled={simming}>
+                    Confirm
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setConfirmSimToEnd(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="outline" onClick={() => setConfirmSimToEnd(true)} disabled={simming}>
+                  <FastForward className="mr-1 h-4 w-4" />
+                  Sim to Finals
+                </Button>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -2248,14 +2730,6 @@ function MatchupCard({
                 onClick={() => setShowPotential((v) => !v)}
               >
                 {showPotential ? 'Hide' : 'Show'} Potential Matchups
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={() => setShowStrategies((v) => !v)}
-              >
-                {showStrategies ? 'Hide' : 'Show'} Strategies
               </Button>
             </div>
             <p className="text-sm text-muted-foreground">
@@ -2299,35 +2773,19 @@ function MatchupCard({
             </div>
           </div>
 
-          <p className="text-center text-sm text-muted-foreground mt-3">
-            {nextFixture.venue}
-          </p>
+          <div className="flex justify-center">
+            <VenuePopover
+              venue={nextFixture.venue}
+              playerClubId={playerClubId}
+              matchResults={matchResults}
+              clubs={clubs}
+            />
+          </div>
 
           {isRivalry && (
             <div className="mt-3 flex items-center justify-center gap-2 rounded border border-red-500/30 bg-red-500/8 px-3 py-2 text-xs font-semibold text-red-600">
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
               Rivalry Match
-            </div>
-          )}
-
-          {showStrategies && (
-            <div className="mt-3 rounded border p-2.5 space-y-1.5">
-              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Strategy Notes</p>
-              <p className="text-xs text-muted-foreground">
-                {opponentLadderPosition > 0 && opponentLadderPosition <= 4
-                  ? 'Top-tier opposition: prioritise territory control and reduce turnover risk.'
-                  : 'Mid/lower ladder opposition: back your pressure game and attack corridor transition.'}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {Number(oppPfPg) > Number(userPaPg)
-                  ? 'Defensive focus: set stronger team defence and limit forward-half entries.'
-                  : 'Attacking focus: commit more overlap run to expose their defensive setup.'}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {opponentForm.filter((r) => r === 'W').length >= 3
-                  ? 'Opponent is in form: start conservatively, then open up once control is established.'
-                  : 'Opponent form is mixed: pressure early and force selection/tactical changes.'}
-              </p>
             </div>
           )}
 
@@ -2435,15 +2893,36 @@ function MatchupCard({
             )}
           </div>
 
-          <div className="mt-5 flex justify-center gap-2">
-            <Button onClick={onSimWeek} disabled={simming}>
-              <Play className="mr-1 h-4 w-4" />
-              Sim Match
-            </Button>
-            <Button variant="outline" onClick={onSimToEnd} disabled={simming}>
-              <FastForward className="mr-1 h-4 w-4" />
-              Sim to Finals
-            </Button>
+          <div className="mt-5 space-y-2">
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button onClick={() => navigate('/match-day')} variant="default">
+                <Calendar className="mr-1 h-4 w-4" />
+                Match Day
+              </Button>
+              <Button onClick={onSimWeek} disabled={simming} variant="outline">
+                <SkipForward className="mr-1 h-4 w-4" />
+                Auto-Simulate
+              </Button>
+              {confirmSimToEnd ? (
+                <div className="flex items-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5">
+                  <span className="text-xs text-destructive">Sim all remaining rounds?</span>
+                  <Button size="sm" variant="destructive" className="h-6 px-2 text-xs" onClick={() => { setConfirmSimToEnd(false); onSimToEnd() }} disabled={simming}>
+                    Confirm
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setConfirmSimToEnd(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="ghost" onClick={() => setConfirmSimToEnd(true)} disabled={simming} className="text-muted-foreground hover:text-foreground">
+                  <FastForward className="mr-1 h-4 w-4" />
+                  Sim to Finals
+                </Button>
+              )}
+            </div>
+            <p className="text-center text-[10px] text-muted-foreground">
+              Match Day — manage lineup & play live&ensp;·&ensp;Auto-Simulate — instant result
+            </p>
           </div>
         </CardContent>
       </Card>

@@ -8,6 +8,8 @@ import { getAllAgents } from '@/engine/contracts/agentRegistry'
 import { computeRelationshipTier } from '@/engine/contracts/agentRelationships'
 import type { RelationshipTier } from '@/types/agent'
 
+const EMPTY_AGENT_RELS: Record<string, import('@/types/agent').AgentRelationship> = {}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -106,7 +108,7 @@ function modifierText(tier: RelationshipTier): string {
 // ---------------------------------------------------------------------------
 
 export function AgentRelationshipsPage() {
-  const agentRelationships = useGameStore(s => s.agentRelationships ?? {})
+  const agentRelationships = useGameStore(s => s.agentRelationships) ?? EMPTY_AGENT_RELS
   const players = useGameStore(s => s.players)
   const playerClubId = useGameStore(s => s.playerClubId)
 

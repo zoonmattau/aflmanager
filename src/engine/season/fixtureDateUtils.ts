@@ -9,10 +9,12 @@ export function getMatchDayOffset(day?: MatchDay): number {
     case 'Friday':
       return 4
     case 'Saturday-Early':
+    case 'Saturday-Afternoon':
     case 'Saturday-Twilight':
     case 'Saturday-Night':
       return 5
     case 'Sunday-Early':
+    case 'Sunday-Afternoon':
     case 'Sunday-Twilight':
       return 6
     case 'Monday':

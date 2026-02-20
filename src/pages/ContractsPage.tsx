@@ -1365,6 +1365,8 @@ export function ContractsPage() {
   const phase = useGameStore((s) => s.phase)
   const newsLog = useGameStore((s) => s.newsLog)
   const offseasonState = useGameStore((s) => s.offseasonState)
+  const matchRFAOfferAction = useGameStore((s) => s.matchRFAOfferAction)
+  const declineRFAMatchingAction = useGameStore((s) => s.declineRFAMatchingAction)
 
   const [offerOpen, setOfferOpen] = useState(false)
   const [delistOpen, setDelistOpen] = useState(false)
@@ -1403,6 +1405,11 @@ export function ContractsPage() {
         .slice(-10)
         .reverse(),
     [newsLog],
+  )
+
+  const pendingRFARights = useMemo(
+    () => (offseasonState?.rfaMatchingRights ?? []).filter((r) => r.status === 'pending'),
+    [offseasonState?.rfaMatchingRights],
   )
 
   const phaseLabel = (() => {
@@ -1696,6 +1703,58 @@ export function ContractsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* RFA Matching Rights */}
+      {pendingRFARights.length > 0 && (
+        <Card className="border-amber-500/40">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
+              RFA Matching Rights ({pendingRFARights.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {pendingRFARights.map((right) => {
+              const pl = players[right.playerId]
+              const offeringClub = clubs[right.offeringClubId]?.name ?? right.offeringClubId
+              return (
+                <div key={right.id} className="rounded border border-border p-3 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-semibold text-sm">{right.playerName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Offer from <span className="font-medium">{offeringClub}</span>
+                        {' — '}{right.years} yr{right.years !== 1 ? 's' : ''} @ ${(right.aav / 1000).toFixed(0)}k/yr
+                      </p>
+                      {pl && (
+                        <p className="text-xs text-muted-foreground">
+                          Age {pl.age} · {pl.position.primary} · Overall {Math.round(pl.attributes ? Object.values(pl.attributes).reduce((s, v) => s + v, 0) / Object.values(pl.attributes).length : 0)}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      <Button
+                        size="sm"
+                        variant="default"
+                        onClick={() => matchRFAOfferAction(right.id)}
+                      >
+                        Match Offer
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => declineRFAMatchingAction(right.id)}
+                      >
+                        Let Go
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Contract Overview Table */}
       <Card>

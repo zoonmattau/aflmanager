@@ -1,6 +1,7 @@
 import type {
   Club,
   ClubMembershipState,
+  CustomMembershipTier,
   MembershipTierConfig,
   MembershipTierState,
 } from '@/types/club'
@@ -31,7 +32,7 @@ export const TIER_CONFIGS: MembershipTierConfig[] = [
   {
     id: 'interstate',
     label: 'Interstate',
-    description: 'Discounted membership for fans based outside Victoria/home state.',
+    description: 'Discounted membership for fans based outside the home state.',
     basePrice: 150,
     minPrice: 80,
     maxPrice: 280,
@@ -142,15 +143,17 @@ export function calculateMembershipGrowth(inputs: MembershipGrowthInputs): Membe
   const pe = priceElasticity(priceIndex)
   const sentimentFactor = fanSatisfaction / 50  // 1.0 at satisfaction=50
 
-  // Churn
-  const churnRate = BASE_CHURN_RATE * pe * (2 - sentimentFactor)
-  const churnCount = Math.round(currentTotal * Math.min(0.25, Math.max(0, churnRate)))
+  // Churn: higher prices → MORE churn (inverse of pe)
+  // priceIndex 1.0 = neutral, 1.5 = +50% above baseline → 40% more churn
+  const priceChurnMultiplier = 1.0 + Math.max(0, (priceIndex - 1.0) * 0.8)
+  const churnRate = BASE_CHURN_RATE * priceChurnMultiplier * (2 - sentimentFactor)
+  const churnCount = Math.round(currentTotal * Math.min(0.30, Math.max(0, churnRate)))
 
-  // Acquisition pool: fraction of current base who might join
+  // Acquisition: higher prices → FEWER new members (pe suppresses acquisitions)
   const poolRate = acquisitionPoolRate(ladderPosition)
   const sb = starBonus(starPlayerCount)
   const cm = campaignMultiplier(campaignBudget)
-  const acquisitions = Math.round(currentTotal * poolRate * (sentimentFactor) * sb * cm * pe)
+  const acquisitions = Math.round(currentTotal * poolRate * sentimentFactor * sb * cm * pe)
 
   const delta = acquisitions - churnCount
   const newTotal = Math.max(0, currentTotal + delta)
@@ -168,27 +171,44 @@ export function calculateMembershipGrowth(inputs: MembershipGrowthInputs): Membe
 }
 
 /**
- * Distribute a membership total delta across tiers proportionally.
+ * Distribute a membership total delta across standard + custom tiers proportionally.
  */
 export function distributeMembershipDelta(
   tiers: MembershipTierState[],
   delta: number,
-): MembershipTierState[] {
-  const totalCurrent = tiers.reduce((s, t) => s + t.count, 0)
+  customTiers?: CustomMembershipTier[],
+): { tiers: MembershipTierState[]; customTiers: CustomMembershipTier[] } {
+  const allCount = [
+    ...tiers.map((t) => t.count),
+    ...(customTiers ?? []).map((t) => t.count),
+  ]
+  const totalCurrent = allCount.reduce((s, c) => s + c, 0)
 
-  return tiers.map((tier) => {
+  const updatedTiers = tiers.map((tier) => {
     const weight = totalCurrent > 0 ? tier.count / totalCurrent : TIER_PROPORTIONS[tier.tierId] ?? (1 / tiers.length)
     const change = Math.round(delta * weight)
-    const newCount = Math.max(0, tier.count + change)
-    return { ...tier, lastSeasonCount: tier.count, count: newCount }
+    return { ...tier, lastSeasonCount: tier.count, count: Math.max(0, tier.count + change) }
   })
+
+  const updatedCustom = (customTiers ?? []).map((tier) => {
+    const weight = totalCurrent > 0 ? tier.count / totalCurrent : 0
+    const change = Math.round(delta * weight)
+    return { ...tier, lastSeasonCount: tier.count, count: Math.max(0, tier.count + change) }
+  })
+
+  return { tiers: updatedTiers, customTiers: updatedCustom }
 }
 
 /**
- * Calculate total membership revenue from all tiers.
+ * Calculate total membership revenue from standard + custom tiers.
  */
-export function calculateTierMembershipRevenue(tiers: MembershipTierState[]): number {
-  return tiers.reduce((sum, tier) => sum + tier.price * tier.count, 0)
+export function calculateTierMembershipRevenue(
+  tiers: MembershipTierState[],
+  customTiers?: CustomMembershipTier[],
+): number {
+  const standard = tiers.reduce((sum, tier) => sum + tier.price * tier.count, 0)
+  const custom = (customTiers ?? []).reduce((sum, tier) => sum + tier.price * tier.count, 0)
+  return standard + custom
 }
 
 /** Baseline average price across all tier configs */
@@ -283,16 +303,20 @@ export function processSeasonEndMembership(
     priceIndex: pi,
   })
 
-  const updatedTiers = distributeMembershipDelta(state.tiers, result.delta)
-  const revenue = calculateTierMembershipRevenue(updatedTiers)
-  const newTotal = updatedTiers.reduce((s, t) => s + t.count, 0)
+  const distributed = distributeMembershipDelta(state.tiers, result.delta, state.customTiers)
+  const revenue = calculateTierMembershipRevenue(distributed.tiers, distributed.customTiers)
+  const newTotal = [
+    ...distributed.tiers.map((t) => t.count),
+    ...distributed.customTiers.map((t) => t.count),
+  ].reduce((s, c) => s + c, 0)
 
   // Natural fan satisfaction drift
   const newFanSatisfaction = Math.max(0, Math.min(100, state.fanSatisfaction + result.fanSatisfactionDelta))
 
   return {
     ...state,
-    tiers: updatedTiers,
+    tiers: distributed.tiers,
+    customTiers: distributed.customTiers,
     trendLastSeason: result.delta,
     fanSatisfaction: newFanSatisfaction,
     history: [

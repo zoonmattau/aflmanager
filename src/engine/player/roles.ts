@@ -59,7 +59,7 @@ const SLOT_ROLE_PREFERENCES: Record<LineupSlot, PlayerPreferredRole[]> = {
   I8: ['inside-mid', 'outside-mid', 'wing-runner', 'pressure-forward', 'rebound-defender'],
 }
 
-const ROLE_IDEAL_COUNTS: Record<PlayerPreferredRole, number> = {
+const ROLE_IDEAL_COUNTS: Partial<Record<PlayerPreferredRole, number>> = {
   'inside-mid': 4,
   'outside-mid': 3,
   'wing-runner': 2,
@@ -70,7 +70,7 @@ const ROLE_IDEAL_COUNTS: Record<PlayerPreferredRole, number> = {
   'key-forward': 3,
   'small-forward': 2,
   ruck: 2,
-  utility: 2,
+  // utility is a catch-all fallback, not a recruiting target
 }
 
 export function mapPrimaryPositionToPreferredRole(primary: PlayerPositionType): PlayerPreferredRole {
@@ -93,24 +93,27 @@ export function getRoleFitMultiplierForSlot(role: PlayerPreferredRole, slot: Lin
   return 0.9
 }
 
-export function roleNeedsByClub(players: Record<string, Player>, clubId: string): Record<PlayerPreferredRole, number> {
-  const counts = {} as Record<PlayerPreferredRole, number>
+export function roleNeedsByClub(players: Record<string, Player>, clubId: string): Partial<Record<PlayerPreferredRole, number>> {
+  const counts: Partial<Record<PlayerPreferredRole, number>> = {}
   for (const role of Object.keys(ROLE_IDEAL_COUNTS) as PlayerPreferredRole[]) {
     counts[role] = 0
   }
   for (const p of Object.values(players)) {
     if (p.clubId !== clubId) continue
     const role = p.preferredRole ?? mapPrimaryPositionToPreferredRole(p.position.primary)
-    counts[role] = (counts[role] ?? 0) + 1
+    if (role in ROLE_IDEAL_COUNTS) {
+      counts[role] = (counts[role] ?? 0) + 1
+    }
   }
-  const deficits = {} as Record<PlayerPreferredRole, number>
+  const deficits: Partial<Record<PlayerPreferredRole, number>> = {}
   for (const role of Object.keys(ROLE_IDEAL_COUNTS) as PlayerPreferredRole[]) {
-    deficits[role] = Math.max(0, ROLE_IDEAL_COUNTS[role] - (counts[role] ?? 0))
+    const ideal = ROLE_IDEAL_COUNTS[role] ?? 0
+    deficits[role] = Math.max(0, ideal - (counts[role] ?? 0))
   }
   return deficits
 }
 
-export function getRoleNeedBonus(role: PlayerPreferredRole, deficits: Record<PlayerPreferredRole, number>): number {
+export function getRoleNeedBonus(role: PlayerPreferredRole, deficits: Partial<Record<PlayerPreferredRole, number>>): number {
   const deficit = deficits[role] ?? 0
   if (deficit <= 0) return 0
   return Math.min(12, deficit * 4)

@@ -7,7 +7,6 @@ import { useReservesContext } from '@/hooks/useReservesContext'
 import { cn } from '@/lib/utils'
 
 export function ReservesFixturesPage() {
-  const playerClubId = useGameStore((s) => s.playerClubId)
   const currentRound = useGameStore((s) => s.currentRound)
 
   const { context, leagueName, leagueShort } = useReservesContext()

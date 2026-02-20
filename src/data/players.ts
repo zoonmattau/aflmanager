@@ -8,9 +8,11 @@
 import { SeededRNG } from '@/engine/core/rng'
 import type {
   Player,
+  PlayerArchetype,
   PlayerAttributes,
   PlayerCareerStats,
   PlayerContract,
+  PlayerInjuryHistoryEntry,
   PlayerJumperPreference,
   PlayerPersonality,
   PlayerPosition,
@@ -795,6 +797,266 @@ function generateContract(rng: SeededRNG, age: number, isRookie: boolean, overal
   }
 }
 
+// ---------------------------------------------------------------------------
+// Backstory / history generators
+// ---------------------------------------------------------------------------
+
+const STATE_LABELS: Record<string, string> = {
+  VIC: 'Victoria', NSW: 'New South Wales', QLD: 'Queensland',
+  SA: 'South Australia', WA: 'Western Australia', TAS: 'Tasmania', NT: 'the Northern Territory',
+}
+
+const ARCHETYPE_DESCRIPTIONS: Record<PlayerArchetype, string> = {
+  'ball-winner': 'a relentless ball-winner who excels in contested situations',
+  'line-breaker': 'a dynamic line-breaker capable of turning defence into attack',
+  'aerial-interceptor': 'an imposing aerial presence who reads the ball exceptionally well',
+  'stopper': 'a fierce competitor who takes on the opposition\'s best players',
+  'rebounder': 'an attacking defender who generates play from the back half',
+  'forward-pressure': 'a high-pressure forward who creates turnovers and leads hard',
+  'target-mark': 'a dominant marking target who provides a reliable aerial option',
+  'crumber': 'a clever crumber who capitalises on loose ball and second efforts',
+  'tap-specialist': 'a dominant tap ruckman who provides clearance and contest control',
+  'mobile-ruck': 'a mobile ruckman who supports play around the ground',
+  'two-way-utility': 'a versatile player who can impact the game in multiple roles',
+  'intercept-defender': 'a reading defender who intercepts opposition forward entries',
+  'lockdown-defender': 'a defensive specialist who shuts down the opposition\'s key targets',
+  'rebound-defender': 'an attacking rebounding defender who ignites play from the back',
+  'inside-bull': 'a damaging inside midfielder who thrives in contested ball',
+  'outside-runner': 'a running outside midfielder with exceptional endurance',
+  'two-way-wing': 'a two-way wingman who links defence and attack with efficiency',
+  'tap-ruck': 'a dominant tapping ruckman who controls the boundary game',
+  'lead-up-forward': 'a precision lead-up forward with excellent marking hands',
+  'power-forward': 'a physical power forward who draws attention and creates for teammates',
+  'small-pressure-forward': 'a dynamic small forward who applies relentless pressure',
+  'swingman': 'a flexible swingman who provides versatility across multiple positions',
+}
+
+function generatePlayerBio(
+  _rng: SeededRNG,
+  firstName: string,
+  age: number,
+  archetype: PlayerArchetype,
+  homeState: string,
+  draftPick: number | null,
+  draftYear: number,
+  isRookie: boolean,
+  personality: PlayerPersonality,
+  careerStats: PlayerCareerStats,
+): string {
+  const stateLabel = STATE_LABELS[homeState] ?? homeState
+
+  // Origin sentence
+  let origin: string
+  if (isRookie) {
+    origin = `An academy product from ${stateLabel}, ${firstName} joined the club on the rookie list and is considered a key development target.`
+  } else if (draftPick !== null && draftPick <= 10) {
+    origin = `A highly-touted talent from ${stateLabel}, ${firstName} was selected with pick ${draftPick} in the ${draftYear} national draft.`
+  } else if (draftPick !== null && draftPick <= 30) {
+    origin = `Originally from ${stateLabel}, ${firstName} was selected with pick ${draftPick} in the ${draftYear} national draft.`
+  } else if (draftPick !== null) {
+    origin = `Hailing from ${stateLabel}, ${firstName} was a late pick (pick ${draftPick}) in the ${draftYear} national draft who has since developed into a solid AFL contributor.`
+  } else {
+    origin = `Coming through the rookie pathway from ${stateLabel}, ${firstName} worked their way onto the senior list through hard work in the state league system.`
+  }
+
+  // Style sentence
+  const styleDesc = ARCHETYPE_DESCRIPTIONS[archetype] ?? 'a talented player'
+  const styleSentence = `Regarded as ${styleDesc}, they bring a distinctive edge to the club.`
+
+  // Trait/milestone sentence
+  let trait: string
+  if (careerStats.gamesPlayed >= 200) {
+    trait = `An experienced campaigner with over ${careerStats.gamesPlayed} games, they are one of the most decorated players on the list.`
+  } else if (careerStats.gamesPlayed >= 100) {
+    trait = `With over 100 AFL games under their belt, they are a proven and reliable presence in the side.`
+  } else if (personality.ambition > 78) {
+    trait = `Known for their strong leadership qualities, they have become an important voice in the team environment.`
+  } else if (personality.professionalism > 82) {
+    trait = `A deeply professional athlete, they set the standard in the club's training and preparation culture.`
+  } else if (personality.temperament > 80) {
+    trait = `Their determination and resilience have been central to their development and success at AFL level.`
+  } else if (age <= 21) {
+    trait = `Still early in their career, the club has high hopes for their continued growth.`
+  } else {
+    trait = `A consistent contributor, they provide reliability and experience to the squad each week.`
+  }
+
+  return `${origin} ${styleSentence} ${trait}`
+}
+
+type InjuryBodyRegion = 'soft-tissue' | 'joint' | 'concussion' | 'structural' | 'impact'
+type InjurySeverity = 'minor' | 'moderate' | 'major' | 'severe'
+
+interface InjuryTemplate {
+  type: string
+  severity: InjurySeverity
+  bodyRegion: InjuryBodyRegion
+  weeksRange: [number, number]
+}
+
+const INJURY_TEMPLATES: InjuryTemplate[] = [
+  { type: 'Hamstring strain', severity: 'minor', bodyRegion: 'soft-tissue', weeksRange: [1, 3] },
+  { type: 'Hamstring strain', severity: 'moderate', bodyRegion: 'soft-tissue', weeksRange: [3, 6] },
+  { type: 'Hamstring tear', severity: 'major', bodyRegion: 'soft-tissue', weeksRange: [6, 10] },
+  { type: 'Calf strain', severity: 'minor', bodyRegion: 'soft-tissue', weeksRange: [1, 3] },
+  { type: 'Quad strain', severity: 'minor', bodyRegion: 'soft-tissue', weeksRange: [1, 3] },
+  { type: 'Hip flexor', severity: 'minor', bodyRegion: 'soft-tissue', weeksRange: [1, 2] },
+  { type: 'Ankle sprain', severity: 'minor', bodyRegion: 'joint', weeksRange: [1, 3] },
+  { type: 'Knee sprain', severity: 'moderate', bodyRegion: 'joint', weeksRange: [2, 5] },
+  { type: 'PCL injury', severity: 'major', bodyRegion: 'joint', weeksRange: [8, 16] },
+  { type: 'ACL reconstruction', severity: 'severe', bodyRegion: 'structural', weeksRange: [40, 52] },
+  { type: 'Shoulder dislocation', severity: 'moderate', bodyRegion: 'joint', weeksRange: [4, 8] },
+  { type: 'Shoulder reconstruction', severity: 'severe', bodyRegion: 'structural', weeksRange: [30, 45] },
+  { type: 'Fractured collarbone', severity: 'major', bodyRegion: 'structural', weeksRange: [6, 10] },
+  { type: 'Fractured wrist', severity: 'moderate', bodyRegion: 'structural', weeksRange: [4, 8] },
+  { type: 'Concussion', severity: 'minor', bodyRegion: 'concussion', weeksRange: [1, 2] },
+  { type: 'Concussion', severity: 'moderate', bodyRegion: 'concussion', weeksRange: [2, 4] },
+  { type: 'Corked thigh', severity: 'minor', bodyRegion: 'impact', weeksRange: [0, 1] },
+  { type: 'Rib fracture', severity: 'moderate', bodyRegion: 'impact', weeksRange: [2, 5] },
+  { type: 'Shin splints', severity: 'minor', bodyRegion: 'soft-tissue', weeksRange: [1, 3] },
+  { type: 'Osteitis pubis', severity: 'major', bodyRegion: 'structural', weeksRange: [8, 20] },
+  { type: 'Plantar fasciitis', severity: 'moderate', bodyRegion: 'structural', weeksRange: [3, 7] },
+  { type: 'Stress fracture (back)', severity: 'major', bodyRegion: 'structural', weeksRange: [8, 16] },
+]
+
+function generateInjuryHistory(
+  rng: SeededRNG,
+  age: number,
+  isRookie: boolean,
+  injuryProneness: number, // 1-100
+  gameYear: number,
+): PlayerInjuryHistoryEntry[] {
+  if (isRookie || age <= 18) return []
+  const yearsInAFL = age - 18
+  // Expected injuries per year scaled by proneness (0.5-3.0 per year for max)
+  const ratePerYear = 0.1 + (injuryProneness / 100) * 0.7
+  const expectedCount = Math.round(yearsInAFL * ratePerYear)
+  const count = clamp(Math.round(expectedCount + rng.nextFloat(-1, 1)), 0, Math.min(10, yearsInAFL * 2))
+
+  const history: PlayerInjuryHistoryEntry[] = []
+  // Distribute injuries across past years
+  for (let n = 0; n < count; n++) {
+    const template = rng.pick(INJURY_TEMPLATES)
+    const weeksOut = rng.nextInt(template.weeksRange[0], template.weeksRange[1])
+    const gamesMissed = Math.round(weeksOut * 0.8)
+    // Random year between draftYear and last year
+    const yearOffset = rng.nextInt(0, yearsInAFL - 1)
+    const injuryYear = gameYear - yearsInAFL + yearOffset
+    const month = rng.nextInt(3, 9)
+    const day = rng.nextInt(1, 28)
+    const occurredOn = `${injuryYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    const recoveredYear = month + Math.ceil(weeksOut / 4) > 12 ? injuryYear + 1 : injuryYear
+    const recoveredMonth = ((month + Math.ceil(weeksOut / 4) - 1) % 12) + 1
+    const recoveredOn = `${recoveredYear}-${String(recoveredMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    const recurring = count > 1 && rng.chance(0.25)
+    history.push({
+      type: template.type,
+      occurredOn,
+      recoveredOn,
+      initialWeeks: weeksOut,
+      gamesMissed,
+      recurring,
+      severity: template.severity,
+      bodyRegion: template.bodyRegion,
+    })
+  }
+
+  // Sort chronologically
+  return history.sort((a, b) => a.occurredOn.localeCompare(b.occurredOn))
+}
+
+function generateSeasonStatsHistory(
+  rng: SeededRNG,
+  careerStats: PlayerCareerStats,
+  age: number,
+  isRookie: boolean,
+  gameYear: number,
+): { year: number; stats: PlayerCareerStats }[] {
+  if (isRookie || age <= 18 || careerStats.gamesPlayed === 0) return []
+  const yearsInAFL = age - 18
+  const history: { year: number; stats: PlayerCareerStats }[] = []
+  let gamesRemaining = careerStats.gamesPlayed
+
+  for (let y = 0; y < yearsInAFL; y++) {
+    const year = gameYear - yearsInAFL + y
+    // Games in this season: average 15-18 with some variation, declining near end of remainder
+    const maxGames = Math.min(22, gamesRemaining)
+    if (maxGames <= 0) break
+    const games = Math.min(maxGames, Math.max(0, Math.round(rng.nextFloat(10, 22))))
+    if (games === 0) continue
+    const frac = games / careerStats.gamesPlayed
+
+    const jitter = () => rng.nextFloat(0.8, 1.2)
+    const stats: PlayerCareerStats = {
+      gamesPlayed: games,
+      goals: Math.round(careerStats.goals * frac * jitter()),
+      behinds: Math.round(careerStats.behinds * frac * jitter()),
+      disposals: Math.round(careerStats.disposals * frac * jitter()),
+      kicks: Math.round(careerStats.kicks * frac * jitter()),
+      handballs: Math.round(careerStats.handballs * frac * jitter()),
+      marks: Math.round(careerStats.marks * frac * jitter()),
+      tackles: Math.round(careerStats.tackles * frac * jitter()),
+      hitouts: Math.round(careerStats.hitouts * frac * jitter()),
+      contestedPossessions: Math.round(careerStats.contestedPossessions * frac * jitter()),
+      uncontestedPossessions: Math.round(careerStats.uncontestedPossessions * frac * jitter()),
+      clearances: Math.round(careerStats.clearances * frac * jitter()),
+      insideFifties: Math.round(careerStats.insideFifties * frac * jitter()),
+      rebound50s: Math.round(careerStats.rebound50s * frac * jitter()),
+      freesFor: Math.round(careerStats.freesFor * frac * jitter()),
+      freesAgainst: Math.round(careerStats.freesAgainst * frac * jitter()),
+      contestedMarks: Math.round(careerStats.contestedMarks * frac * jitter()),
+      scoreInvolvements: Math.round(careerStats.scoreInvolvements * frac * jitter()),
+      metresGained: Math.round(careerStats.metresGained * frac * jitter()),
+      turnovers: Math.round(careerStats.turnovers * frac * jitter()),
+      intercepts: Math.round(careerStats.intercepts * frac * jitter()),
+      onePercenters: Math.round(careerStats.onePercenters * frac * jitter()),
+      bounces: Math.round(careerStats.bounces * frac * jitter()),
+      clangers: Math.round(careerStats.clangers * frac * jitter()),
+      goalAssists: Math.round(careerStats.goalAssists * frac * jitter()),
+      aflFantasyPoints: Math.round(careerStats.aflFantasyPoints * frac * jitter()),
+      superCoachPoints: Math.round(careerStats.superCoachPoints * frac * jitter()),
+    }
+    history.push({ year, stats })
+    gamesRemaining -= games
+  }
+
+  return history
+}
+
+function generateContractHistory(
+  rng: SeededRNG,
+  age: number,
+  isRookie: boolean,
+  _clubId: string,
+  gameYear: number,
+): import('@/types/player').PlayerContractHistoryEntry[] {
+  if (isRookie || age <= 18) return []
+  const yearsInAFL = age - 18
+  const history: import('@/types/player').PlayerContractHistoryEntry[] = []
+  let year = gameYear - yearsInAFL
+
+  // Initial signing
+  history.push({
+    date: `${year}-02-01`,
+    type: 'afl-sign',
+    note: `Signed as an AFL rookie for ${rng.nextInt(1, 2)} year${rng.chance(0.5) ? 's' : ''}.`,
+  })
+  year += rng.nextInt(1, 2)
+
+  // Subsequent re-signings
+  while (year < gameYear - 1) {
+    const duration = rng.nextInt(1, 4)
+    history.push({
+      date: `${year}-${String(rng.nextInt(1, 3)).padStart(2, '0')}-01`,
+      type: 'afl-sign',
+      note: `Re-signed for ${duration} year${duration > 1 ? 's' : ''}.`,
+    })
+    year += duration
+  }
+
+  return history
+}
+
 /**
  * Generate career stats plausible for a player of the given age and position.
  */
@@ -1128,6 +1390,27 @@ export function generatePlayers(
     const careerStats = generateCareerStats(rng, age, tmpl.primary, isRookie, overall)
     const seasonStats = emptyStats()
 
+    // --- Archetype (needed for bio) ---
+    const archetype = pickArchetypeForRole(
+      mapPrimaryPositionToPreferredRole(position.primary),
+      rng.next(),
+    ) as PlayerArchetype
+
+    // --- Backstory & history ---
+    const bio = generatePlayerBio(
+      rng, firstName, age, archetype, homeState ?? 'VIC',
+      draftPick, draftYear, isRookie, personality, careerStats,
+    )
+    const injuryHistory = generateInjuryHistory(
+      rng, age, isRookie, hiddenAttributes.injuryProneness, 2026,
+    )
+    const seasonStatsHistory = generateSeasonStatsHistory(
+      rng, careerStats, age, isRookie, 2026,
+    )
+    const contractHistory = generateContractHistory(
+      rng, age, isRookie, clubId, 2026,
+    )
+
     const player: Player = {
       id: `${clubId}-player-${String(i + 1).padStart(3, '0')}`,
       firstName,
@@ -1142,10 +1425,7 @@ export function generatePlayers(
       weight,
       position,
       preferredRole: mapPrimaryPositionToPreferredRole(position.primary),
-      archetype: pickArchetypeForRole(
-        mapPrimaryPositionToPreferredRole(position.primary),
-        rng.next(),
-      ),
+      archetype,
       attributes,
       hiddenAttributes,
       personality,
@@ -1163,12 +1443,14 @@ export function generatePlayers(
       draftPick,
       careerStats,
       seasonStats,
-      injuryHistory: [],
+      injuryHistory,
       trainingFocus: null,
       upskillPlans: [],
       contractTier: 'afl-listed',
       stateLeagueContract: null,
-      contractHistory: [],
+      contractHistory,
+      bio,
+      seasonStatsHistory,
     }
     syncPlayerPositionRatings(player)
 

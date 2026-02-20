@@ -25,6 +25,7 @@ import { matchRatingColorClass } from '@/engine/match/matchRatings'
 import { getPlayerRecentGames } from '@/lib/formGuide'
 import { getTotalGamesMissed, getRecurringBodyRegions, bodyRegionLabel, getInjuryRiskLevel, injuryRiskDisplay } from '@/lib/injuryRisk'
 import { FormDots } from '@/components/player/FormDots'
+import { isPlayerRFA } from '@/engine/contracts/freeAgency'
 
 function moraleLabel(morale: number): string {
   if (morale >= 90) return 'Ecstatic'
@@ -74,7 +75,7 @@ const FIELD_POSITION_COORDS: Record<PlayerPositionType, { x: number; y: number }
 function PositionHeatMapCard({ player }: { player: Player }) {
   const secondary = new Set(player.position.secondary)
   const eligible = new Set<PlayerPositionType>(
-    getPlayerEligiblePositionTypes(player),
+    getPlayerEligiblePositionTypes(player, { includeRated: false }),
   )
 
   function getChipStyle(pos: PlayerPositionType): string {
@@ -250,8 +251,22 @@ export function PlayerProfilePage() {
     .filter((entry) => entry.playerId === player.id)
     .sort((a, b) => b.year - a.year)
   const hasCurrentSeasonSnapshot = historicalSeasonRows.some((entry) => entry.year === currentYear)
+  // Pre-game season stats history from generation (years before game started)
+  const preGameRows = (player.seasonStatsHistory ?? [])
+    .filter((h) => !historicalSeasonRows.some((r) => r.year === h.year))
+    .map((h) => ({
+      playerId: player.id,
+      playerName: `${player.firstName} ${player.lastName}`,
+      year: h.year,
+      clubId: player.clubId,
+      age: player.age - (currentYear - h.year),
+      position: player.position.primary,
+      overall,
+      stats: h.stats,
+      inProgress: false,
+    }))
   const yearByYearRows = hasCurrentSeasonSnapshot
-    ? historicalSeasonRows.map((entry) => ({ ...entry, inProgress: false }))
+    ? [...historicalSeasonRows.map((entry) => ({ ...entry, inProgress: false })), ...preGameRows].sort((a, b) => b.year - a.year)
     : [
         {
           playerId: player.id,
@@ -265,7 +280,8 @@ export function PlayerProfilePage() {
           inProgress: true,
         },
         ...historicalSeasonRows.map((entry) => ({ ...entry, inProgress: false })),
-      ]
+        ...preGameRows,
+      ].sort((a, b) => b.year - a.year)
   const ratingProgressionRows = [...yearByYearRows]
     .sort((a, b) => a.year - b.year)
     .map((entry, index, list) => {
@@ -277,7 +293,7 @@ export function PlayerProfilePage() {
     })
     .reverse()
   const secondaryPositions = new Set(player.position.secondary)
-  const alternatePositions = getPlayerEligiblePositionTypes(player).filter(
+  const alternatePositions = getPlayerEligiblePositionTypes(player, { includeRated: false }).filter(
     (pos) => pos !== player.position.primary,
   )
   const jumperPreferenceImpact = getJumperPreferenceMoraleImpact(player)
@@ -445,6 +461,15 @@ export function PlayerProfilePage() {
           </Card>
         )}
       </div>
+
+      {/* ── Player Bio ───────────────────────────────────────────────────── */}
+      {player.bio && (
+        <Card>
+          <CardContent className="py-3">
+            <p className="text-sm text-muted-foreground leading-relaxed">{player.bio}</p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── Injury History Summary ───────────────────────────────────────── */}
       {(player.injuryHistory?.length ?? 0) > 0 && (() => {
@@ -814,11 +839,36 @@ export function PlayerProfilePage() {
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Status</span>
-                <Badge variant={player.contract.isRestricted ? 'secondary' : 'outline'}>
-                  {player.contract.isRestricted ? 'Restricted FA' : 'Unrestricted FA'}
-                </Badge>
+                <span className="text-muted-foreground">FA Status</span>
+                {player.contract.yearsRemaining > 0 ? (
+                  <Badge variant="outline">Under Contract</Badge>
+                ) : isPlayerRFA(player, currentYear) ? (
+                  <Badge variant="secondary">Restricted FA</Badge>
+                ) : (
+                  <Badge variant="outline">Unrestricted FA</Badge>
+                )}
               </div>
+              {(() => {
+                const matchingRight = offseasonState?.rfaMatchingRights?.find(
+                  (r) => r.playerId === player.id && r.status === 'pending'
+                )
+                if (!matchingRight) return null
+                const holdingClub = clubs[matchingRight.holdingClubId]?.name ?? matchingRight.holdingClubId
+                const offeringClub = clubs[matchingRight.offeringClubId]?.name ?? matchingRight.offeringClubId
+                return (
+                  <div className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs">
+                    <p className="font-medium text-amber-700 dark:text-amber-400">Matching Rights Pending</p>
+                    <p className="text-muted-foreground mt-0.5">
+                      {holdingClub} holds matching rights on a {matchingRight.years}-yr offer from {offeringClub} at ${(matchingRight.aav / 1000).toFixed(0)}k/yr
+                    </p>
+                    {matchingRight.holdingClubId === playerClubId && (
+                      <p className="text-amber-600 dark:text-amber-500 mt-0.5 font-medium">
+                        Go to Contracts → RFA Matching to respond
+                      </p>
+                    )}
+                  </div>
+                )
+              })()}
               <div className="flex justify-between">
                 <span className="text-muted-foreground">List</span>
                 <Badge variant={player.isRookie ? 'secondary' : 'default'}>

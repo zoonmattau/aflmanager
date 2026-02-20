@@ -46,8 +46,8 @@ function OddsMovementIcon({ history }: { history: OddsMovement[] | undefined }) 
   if (!history || history.length < 2) return <Minus className="h-3 w-3 text-muted-foreground" />
   const prev = history[history.length - 2]!
   const curr = history[history.length - 1]!
-  if (curr.odds < prev.odds) return <TrendingDown className="h-3 w-3 text-green-500" title="Shortening (more favoured)" />
-  if (curr.odds > prev.odds) return <TrendingUp className="h-3 w-3 text-red-400" title="Drifting (less favoured)" />
+  if (curr.odds < prev.odds) return <TrendingDown className="h-3 w-3 text-green-500" />
+  if (curr.odds > prev.odds) return <TrendingUp className="h-3 w-3 text-red-400" />
   return <Minus className="h-3 w-3 text-muted-foreground" />
 }
 
@@ -127,9 +127,7 @@ function MatchOddsTab() {
                     key={m.matchId}
                     className={`px-4 py-3 text-sm ${m.settled ? "opacity-60" : ""}`}
                   >
-                    <div className={`grid items-center gap-2 ${bettingSettings?.totalPointsMarkets ? "grid-cols-[1fr_auto_auto_auto_1fr]" : "grid-cols-[1fr_auto_auto_1fr]"}`}
->
-                      {/* Home */}
+                    <div className={`grid items-center gap-2 ${bettingSettings?.totalPointsMarkets ? "grid-cols-[1fr_auto_auto_auto_1fr]" : "grid-cols-[1fr_auto_auto_1fr]"}`}>
                       <div className="flex items-center gap-1.5">
                         <div className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: home?.colors.primary ?? "#666" }} />
                         <span className={homeFav ? "font-semibold" : "text-muted-foreground"}>{home?.fullName ?? m.homeClubId}</span>
@@ -228,3 +226,321 @@ function FuturesTab() {
     return <div className="py-10 text-center text-sm text-muted-foreground">Markets not yet generated.</div>
   }
 
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-1.5">
+        {(Object.keys(FUTURES_LABELS) as FuturesMarket[]).map((key) => (
+          <Button
+            key={key}
+            size="sm"
+            variant={market === key ? "default" : "outline"}
+            onClick={() => setMarket(key)}
+          >
+            {FUTURES_LABELS[key]}
+          </Button>
+        ))}
+      </div>
+
+      <Card>
+        <CardHeader className="py-3">
+          <CardTitle className="text-sm">{FUTURES_LABELS[market]}</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="divide-y">
+            {sorted.map(({ clubId, odds }, i) => {
+              const club = clubs[clubId]
+              const history = historyRecord[clubId]
+              const isUser = clubId === playerClubId
+
+              return (
+                <div
+                  key={clubId}
+                  className={`flex items-center gap-3 px-4 py-2.5 text-sm ${isUser ? "bg-primary/5" : ""}`}
+                >
+                  <span className="w-5 text-right text-xs text-muted-foreground tabular-nums">{i + 1}</span>
+                  <div className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: club?.colors.primary ?? "#666" }} />
+                  <span className={`flex-1 ${isUser ? "font-semibold text-primary" : ""}`}>
+                    {club?.fullName ?? clubId}
+                    {isUser && <Badge variant="secondary" className="ml-1.5 text-[9px] px-1 py-0">You</Badge>}
+                  </span>
+                  <OddsMovementIcon history={history} />
+                  <OddsBadge odds={odds} highlight={i === 0} />
+                </div>
+              )
+            })}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Awards tab
+// ---------------------------------------------------------------------------
+type AwardMarket = "brownlow" | "coleman" | "risingStar"
+
+const AWARD_LABELS: Record<AwardMarket, string> = {
+  brownlow: "Brownlow Medal",
+  coleman: "Coleman Medal (Goals)",
+  risingStar: "Rising Star (U22)",
+}
+
+function AwardsTab() {
+  const navigate = useNavigate()
+  const clubs = useGameStore((s) => s.clubs)
+  const players = useGameStore((s) => s.players)
+  const bettingMarkets = useGameStore((s) => s.bettingMarkets)
+  const playerClubId = useGameStore((s) => s.playerClubId)
+
+  const [award, setAward] = useState<AwardMarket>("brownlow")
+
+  const oddsRecord = bettingMarkets?.awards?.[award] ?? {}
+  const historyRecord =
+    award === "brownlow"
+      ? bettingMarkets?.oddsHistory.brownlow ?? {}
+      : award === "coleman"
+        ? bettingMarkets?.oddsHistory.coleman ?? {}
+        : {}
+
+  const sorted = useMemo(
+    () =>
+      Object.entries(oddsRecord)
+        .map(([playerId, odds]) => ({ playerId, odds }))
+        .sort((a, b) => a.odds - b.odds)
+        .slice(0, 20),
+    [oddsRecord],
+  )
+
+  if (!bettingMarkets) {
+    return <div className="py-10 text-center text-sm text-muted-foreground">Markets not yet generated.</div>
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-1.5">
+        {(Object.keys(AWARD_LABELS) as AwardMarket[]).map((key) => (
+          <Button
+            key={key}
+            size="sm"
+            variant={award === key ? "default" : "outline"}
+            onClick={() => setAward(key)}
+          >
+            {AWARD_LABELS[key]}
+          </Button>
+        ))}
+      </div>
+
+      <Card>
+        <CardHeader className="py-3">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Medal className="h-4 w-4 text-amber-500" />
+            {AWARD_LABELS[award]}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="divide-y">
+            {sorted.map(({ playerId, odds }, i) => {
+              const player = players[playerId]
+              if (!player) return null
+              const club = clubs[player.clubId]
+              const isUserClub = player.clubId === playerClubId
+              const history = historyRecord[playerId]
+
+              const statLabel =
+                award === "brownlow"
+                  ? `${player.seasonStats.disposals} disp`
+                  : award === "coleman"
+                    ? `${player.seasonStats.goals} goals`
+                    : `${player.age}yo · ${player.seasonStats.gamesPlayed}g`
+
+              return (
+                <div
+                  key={playerId}
+                  className={`flex cursor-pointer items-center gap-3 px-4 py-2.5 text-sm hover:bg-muted/40 ${isUserClub ? "bg-primary/5" : ""}`}
+                  onClick={() => navigate(`/player/${playerId}`)}
+                >
+                  <span className="w-5 text-right text-xs text-muted-foreground tabular-nums">{i + 1}</span>
+                  <div className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: club?.colors.primary ?? "#666" }} />
+                  <div className="flex-1 min-w-0">
+                    <span className="font-medium truncate">{player.firstName} {player.lastName}</span>
+                    <span className="ml-1.5 text-xs text-muted-foreground">{club?.abbreviation}</span>
+                  </div>
+                  <span className="text-xs text-muted-foreground tabular-nums">{statLabel}</span>
+                  <OddsMovementIcon history={history} />
+                  <OddsBadge odds={odds} highlight={i === 0} />
+                </div>
+              )
+            })}
+            {sorted.length === 0 && (
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                No candidates yet — markets open once the season begins.
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Odds History tab
+// ---------------------------------------------------------------------------
+function HistoryTab() {
+  const clubs = useGameStore((s) => s.clubs)
+  const players = useGameStore((s) => s.players)
+  const bettingMarkets = useGameStore((s) => s.bettingMarkets)
+
+  type HistoryCategory = "premiership" | "top8" | "coleman" | "brownlow"
+  const [category, setCategory] = useState<HistoryCategory>("premiership")
+  const [selectedId, setSelectedId] = useState<string>("")
+
+  const historySource = bettingMarkets?.oddsHistory[category] ?? {}
+  const entityOptions = useMemo(() => {
+    if (category === "premiership" || category === "top8") {
+      return Object.keys(historySource).map((id) => ({
+        id,
+        label: clubs[id]?.fullName ?? id,
+      }))
+    }
+    return Object.keys(historySource).map((id) => {
+      const p = players[id]
+      return { id, label: p ? `${p.firstName} ${p.lastName}` : id }
+    })
+  }, [category, historySource, clubs, players])
+
+  const selectedHistory = selectedId ? historySource[selectedId] : null
+
+  if (!bettingMarkets) {
+    return <div className="py-10 text-center text-sm text-muted-foreground">No history yet.</div>
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        {(["premiership", "top8", "coleman", "brownlow"] as HistoryCategory[]).map((cat) => (
+          <Button
+            key={cat}
+            size="sm"
+            variant={category === cat ? "default" : "outline"}
+            onClick={() => { setCategory(cat); setSelectedId("") }}
+          >
+            {cat === "premiership" ? "Premiership" : cat === "top8" ? "Make Finals" : cat === "coleman" ? "Coleman" : "Brownlow"}
+          </Button>
+        ))}
+      </div>
+
+      <Select value={selectedId} onValueChange={setSelectedId}>
+        <SelectTrigger className="w-64">
+          <SelectValue placeholder="Select club or player…" />
+        </SelectTrigger>
+        <SelectContent>
+          {entityOptions.map(({ id, label }) => (
+            <SelectItem key={id} value={id}>{label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {selectedHistory && selectedHistory.length > 0 ? (
+        <Card>
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <BarChart2 className="h-4 w-4" />
+              Odds Movement
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="divide-y">
+              {[...selectedHistory].reverse().map((entry, i) => {
+                const prev = selectedHistory[selectedHistory.length - 2 - i]
+                const changed = prev && prev.odds !== entry.odds
+                return (
+                  <div key={i} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+                    <span className="text-xs text-muted-foreground w-24 shrink-0">{entry.date}</span>
+                    <OddsBadge odds={entry.odds} />
+                    {changed && (
+                      <span className={`text-xs ${entry.odds < prev!.odds ? "text-green-500" : "text-red-400"}`}>
+                        {entry.odds < prev!.odds ? "▼ shortened" : "▲ drifted"}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      ) : selectedId ? (
+        <div className="py-8 text-center text-sm text-muted-foreground">No history for this selection.</div>
+      ) : null}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main page
+// ---------------------------------------------------------------------------
+export function BettingPage() {
+  const settings = useGameStore((s) => s.settings)
+  const bettingMarkets = useGameStore((s) => s.bettingMarkets)
+
+  if (!settings.betting?.enabled) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <Trophy className="h-7 w-7 text-primary" />
+          <h1 className="text-2xl font-bold">Betting Markets</h1>
+        </div>
+        <Card>
+          <CardContent className="py-12 text-center">
+            <p className="text-muted-foreground text-sm">
+              Betting markets are disabled. Enable them in{" "}
+              <a href="/game-settings" className="underline hover:text-foreground">Game Settings</a>.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <Trophy className="h-7 w-7 text-primary" />
+        <div>
+          <h1 className="text-2xl font-bold">Betting Markets</h1>
+          <p className="text-xs text-muted-foreground">
+            Last updated: {bettingMarkets?.lastUpdated ?? "—"}
+          </p>
+        </div>
+      </div>
+
+      <BettingDisclaimer />
+
+      <Tabs defaultValue="match">
+        <TabsList>
+          <TabsTrigger value="match">Match Odds</TabsTrigger>
+          <TabsTrigger value="futures">Season Futures</TabsTrigger>
+          <TabsTrigger value="awards">Award Markets</TabsTrigger>
+          <TabsTrigger value="history">
+            <BarChart2 className="mr-1 h-3.5 w-3.5" />
+            History
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="match" className="mt-4">
+          <MatchOddsTab />
+        </TabsContent>
+        <TabsContent value="futures" className="mt-4">
+          <FuturesTab />
+        </TabsContent>
+        <TabsContent value="awards" className="mt-4">
+          <AwardsTab />
+        </TabsContent>
+        <TabsContent value="history" className="mt-4">
+          <HistoryTab />
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}

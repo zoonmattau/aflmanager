@@ -68,7 +68,7 @@ export interface CustomFixtureRules {
 
 export interface CustomFinalsRules {
   finalsTeams: number
-  finalsFormat: 'afl-top-8' | 'page-mcintyre-top-4' | 'top-6' | 'straight-knockout' | 'round-robin' | 'custom'
+  finalsFormat: 'afl-top-8' | 'afl-top-10' | 'page-mcintyre-top-4' | 'top-6' | 'straight-knockout' | 'round-robin' | 'custom'
   customFinalsFormat?: FinalsFormat
 }
 

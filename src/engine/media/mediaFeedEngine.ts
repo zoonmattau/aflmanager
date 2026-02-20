@@ -67,6 +67,10 @@ function deriveFactBasis(item: NewsItem): string {
 }
 
 export function applyMediaCoverage(item: NewsItem): NewsItem {
+  // Milestone announcements (awards, records, career moments) are factual
+  // league communications — no reporter byline needed.
+  if (item.category === 'milestone') return item
+
   const existing = item.media
   if (existing?.reporterName && existing?.outletName) {
     return {

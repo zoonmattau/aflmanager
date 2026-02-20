@@ -32,11 +32,25 @@ import { LeaguePage } from '@/pages/LeaguePage'
 import { CalendarPage } from '@/pages/CalendarPage'
 import { ReservesPage } from '@/pages/ReservesPage'
 import { ReservesMatchPreviewPage } from '@/pages/ReservesMatchPreviewPage'
+import { ReservesDashboardPage } from '@/pages/reserves/ReservesDashboardPage'
+import { ReservesSquadPage } from '@/pages/reserves/ReservesSquadPage'
+import { ReservesLineupPage } from '@/pages/reserves/ReservesLineupPage'
+import { ReservesDevelopmentPage } from '@/pages/reserves/ReservesDevelopmentPage'
+import { ReservesFixturesPage } from '@/pages/reserves/ReservesFixturesPage'
+import { ReservesStatsPage } from '@/pages/reserves/ReservesStatsPage'
+import { ReservesStaffSubPage } from '@/pages/reserves/ReservesStaffSubPage'
 import { StateLeaguePage } from '@/pages/StateLeaguePage'
 import { BrownlowNightPage } from '@/pages/BrownlowNightPage'
 import { AwardsNightPage } from '@/pages/AwardsNightPage'
+import { AllAustralianNightPage } from '@/pages/AllAustralianNightPage'
+import { AllAustralianSquadPage } from '@/pages/AllAustralianSquadPage'
 import { AwardsHistoryPage } from '@/pages/AwardsHistoryPage'
 import { WorldHubPage } from '@/pages/WorldHubPage'
+import { YouthPathwayPage } from '@/pages/YouthPathwayPage'
+import { YouthCompDetailPage } from '@/pages/YouthCompDetailPage'
+import { YouthTournamentPage } from '@/pages/YouthTournamentPage'
+import { YouthPlayerDetailPage } from '@/pages/YouthPlayerDetailPage'
+import { WorldAllPlayersPage } from '@/pages/WorldAllPlayersPage'
 import { PlayerDevelopmentReportPage } from '@/pages/PlayerDevelopmentReportPage'
 import { InjuryReportPage } from '@/pages/InjuryReportPage'
 import { CoachingJobsPage } from '@/pages/CoachingJobsPage'
@@ -53,6 +67,8 @@ import { AgentRelationshipsPage } from '@/pages/AgentRelationshipsPage'
 import { MembershipPage } from '@/pages/MembershipPage'
 import { SponsorshipPage } from '@/pages/SponsorshipPage'
 import { GlossaryPage } from '@/pages/GlossaryPage'
+import { BettingPage } from '@/pages/BettingPage'
+import { StateOfOriginPage } from '@/pages/StateOfOriginPage'
 import { useGameStore } from '@/stores/gameStore'
 import { useAppStore } from '@/stores/appStore'
 
@@ -112,16 +128,30 @@ function GameRoutes() {
         <Route path="/records" element={<RecordsPage />} />
         <Route path="/history" element={<LeagueHistoryPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
-        <Route path="/reserves" element={<ReservesPage />} />
+        <Route path="/reserves" element={<ReservesDashboardPage />} />
+        <Route path="/reserves/squad" element={<ReservesSquadPage />} />
+        <Route path="/reserves/lineup" element={<ReservesLineupPage />} />
+        <Route path="/reserves/development" element={<ReservesDevelopmentPage />} />
+        <Route path="/reserves/fixtures" element={<ReservesFixturesPage />} />
+        <Route path="/reserves/stats" element={<ReservesStatsPage />} />
+        <Route path="/reserves/staff" element={<ReservesStaffSubPage />} />
         <Route path="/reserves/match-preview" element={<ReservesMatchPreviewPage />} />
+        <Route path="/reserves/legacy" element={<ReservesPage />} />
         <Route path="/state-leagues" element={<StateLeaguePage />} />
         <Route path="/training" element={<TrainingPage />} />
         <Route path="/offseason" element={<OffseasonPage />} />
         <Route path="/expansion" element={<ExpansionPage />} />
         <Route path="/brownlow-night" element={<BrownlowNightPage />} />
         <Route path="/awards-night" element={<AwardsNightPage />} />
+        <Route path="/all-australian-night" element={<AllAustralianNightPage />} />
+        <Route path="/all-australian/squad" element={<AllAustralianSquadPage />} />
         <Route path="/awards-history" element={<AwardsHistoryPage />} />
         <Route path="/world-hub" element={<WorldHubPage />} />
+        <Route path="/youth-pathway" element={<YouthPathwayPage />} />
+        <Route path="/youth-pathway/competition/:compId" element={<YouthCompDetailPage />} />
+        <Route path="/youth-pathway/player/:playerId" element={<YouthPlayerDetailPage />} />
+        <Route path="/youth-pathway/tournament" element={<YouthTournamentPage />} />
+        <Route path="/world/players" element={<WorldAllPlayersPage />} />
         <Route path="/development-report" element={<PlayerDevelopmentReportPage />} />
         <Route path="/injury-report" element={<InjuryReportPage />} />
         <Route path="/compare" element={<PlayerComparisonPage />} />
@@ -134,6 +164,8 @@ function GameRoutes() {
         <Route path="/tribunal" element={<TribunalPage />} />
         <Route path="/tribunal/:caseId" element={<TribunalPage />} />
         <Route path="/preseason-preview" element={<PreseasonPreviewPage />} />
+        <Route path="/betting" element={<BettingPage />} />
+        <Route path="/state-of-origin" element={<StateOfOriginPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppLayout>

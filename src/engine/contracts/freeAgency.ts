@@ -95,6 +95,18 @@ function clubHasPositionalNeed(
 // ---------------------------------------------------------------------------
 
 /**
+ * Determine whether a player qualifies as a Restricted Free Agent.
+ *
+ * Under the new rules: a player is an RFA if they are under 24 years old
+ * and have fewer than 8 years of AFL service (currentYear – draftYear).
+ * Players with 8+ years of service, or aged 24+, become UFAs.
+ */
+export function isPlayerRFA(player: Player, currentYear: number): boolean {
+  const yearsOfService = currentYear - player.draftYear
+  return player.age < 24 && yearsOfService < 8
+}
+
+/**
  * Return every player whose contract will expire at the end of the current
  * season (i.e. they have exactly 1 year remaining).
  */
@@ -121,6 +133,7 @@ export function identifyExpiringContracts(
  */
 export function processEndOfSeasonContracts(
   players: Record<string, Player>,
+  currentYear?: number,
 ): { expired: Player[]; freeAgents: FreeAgent[] } {
   const expired: Player[] = []
   const freeAgents: FreeAgent[] = []
@@ -146,7 +159,9 @@ export function processEndOfSeasonContracts(
       expired.push(player)
 
       const isRestricted =
-        player.contract.isRestricted && player.age < 27
+        currentYear !== undefined
+          ? isPlayerRFA(player, currentYear)
+          : (player.contract.isRestricted && player.age < 27)
 
       const baseValue = calculatePlayerValue(player)
       // Free agents demand a premium over their calculated value

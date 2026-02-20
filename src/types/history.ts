@@ -338,4 +338,5 @@ export interface GameHistory {
   matchReports: MatchReport[]
   financialHistory?: import('@/types/historyArchive').FinancialSeasonRecord[]
   h2hRecords?: Record<string, H2HRecord>
+  allAustralianHistory?: import('@/types/allAustralian').AllAustralianHistoryEntry[]
 }

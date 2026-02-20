@@ -258,5 +258,85 @@
       { "id": "ntu18-alice-springs", "name": "Alice Springs U18", "abbreviation": "ALS", "colors": { "primary": "#FFD700", "secondary": "#003399" }, "strengthRating": 47 },
       { "id": "ntu18-tiwi", "name": "Tiwi Bombers U18", "abbreviation": "TIW", "colors": { "primary": "#CC0000", "secondary": "#003DA5" }, "strengthRating": 52 }
     ]
+  },
+  {
+    "id": "sa-school",
+    "name": "SANFL Schools Cup",
+    "state": "SA",
+    "level": "school",
+    "ageGroup": "both",
+    "rounds": 10,
+    "clubs": [
+      { "id": "sasch-stpeters", "name": "St Peter's College", "abbreviation": "SPC", "colors": { "primary": "#002B5C", "secondary": "#FFFFFF" }, "strengthRating": 62 },
+      { "id": "sasch-pac", "name": "Prince Alfred College", "abbreviation": "PAC", "colors": { "primary": "#003399", "secondary": "#FFD700" }, "strengthRating": 60 },
+      { "id": "sasch-scotch", "name": "Scotch College Adelaide", "abbreviation": "SCA", "colors": { "primary": "#000080", "secondary": "#CC0000" }, "strengthRating": 58 },
+      { "id": "sasch-pembroke", "name": "Pembroke School", "abbreviation": "PEM", "colors": { "primary": "#800000", "secondary": "#FFD700" }, "strengthRating": 56 },
+      { "id": "sasch-sacred-heart", "name": "Sacred Heart College", "abbreviation": "SHC", "colors": { "primary": "#CC0000", "secondary": "#FFFFFF" }, "strengthRating": 55 },
+      { "id": "sasch-immanuel", "name": "Immanuel College", "abbreviation": "IMM", "colors": { "primary": "#006400", "secondary": "#FFD700" }, "strengthRating": 54 }
+    ]
+  },
+  {
+    "id": "wa-school",
+    "name": "WAFL Schools Cup",
+    "state": "WA",
+    "level": "school",
+    "ageGroup": "both",
+    "rounds": 10,
+    "clubs": [
+      { "id": "wasch-aquinas", "name": "Aquinas College", "abbreviation": "AQU", "colors": { "primary": "#CC0000", "secondary": "#FFFFFF" }, "strengthRating": 63 },
+      { "id": "wasch-hale", "name": "Hale School", "abbreviation": "HAL", "colors": { "primary": "#FFD700", "secondary": "#002B5C" }, "strengthRating": 61 },
+      { "id": "wasch-scotch", "name": "Scotch College WA", "abbreviation": "SCW", "colors": { "primary": "#000000", "secondary": "#FFD700" }, "strengthRating": 62 },
+      { "id": "wasch-wesley", "name": "Wesley College WA", "abbreviation": "WCW", "colors": { "primary": "#6B21A8", "secondary": "#FFD700" }, "strengthRating": 60 },
+      { "id": "wasch-guildford", "name": "Guildford Grammar", "abbreviation": "GUI", "colors": { "primary": "#003399", "secondary": "#FFD700" }, "strengthRating": 57 },
+      { "id": "wasch-cbc", "name": "CBC Perth", "abbreviation": "CBC", "colors": { "primary": "#003DA5", "secondary": "#FFFFFF" }, "strengthRating": 55 }
+    ]
+  },
+  {
+    "id": "tas-school",
+    "name": "TAS Schools Cup",
+    "state": "TAS",
+    "level": "school",
+    "ageGroup": "both",
+    "rounds": 10,
+    "clubs": [
+      { "id": "tassch-hutchins", "name": "The Hutchins School", "abbreviation": "HUT", "colors": { "primary": "#800000", "secondary": "#FFFFFF" }, "strengthRating": 56 },
+      { "id": "tassch-launceston", "name": "Launceston Grammar", "abbreviation": "LGS", "colors": { "primary": "#002B5C", "secondary": "#FFD700" }, "strengthRating": 54 },
+      { "id": "tassch-stvigils", "name": "St Virgil's College", "abbreviation": "STV", "colors": { "primary": "#003399", "secondary": "#FFD700" }, "strengthRating": 55 },
+      { "id": "tassch-stpatricks", "name": "St Patrick's College Launceston", "abbreviation": "SPL", "colors": { "primary": "#006400", "secondary": "#FFFFFF" }, "strengthRating": 52 },
+      { "id": "tassch-scotch-oakburn", "name": "Scotch Oakburn College", "abbreviation": "SOC", "colors": { "primary": "#000000", "secondary": "#CC0000" }, "strengthRating": 51 },
+      { "id": "tassch-friends", "name": "The Friends' School", "abbreviation": "FRI", "colors": { "primary": "#CC0000", "secondary": "#FFFFFF" }, "strengthRating": 50 }
+    ]
+  },
+  {
+    "id": "nt-school",
+    "name": "AFLNT Schools Cup",
+    "state": "NT",
+    "level": "school",
+    "ageGroup": "both",
+    "rounds": 8,
+    "clubs": [
+      { "id": "ntsch-darwin-high", "name": "Darwin High School", "abbreviation": "DHS", "colors": { "primary": "#006400", "secondary": "#FFD700" }, "strengthRating": 48 },
+      { "id": "ntsch-palmerston", "name": "Palmerston Senior College", "abbreviation": "PSC", "colors": { "primary": "#003399", "secondary": "#FFFFFF" }, "strengthRating": 47 },
+      { "id": "ntsch-casuarina", "name": "Casuarina Senior College", "abbreviation": "CSC", "colors": { "primary": "#CC0000", "secondary": "#FFFFFF" }, "strengthRating": 49 },
+      { "id": "ntsch-st-philips", "name": "St Philip's College", "abbreviation": "SPC", "colors": { "primary": "#002B5C", "secondary": "#FFD700" }, "strengthRating": 50 },
+      { "id": "ntsch-katherine", "name": "Katherine High School", "abbreviation": "KHS", "colors": { "primary": "#800000", "secondary": "#FFFFFF" }, "strengthRating": 44 },
+      { "id": "ntsch-nhulunbuy", "name": "Nhulunbuy High School", "abbreviation": "NHS", "colors": { "primary": "#CC0000", "secondary": "#003DA5" }, "strengthRating": 43 }
+    ]
+  },
+  {
+    "id": "act-school",
+    "name": "ACT GPS Schools",
+    "state": "NSW/ACT",
+    "level": "school",
+    "ageGroup": "both",
+    "rounds": 10,
+    "clubs": [
+      { "id": "actsch-cgs", "name": "Canberra Grammar School", "abbreviation": "CGS", "colors": { "primary": "#002B5C", "secondary": "#FFD700" }, "strengthRating": 57 },
+      { "id": "actsch-st-edmunds", "name": "St Edmund's College", "abbreviation": "STE", "colors": { "primary": "#003DA5", "secondary": "#FFFFFF" }, "strengthRating": 55 },
+      { "id": "actsch-marist", "name": "Marist College Canberra", "abbreviation": "MCC", "colors": { "primary": "#800000", "secondary": "#FFFFFF" }, "strengthRating": 54 },
+      { "id": "actsch-daramalan", "name": "Daramalan College", "abbreviation": "DAR", "colors": { "primary": "#003399", "secondary": "#FFD700" }, "strengthRating": 52 },
+      { "id": "actsch-radford", "name": "Radford College", "abbreviation": "RAD", "colors": { "primary": "#006400", "secondary": "#FFFFFF" }, "strengthRating": 51 },
+      { "id": "actsch-tuggeranong", "name": "Lake Tuggeranong College", "abbreviation": "LTC", "colors": { "primary": "#FF6600", "secondary": "#000000" }, "strengthRating": 49 }
+    ]
   }
 ]

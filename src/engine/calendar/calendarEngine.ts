@@ -134,13 +134,40 @@ function createEvent(
  * Rounds start in mid-March and run weekly through August.
  * Finals run September. Offseason October-December.
  */
+/** Match-day offset from Monday anchor (mirrors fixtureDateUtils to avoid circular import). */
+function matchDayOffset(matchDay?: string): number {
+  switch (matchDay) {
+    case 'Thursday': return 3
+    case 'Friday': return 4
+    case 'Saturday-Early':
+    case 'Saturday-Afternoon':
+    case 'Saturday-Twilight':
+    case 'Saturday-Night': return 5
+    case 'Sunday-Early':
+    case 'Sunday-Afternoon':
+    case 'Sunday-Twilight': return 6
+    case 'Monday': return 7
+    default: return 5 // default Saturday
+  }
+}
+
+/** First Monday on-or-after a date (mirrors fixtureDateUtils to avoid circular import). */
+function toMondayAnchor(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00`)
+  const day = d.getDay() // 0 Sun, 1 Mon
+  const daysToMonday = day === 1 ? 0 : (8 - day) % 7
+  d.setDate(d.getDate() + daysToMonday)
+  return toLocalDateStr(d)
+}
+
 export function buildSeasonCalendar(
   year: number,
   season: Season,
   playerClubId: string,
   finalsSettings?: FinalsSettings,
   seasonStartDate?: string,
-  gameStartDate?: string,
+  _gameStartDate?: string,
+  clubs?: Record<string, { abbreviation: string; fullName?: string }>,
 ): GameCalendar {
   eventCounter = 0
   const events: GameEvent[] = []
@@ -148,18 +175,29 @@ export function buildSeasonCalendar(
   // Season start date: use provided or default to mid-March
   const seasonStart = seasonStartDate ?? `${year}-03-20`
 
+  // Snap to Monday anchor — all round dates are computed from here, matching
+  // the getFixtureDateIso formula used by Dashboard and MatchDayPage.
+  const mondayAnchor = toMondayAnchor(seasonStart)
+
   // ---- Regular season rounds ----
   for (let i = 0; i < season.rounds.length; i++) {
     const round = season.rounds[i]
-    const roundDate = addDays(seasonStart, i * 7)
+
+    // Find the user's fixture to get the actual matchDay
+    const userFixture = round.fixtures.find(
+      (f) => f.homeClubId === playerClubId || f.awayClubId === playerClubId,
+    )
+    const roundDate = addDays(mondayAnchor, i * 7 + matchDayOffset(userFixture?.matchDay))
 
     // Check if the user's club is on bye this round
     const userOnBye = (round.byeClubIds ?? []).includes(playerClubId)
 
     if (userOnBye) {
+      // Bye: place on the Monday of the bye week (no match day)
+      const byeDate = addDays(mondayAnchor, i * 7)
       events.push(
         createEvent(
-          roundDate,
+          byeDate,
           'bye',
           `Round ${i + 1} — BYE`,
           'Your club has a bye this round',
@@ -167,21 +205,35 @@ export function buildSeasonCalendar(
         ),
       )
     } else {
+      // Build opponent-aware title
+      const opponentId = userFixture
+        ? (userFixture.homeClubId === playerClubId ? userFixture.awayClubId : userFixture.homeClubId)
+        : null
+      const opponentAbbr = opponentId ? (clubs?.[opponentId]?.abbreviation ?? opponentId) : null
+      const isHome = userFixture?.homeClubId === playerClubId
+      const blockbusterName = userFixture?.blockbusterName
+      const matchTitle = opponentAbbr
+        ? `Round ${i + 1} vs ${opponentAbbr}`
+        : `Round ${i + 1}`
+      const matchDesc = blockbusterName
+        ? `${blockbusterName} · ${isHome ? 'Home' : 'Away'}`
+        : `Round ${i + 1} · ${isHome ? 'Home' : 'Away'}${opponentAbbr ? ` vs ${clubs?.[opponentId!]?.fullName ?? opponentAbbr}` : ''}`
       events.push(
         createEvent(
           roundDate,
           'match',
-          `Round ${i + 1}`,
-          `Regular season Round ${i + 1}`,
-          { roundIndex: i },
+          matchTitle,
+          matchDesc,
+          { roundIndex: i, opponentId, isHome },
         ),
       )
     }
 
-    // Training sessions between matches (Tue, Thu)
+    // Training sessions mid-week (Tue and Thu of the following week)
     if (i < season.rounds.length - 1) {
-      const tue = addDays(roundDate, 3)
-      const thu = addDays(roundDate, 5)
+      const nextMonday = addDays(mondayAnchor, (i + 1) * 7)
+      const tue = addDays(nextMonday, 1)
+      const thu = addDays(nextMonday, 3)
       events.push(
         createEvent(tue, 'training', 'Training Session', 'Mid-week training'),
         createEvent(thu, 'training', 'Training Session', 'Pre-match training'),
@@ -207,12 +259,8 @@ export function buildSeasonCalendar(
   }
 
   // ---- Offseason events ----
-  // Anchor offseason events to the actual offseason start date (day after Grand Final),
-  // not the user's chosen game start date. For the initial season, use the standard
-  // offseason start; for subsequent seasons, derive from the current season's finals.
-  const offseasonStart = gameStartDate !== undefined
-    ? computeDefaultGameStartDate(year)
-    : addDays(finalsStart, finalsWeeks * 7 + 7)
+  // Always anchor offseason events to the end of this season's finals.
+  const offseasonStart = addDays(finalsStart, finalsWeeks * 7 + 7)
 
   events.push(
     createEvent(
@@ -309,9 +357,9 @@ export function injectSpecialEvents(
 // Query helpers
 // ---------------------------------------------------------------------------
 
-/** Get next unresolved event. */
+/** Get next unresolved event on or after currentDate. */
 export function getNextEvent(calendar: GameCalendar): GameEvent | null {
-  return calendar.events.find((e) => !e.resolved) ?? null
+  return calendar.events.find((e) => !e.resolved && e.date >= calendar.currentDate) ?? null
 }
 
 /** Get all events for a specific date. */
@@ -328,9 +376,9 @@ export function getEventsInRange(
   return calendar.events.filter((e) => e.date >= startDate && e.date <= endDate)
 }
 
-/** Get upcoming events (next N unresolved). */
+/** Get upcoming events (next N unresolved on or after currentDate). */
 export function getUpcomingEvents(calendar: GameCalendar, count: number = 5): GameEvent[] {
-  return calendar.events.filter((e) => !e.resolved).slice(0, count)
+  return calendar.events.filter((e) => !e.resolved && e.date >= calendar.currentDate).slice(0, count)
 }
 
 // ---------------------------------------------------------------------------

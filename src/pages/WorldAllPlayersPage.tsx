@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
-import type { Shortlist } from '@/stores/gameStore'
+import type { Shortlist } from '@/types/game'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -116,7 +116,7 @@ function ShortlistPopover({ playerId, shortlists, onAdd, onCreateAndAdd }: Short
         )}
         <div className="space-y-0.5 max-h-48 overflow-y-auto">
           {shortlists.map((list) => {
-            const inList = list.entries.some((e) => e.targetType === 'player' && e.targetId === playerId)
+            const inList = list.entries.some((e: { targetType: string; targetId: string }) => e.targetType === 'player' && e.targetId === playerId)
             return (
               <button
                 key={list.id}

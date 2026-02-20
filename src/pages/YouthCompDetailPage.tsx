@@ -19,7 +19,7 @@ import type { YouthPlayer, YouthClub } from '@/types/youthPathway'
 // Tab definition
 // ---------------------------------------------------------------------------
 
-type TabId = 'ladder' | 'fixtures' | 'players' | 'awards' | 'clubs' | 'draft-eligible'
+type TabId = 'ladder' | 'fixtures' | 'players' | 'awards' | 'clubs' | 'draft-eligible' | 'teams'
 
 const ALL_TABS: { id: TabId; label: string }[] = [
   { id: 'ladder',         label: 'Ladder' },
@@ -28,7 +28,39 @@ const ALL_TABS: { id: TabId; label: string }[] = [
   { id: 'awards',         label: 'Awards' },
   { id: 'clubs',          label: 'Clubs' },
   { id: 'draft-eligible', label: 'Draft Eligible' },
+  { id: 'teams',          label: 'Teams' },
 ]
+
+// ---------------------------------------------------------------------------
+// Pathway relationships (static — which comps can a player also appear in?)
+// ---------------------------------------------------------------------------
+
+/** Elite or sibling comps that players from this comp are also eligible for. */
+const PATHWAY_ALSO_ELIGIBLE: Record<string, string[]> = {
+  'aps':           ['coates-u18'],
+  'agsv':          ['coates-u18'],
+  'nsw-school':    ['nsw-u18'],
+  'qld-school':    ['qld-u18'],
+  'sa-school':     ['sa-u18'],
+  'wa-school':     ['wa-u18'],
+  'act-school':    ['nsw-u18'],
+  'vic-state-u16': ['coates-u18', 'vic-state-u18'],
+  'sa-u16':        ['sa-u18'],
+  'wa-u16':        ['wa-u18'],
+}
+
+/** Feeder comps that this comp draws elite players from. */
+const PATHWAY_DRAWS_FROM: Record<string, string[]> = {
+  'coates-u18': ['aps', 'agsv', 'vic-state-u16', 'vic-state-u18'],
+  'sa-u18':     ['sa-school', 'sa-u16'],
+  'wa-u18':     ['wa-school', 'wa-u16'],
+  'nsw-u18':    ['nsw-school', 'act-school'],
+  'qld-u18':    ['qld-school'],
+}
+
+const POSITION_ORDER: Partial<Record<string, number>> = {
+  FB: 1, BP: 2, CHB: 3, HBF: 4, W: 5, IM: 6, OM: 7, RK: 8, HFF: 9, CHF: 10, FP: 11, FF: 12,
+}
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -115,8 +147,9 @@ export function YouthCompDetailPage() {
   const playerClubId  = useGameStore((s) => s.playerClubId)
   const currentYear   = useGameStore((s) => s.currentYear)
 
-  const [activeTab, setActiveTab]     = useState<TabId>('ladder')
+  const [activeTab, setActiveTab]       = useState<TabId>('ladder')
   const [fixtureRound, setFixtureRound] = useState(1)
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null)
 
   // ---- guard ----
   if (!youthPathway || !compId) {
@@ -186,6 +219,36 @@ export function YouthCompDetailPage() {
       return b.rawTalentScore - a.rawTalentScore
     })
 
+  // Players grouped by club (for Teams tab)
+  const playersByClub = useMemo(() => {
+    const map: Record<string, YouthPlayer[]> = {}
+    for (const p of allPlayers) {
+      if (!map[p.clubId]) map[p.clubId] = []
+      map[p.clubId].push(p)
+    }
+    return map
+  }, [allPlayers])
+
+  // Pathway relationships for this comp
+  const alsoEligibleFor = (PATHWAY_ALSO_ELIGIBLE[compId] ?? [])
+    .map((id) => ({ id, name: youthPathway.competitions[id]?.name ?? id }))
+  const drawsFromComps = (PATHWAY_DRAWS_FROM[compId] ?? [])
+    .map((id) => ({ id, name: youthPathway.competitions[id]?.name ?? id }))
+
+  // Selected team roster (Teams tab)
+  const selectedClub = selectedTeamId ? getClub(selectedTeamId) : null
+  const teamPlayers = selectedTeamId
+    ? (playersByClub[selectedTeamId] ?? []).slice().sort((a, b) => {
+        const da = isDiscovered(a.id) ? 1 : 0
+        const db = isDiscovered(b.id) ? 1 : 0
+        if (db !== da) return db - da
+        const pa = POSITION_ORDER[a.position] ?? 99
+        const pb = POSITION_ORDER[b.position] ?? 99
+        if (pa !== pb) return pa - pb
+        return `${a.lastName}${a.firstName}`.localeCompare(`${b.lastName}${b.firstName}`)
+      })
+    : []
+
   // Ladder with club info
   const ladderWithClub = comp.season.ladder.map((e, i) => ({
     ...e,
@@ -224,6 +287,38 @@ export function YouthCompDetailPage() {
             </span>
             <span className="text-sm text-muted-foreground">{comp.clubs.length} clubs</span>
           </div>
+          {(alsoEligibleFor.length > 0 || drawsFromComps.length > 0) && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
+              {alsoEligibleFor.length > 0 && (
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="text-muted-foreground">Elite players also eligible for:</span>
+                  {alsoEligibleFor.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => navigate(`/youth-pathway/competition/${c.id}`)}
+                      className="px-2 py-0.5 rounded border border-yellow-500/40 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 hover:bg-yellow-500/20 transition-colors"
+                    >
+                      {c.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {drawsFromComps.length > 0 && (
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="text-muted-foreground">Also draws players from:</span>
+                  {drawsFromComps.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => navigate(`/youth-pathway/competition/${c.id}`)}
+                      className="px-2 py-0.5 rounded border border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-400 hover:bg-sky-500/20 transition-colors"
+                    >
+                      {c.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -437,7 +532,11 @@ export function YouthCompDetailPage() {
                         const scouted = isDiscovered(player.id)
                         const converted = youthPathway.convertedProspectIds[player.id]
                         return (
-                          <TableRow key={player.id} className={scouted ? 'bg-blue-500/5' : ''}>
+                          <TableRow
+                            key={player.id}
+                            className={`cursor-pointer hover:bg-muted/60 ${scouted ? 'bg-blue-500/5' : ''}`}
+                            onClick={() => navigate(`/youth-pathway/player/${encodeURIComponent(player.id)}`)}
+                          >
                             <TableCell>
                               <div className="flex items-center gap-1.5">
                                 {scouted && <Star className="h-3 w-3 text-blue-500 shrink-0" />}
@@ -534,7 +633,11 @@ export function YouthCompDetailPage() {
                 </TableHeader>
                 <TableBody>
                   {clubsWithLadder.map(({ club, position, played, wins, losses }) => (
-                    <TableRow key={club.id}>
+                    <TableRow
+                      key={club.id}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => { setSelectedTeamId(club.id); setActiveTab('teams') }}
+                    >
                       <TableCell className="text-center text-muted-foreground text-sm">
                         {position ?? '—'}
                       </TableCell>
@@ -555,6 +658,149 @@ export function YouthCompDetailPage() {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* ---- Teams tab ---- */}
+      {activeTab === 'teams' && (
+        <div className="space-y-3">
+          {/* Club picker */}
+          <div className="flex flex-wrap gap-2">
+            {comp.clubs.map((club) => (
+              <button
+                key={club.id}
+                onClick={() => setSelectedTeamId(selectedTeamId === club.id ? null : club.id)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-sm transition-colors ${
+                  selectedTeamId === club.id
+                    ? 'border-primary bg-primary/10 text-primary font-medium'
+                    : 'border-border text-muted-foreground hover:text-foreground hover:border-foreground/50'
+                }`}
+              >
+                <div className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: club.colors.primary }} />
+                {club.name}
+              </button>
+            ))}
+          </div>
+
+          {!selectedTeamId ? (
+            <Card>
+              <CardContent className="py-10 text-center text-sm text-muted-foreground">
+                Select a club above to view their squad.
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  {selectedClub && (
+                    <div className="h-4 w-4 rounded-full shrink-0" style={{ backgroundColor: selectedClub.colors.primary }} />
+                  )}
+                  {selectedClub?.name ?? selectedTeamId}
+                  <span className="text-xs font-normal text-muted-foreground ml-1">
+                    {teamPlayers.length} players
+                  </span>
+                  <StrengthBar value={selectedClub?.strengthRating ?? 50} />
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                {teamPlayers.length === 0 ? (
+                  <p className="p-6 text-sm text-muted-foreground text-center">No players registered for this club.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Name</TableHead>
+                          <TableHead className="text-center w-10">Age</TableHead>
+                          <TableHead className="text-center w-10">Yr</TableHead>
+                          <TableHead className="text-center w-12">Pos</TableHead>
+                          <TableHead className="text-center w-28">Potential</TableHead>
+                          <TableHead className="text-center w-10">Gms</TableHead>
+                          <TableHead className="text-center w-12">Disp</TableHead>
+                          <TableHead className="text-center w-12">Goals</TableHead>
+                          <TableHead className="text-center w-12">Avg</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {teamPlayers.map((player) => {
+                          const scouted    = isDiscovered(player.id)
+                          const converted  = youthPathway.convertedProspectIds[player.id]
+                          const scoutRating = scouted
+                            ? Math.round(
+                                (player.athleticism + player.footballIQ + player.contested +
+                                  player.kicking + player.marking + player.goalkicking +
+                                  player.workRate + player.leadership) / 8,
+                              )
+                            : null
+                          return (
+                            <TableRow
+                              key={player.id}
+                              className={`cursor-pointer hover:bg-muted/60 ${scouted ? 'bg-blue-500/5' : ''}`}
+                              onClick={() => navigate(`/youth-pathway/player/${encodeURIComponent(player.id)}`)}
+                            >
+                              <TableCell>
+                                <div className="flex items-center gap-1.5">
+                                  {scouted && <Star className="h-3 w-3 text-blue-500 shrink-0" />}
+                                  <span className={`text-sm font-medium ${!scouted ? 'text-muted-foreground' : ''}`}>
+                                    {player.firstName} {player.lastName}
+                                  </span>
+                                  {converted && (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[10px] py-0 px-1 border-green-500 text-green-600 cursor-pointer"
+                                      onClick={(e) => { e.stopPropagation(); navigate('/scouting') }}
+                                    >
+                                      Prospect
+                                    </Badge>
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-center text-sm">{player.age}</TableCell>
+                              <TableCell className="text-center text-sm text-muted-foreground">Y{player.yearInComp}</TableCell>
+                              <TableCell className="text-center">
+                                <Badge variant="outline" className="text-xs">{player.position}</Badge>
+                              </TableCell>
+                              <TableCell className="text-center">
+                                {scoutRating !== null ? (
+                                  <div className="flex items-center gap-1.5 justify-center">
+                                    <div className="h-1.5 w-16 rounded-full bg-muted overflow-hidden">
+                                      <div
+                                        className={`h-full rounded-full ${
+                                          scoutRating >= 70 ? 'bg-green-500'
+                                            : scoutRating >= 55 ? 'bg-yellow-500'
+                                            : 'bg-slate-400'
+                                        }`}
+                                        style={{ width: `${scoutRating}%` }}
+                                      />
+                                    </div>
+                                    <span className="text-xs tabular-nums w-6 text-right">{scoutRating}</span>
+                                  </div>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground/40">not scouted</span>
+                                )}
+                              </TableCell>
+                              {scouted ? (
+                                <>
+                                  <TableCell className="text-center text-sm">{player.seasonStats.gamesPlayed}</TableCell>
+                                  <TableCell className="text-center text-sm">{player.seasonStats.disposals}</TableCell>
+                                  <TableCell className="text-center text-sm">{player.seasonStats.goals}</TableCell>
+                                  <TableCell className="text-center text-sm">{player.seasonStats.avgRating.toFixed(1)}</TableCell>
+                                </>
+                              ) : (
+                                <TableCell colSpan={4} className="text-center text-xs text-muted-foreground/40">
+                                  — scout to unlock —
+                                </TableCell>
+                              )}
+                            </TableRow>
+                          )
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </div>
       )}
 
       {/* ---- Draft Eligible tab ---- */}
@@ -602,7 +848,11 @@ export function YouthCompDetailPage() {
                           const draftYr = draftEligibleYear(player, currentYear) ?? currentYear + 1
                           const converted = youthPathway.convertedProspectIds[player.id]
                           return (
-                            <TableRow key={player.id} className={scouted ? 'bg-blue-500/5' : ''}>
+                            <TableRow
+                              key={player.id}
+                              className={`cursor-pointer hover:bg-muted/60 ${scouted ? 'bg-blue-500/5' : ''}`}
+                              onClick={() => navigate(`/youth-pathway/player/${encodeURIComponent(player.id)}`)}
+                            >
                               <TableCell>
                                 <div className="flex items-center gap-1.5">
                                   {scouted && <Star className="h-3 w-3 text-blue-500 shrink-0" />}

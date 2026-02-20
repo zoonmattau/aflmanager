@@ -28,6 +28,7 @@ import {
   getPlayerStarRatingCountForClub,
 } from '@/engine/clubs/membershipEngine'
 import type { LeagueConfig } from '@/types/expansion'
+import { CLUB_HISTORICAL_DATA, AFL_SEASON_RECORDS } from '@/data/clubHistory'
 import type {
   LineupSlot,
   Player,
@@ -313,6 +314,7 @@ import {
   applyFanSatisfactionToJobSecurity,
 } from '@/engine/clubs/clubManagement'
 import { runAflHouseEndOfYearEvolution } from '@/engine/league/aflHouseEvolution'
+import { generateAflFacilities } from '@/engine/league/leagueGenerator'
 import {
   applyPromotionRelegation,
   initializeMultiTierState,
@@ -421,29 +423,25 @@ function pushUpcomingMilestoneNews(state: GameState): void {
   if (notes.length === 0) return
 
   const roundNumber = round.number ?? state.currentRound + 1
-  const newsId = `milestone-watch-${state.currentYear}-${roundNumber}-${fixture.homeClubId}-${fixture.awayClubId}`
-  if (state.newsLog.some((item) => item.id === newsId)) return
 
-  const homeName = state.clubs[fixture.homeClubId]?.abbreviation ?? fixture.homeClubId
-  const awayName = state.clubs[fixture.awayClubId]?.abbreviation ?? fixture.awayClubId
-  const lines = notes.map((note) => `- ${formatUpcomingMilestoneSummary(note)}`)
-  const involvedPlayers = new Set<string>()
-  const involvedClubs = new Set<string>([fixture.homeClubId, fixture.awayClubId])
+  // Emit one milestone-watch item per note so each lands as its own email.
   for (const note of notes) {
-    involvedPlayers.add(note.playerId)
-    involvedClubs.add(note.clubId)
-    if (note.targetPlayerId) involvedPlayers.add(note.targetPlayerId)
-  }
+    const noteNewsId = `milestone-watch-${state.currentYear}-${roundNumber}-${note.id}`
+    if (state.newsLog.some((item) => item.id === noteNewsId)) continue
 
-  appendNewsItem(state, {
-    id: newsId,
-    date: state.currentDate,
-    headline: `Round ${roundNumber} milestone watch: ${homeName} vs ${awayName}`,
-    body: lines.join('\n'),
-    category: 'milestone',
-    clubIds: [...involvedClubs],
-    playerIds: [...involvedPlayers],
-  })
+    const playerIds = [note.playerId]
+    if (note.targetPlayerId) playerIds.push(note.targetPlayerId)
+
+    appendNewsItem(state, {
+      id: noteNewsId,
+      date: state.currentDate,
+      headline: `Milestone watch: ${formatUpcomingMilestoneSummary(note)}`,
+      body: formatUpcomingMilestoneSummary(note),
+      category: 'milestone',
+      clubIds: [note.clubId],
+      playerIds,
+    })
+  }
 }
 
 function trackSigningInteraction(state: GameState, playerId: string): void {
@@ -691,6 +689,15 @@ function appendNewsItem(
 
   if (!inserted) {
     return false
+  }
+
+  // Milestones always get a dedicated email entry so each one lands in the inbox individually.
+  if (covered.category === 'milestone') {
+    pushNewsToList(state.emailLog, {
+      ...covered,
+      id: `${covered.id}-email`,
+      read: false,
+    })
   }
 
   if (includeDerived) {
@@ -1540,6 +1547,8 @@ interface GameActions {
   // Special events
   scheduleSpecialEvents: () => void
   simSpecialEvent: (eventId: string) => { result: import('@/types/specialEvents').SpecialEventMatchResult | null }
+  advanceDateToNextCalendarEvent: () => void
+  advanceOneDay: () => void
 
   // Season progression
   simCurrentRound: (options?: { internal?: boolean; precomputedUserMatch?: Match }) => { userMatch: Match | null }
@@ -1551,6 +1560,9 @@ interface GameActions {
   setMembershipTierPrice: (clubId: string, tierId: MembershipTierId, price: number) => void
   setMembershipCampaignBudget: (clubId: string, budget: number) => void
   setMembershipSeasonTarget: (clubId: string, target: number) => void
+  addCustomMembershipTier: (clubId: string, tier: { label: string; description: string; price: number; minPrice: number; maxPrice: number }) => void
+  removeCustomMembershipTier: (clubId: string, tierId: string) => void
+  setCustomMembershipTierPrice: (clubId: string, tierId: string, price: number) => void
 
   // Offseason
   enterOffseason: () => void
@@ -1674,12 +1686,17 @@ export const useGameStore = create<GameStore>()(
 
         // Build clubs record from static JSON or fictional clubs
         const clubsRecord: Record<string, Club> = {}
-        const clubSource = fictionalClubs && fictionalClubs.length > 0
-          ? fictionalClubs
-          : (clubsJson as unknown as Club[])
+        const isRealLeague = !fictionalClubs || fictionalClubs.length === 0
+        const clubSource = isRealLeague
+          ? (clubsJson as unknown as Club[])
+          : fictionalClubs
+        const facilityRng = new SeededRNG(seed ^ 0xf4c111)
         for (const c of clubSource) {
           clubsRecord[c.id] = {
             ...c,
+            // Real AFL clubs: generate prestige-weighted random facilities each new game
+            // Fictional clubs: already have randomised facilities from leagueGenerator
+            ...(isRealLeague && { facilities: generateAflFacilities(c as Club, facilityRng) }),
             finances: { ...(c as Club).finances },
             draftPicks: (c.draftPicks ?? []).map((p) => ({ ...p })),
           }
@@ -1691,6 +1708,15 @@ export const useGameStore = create<GameStore>()(
           }
           if (!club.identity) {
             club.identity = createInitialClubIdentity(club, 2026)
+          }
+        }
+
+        // Attach real historical data when using actual AFL clubs
+        if (isRealLeague) {
+          for (const club of Object.values(clubsRecord)) {
+            if (CLUB_HISTORICAL_DATA[club.id]) {
+              club.historicalData = CLUB_HISTORICAL_DATA[club.id]
+            }
           }
         }
 
@@ -1878,7 +1904,7 @@ export const useGameStore = create<GameStore>()(
           state.season = season
           state.ladder = ladder
           state.history = {
-            seasons: [],
+            seasons: isRealLeague ? [...AFL_SEASON_RECORDS] : [],
             draftHistory: [],
             developmentReports: [],
             playerSeasonStats: [],
@@ -1923,7 +1949,7 @@ export const useGameStore = create<GameStore>()(
           })
 
           // Build season calendar (settings-driven finals weeks + start date + game start date for offseason)
-          state.calendar = buildSeasonCalendar(2026, season, initialClubId, gameSettings.finals, gameSettings.seasonStartDate, gameSettings.gameStartDate)
+          state.calendar = buildSeasonCalendar(2026, season, initialClubId, gameSettings.finals, gameSettings.seasonStartDate, gameSettings.gameStartDate, state.clubs)
 
           // Initialize state leagues + talent pathway (U16/U18)
           const initializedStateLeagues = initializeStateLeagues(clubsRecord, 2026, seed, {
@@ -2009,6 +2035,25 @@ export const useGameStore = create<GameStore>()(
 
         // Schedule special events for the initial season
         get().scheduleSpecialEvents()
+
+        // If starting in regular-season mode, rewind currentDate to the first
+        // preseason special event (if any) so the user can play them before Round 1.
+        {
+          const st = get()
+          if (st.phase === 'regular-season' && st.specialEvents) {
+            const seasonStart = st.settings.seasonStartDate ?? `${st.currentYear}-03-20`
+            const preseason = st.specialEvents.events
+              .filter((e) => e.status === 'scheduled' && e.scheduledDate < seasonStart)
+              .sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate))
+            const firstDate = preseason[0]?.scheduledDate
+            if (firstDate) {
+              set((s) => {
+                s.currentDate = firstDate
+                s.calendar.currentDate = firstDate
+              })
+            }
+          }
+        }
       },
 
       setPhase: (phase: GamePhase) => {
@@ -2325,7 +2370,7 @@ export const useGameStore = create<GameStore>()(
           secondaryHomeGrounds: clubData.secondaryHomeGrounds,
           guernseyStyle: clubData.guernseyStyle ?? undefined,
           rivalryClubIds: clubData.rivalryClubIds,
-          facilities: { trainingGround: 2, gym: 2, medicalCentre: 2, recoveryPool: 2, analysisSuite: 2, youthAcademy: 2 },
+          facilities: { trainingGround: 1, gym: 1, medicalCentre: 1, recoveryPool: 1, analysisSuite: 1, youthAcademy: 1 },
           finances: { salaryCap: 13_000_000, currentSpend: 0, revenue: 0, expenses: 0, balance: 5_000_000 },
           draftPicks: [],
           gameplan: {
@@ -2667,9 +2712,11 @@ export const useGameStore = create<GameStore>()(
           'Thursday',
           'Friday',
           'Saturday-Early',
+          'Saturday-Afternoon',
           'Saturday-Twilight',
           'Saturday-Night',
           'Sunday-Early',
+          'Sunday-Afternoon',
           'Sunday-Twilight',
           'Monday',
         ]
@@ -4498,6 +4545,35 @@ export const useGameStore = create<GameStore>()(
         })
       },
 
+      addCustomMembershipTier: (clubId, tier) => {
+        set((s) => {
+          const ms = s.clubs[clubId]?.finances.membershipState
+          if (!ms) return
+          if (!ms.customTiers) ms.customTiers = []
+          ms.customTiers.push({
+            ...tier,
+            id: crypto.randomUUID(),
+            count: 0,
+            lastSeasonCount: 0,
+          })
+        })
+      },
+
+      removeCustomMembershipTier: (clubId, tierId) => {
+        set((s) => {
+          const ms = s.clubs[clubId]?.finances.membershipState
+          if (!ms?.customTiers) return
+          ms.customTiers = ms.customTiers.filter((t) => t.id !== tierId)
+        })
+      },
+
+      setCustomMembershipTierPrice: (clubId, tierId, price) => {
+        set((s) => {
+          const tier = s.clubs[clubId]?.finances.membershipState?.customTiers?.find((t) => t.id === tierId)
+          if (tier) tier.price = Math.max(tier.minPrice, Math.min(tier.maxPrice, price))
+        })
+      },
+
       enterOffseason: () => {
         const state = get()
         if (state.simulation.active) return
@@ -6309,7 +6385,13 @@ export const useGameStore = create<GameStore>()(
               s.playerClubId,
               s.settings.finals,
               s.settings.seasonStartDate,
+              undefined,
+              s.clubs,
             )
+            // Re-inject any existing special events into the new season calendar
+            if (s.specialEvents) {
+              injectSpecialEvents(s.calendar, s.specialEvents)
+            }
           })
 
           const refreshed = get()
@@ -6350,6 +6432,25 @@ export const useGameStore = create<GameStore>()(
 
           // Schedule special events for the new season
           get().scheduleSpecialEvents()
+
+          // Rewind currentDate to the first preseason special event (if any) so the
+          // user can play preseason matches before the regular season begins.
+          {
+            const st = get()
+            if (st.specialEvents) {
+              const seasonStart = st.settings.seasonStartDate ?? `${st.currentYear}-03-20`
+              const preseason = st.specialEvents.events
+                .filter((e) => e.status === 'scheduled' && e.scheduledDate < seasonStart)
+                .sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate))
+              const firstDate = preseason[0]?.scheduledDate
+              if (firstDate) {
+                set((s) => {
+                  s.currentDate = firstDate
+                  s.calendar.currentDate = firstDate
+                })
+              }
+            }
+          }
 
           updateSimulationStatus(set as (fn: (state: GameState) => void) => void, 'New season ready.')
           return { success: true }
@@ -8111,6 +8212,30 @@ export const useGameStore = create<GameStore>()(
         })
 
         return { result }
+      },
+
+      /**
+       * Advance currentDate and calendar.currentDate to the next unresolved
+       * calendar event's date (skipping past today). Used after simulating a
+       * preseason special event to move on to the next preseason event or Round 1.
+       */
+      advanceDateToNextCalendarEvent: () => {
+        set((s) => {
+          const next = s.calendar.events.find(
+            (e) => !e.resolved && e.date > s.currentDate,
+          )
+          const nextDate = next?.date ?? s.settings.seasonStartDate ?? s.currentDate
+          s.currentDate = nextDate
+          s.calendar.currentDate = nextDate
+        })
+      },
+
+      advanceOneDay: () => {
+        set((s) => {
+          const tomorrow = addDays(s.currentDate, 1)
+          s.currentDate = tomorrow
+          s.calendar.currentDate = tomorrow
+        })
       },
 
       simCurrentRound: (options?: { internal?: boolean; precomputedUserMatch?: Match }) => {

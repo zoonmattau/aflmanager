@@ -73,9 +73,11 @@ function getMatchDateForRound(
     Thursday: 3,
     Friday: 4,
     'Saturday-Early': 5,
+    'Saturday-Afternoon': 5,
     'Saturday-Twilight': 5,
     'Saturday-Night': 5,
     'Sunday-Early': 6,
+    'Sunday-Afternoon': 6,
     'Sunday-Twilight': 6,
   }
 

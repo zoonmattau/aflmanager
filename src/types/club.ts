@@ -106,6 +106,36 @@ export type TacticalIdentity =
   | 'stoppage-focused'
   | 'corridor-heavy'
 
+/** How forwards set up and move to create leads */
+export type ForwardLeadingPattern = 'straight' | 'diagonal' | 'hold-spread' | 'rotate'
+
+/** Direction the ruckman targets at centre bounces and ball-ups */
+export type TapDirection = 'forward' | 'backward' | 'read-and-react'
+
+/** How players position around the ball at non-centre stoppages */
+export type StoppageMovement = 'flood-back' | 'push-forward' | 'balanced' | 'numbers'
+
+/** How frequently the team switches play across the ground */
+export type SwitchFrequency = 'often' | 'normal' | 'rarely'
+
+/** Detailed in-play movement and disposal rules */
+export interface PlayStyleRules {
+  /** How forwards set up and lead */
+  forwardLeading: ForwardLeadingPattern
+  /** Preferred tap direction at stoppages */
+  tapDirection: TapDirection
+  /** Movement discipline at general play stoppages */
+  stoppageMovement: StoppageMovement
+  /** How often the team switches play wide */
+  switchFrequency: SwitchFrequency
+  /** Players don't reverse direction — maintain forward momentum */
+  noUTurns: boolean
+  /** Prefer handpassing to a player running past rather than to a stationary target */
+  handbballToRunner: boolean
+  /** Avoid kicking backward or across the face of goal in the forward 50 */
+  noKickBackAcrossGoal: boolean
+}
+
 export interface ClubGameplan {
   offensiveStyle: 'attacking' | 'balanced' | 'defensive'
   tempo: 'fast' | 'medium' | 'slow'
@@ -119,6 +149,8 @@ export interface ClubGameplan {
   ruckNomination: RuckNomination
   rotations: 'low' | 'medium' | 'high'
   targetKHRatio?: number
+  /** Detailed in-play movement and disposal rules */
+  playStyle?: PlayStyleRules
 }
 
 export interface ClubHallOfFameEntry {
@@ -246,8 +278,21 @@ export interface MembershipTierState {
   lastSeasonCount: number  // for trend display
 }
 
+/** A manager-created custom membership tier (offseason only). */
+export interface CustomMembershipTier {
+  id: string               // UUID
+  label: string
+  description: string
+  price: number
+  count: number
+  lastSeasonCount: number
+  minPrice: number
+  maxPrice: number
+}
+
 export interface ClubMembershipState {
   tiers: MembershipTierState[]
+  customTiers?: CustomMembershipTier[]
   campaignBudget: number   // $ to spend on acquisition campaign
   seasonTarget: number     // manager-set target total
   fanSatisfaction: number  // 0-100; drives acquisition/churn
@@ -263,6 +308,7 @@ export interface Club {
   mascot: string            // e.g. "Tigers"
   logoUrl?: string
   homeGround: string        // e.g. "MCG"
+  state?: string            // e.g. "VIC", "SA", "QLD", "NSW", "WA"
   established: number       // founding year
   premierships: number      // VFL/AFL premiership count
   tier: 'large' | 'medium' | 'small'  // for scheduling priority
@@ -293,4 +339,6 @@ export interface Club {
   }
   /** Active commercial sponsorship deals */
   sponsorshipDeals?: SponsorshipDeal[]
+  /** Real-world historical profile (only populated when using real AFL clubs) */
+  historicalData?: import('@/data/clubHistory').ClubHistoricalData
 }

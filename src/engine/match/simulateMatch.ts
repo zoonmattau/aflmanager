@@ -716,6 +716,83 @@ export function computeGameplanModifiers(gameplan: ClubGameplan): GameplanModifi
     mods.contestedMult *= 1.02
   }
 
+  // --- Play Style Rules ---
+  const ps = gameplan.playStyle
+  if (ps) {
+    // Forward leading pattern
+    if (ps.forwardLeading === 'straight') {
+      mods.inside50Mult *= 1.04   // direct leads connect more
+      mods.markMult *= 0.96       // defenders can read the lead
+      mods.accuracyMult *= 1.01
+    } else if (ps.forwardLeading === 'diagonal') {
+      mods.markMult *= 1.05       // angled leads are harder to defend
+      mods.inside50Mult *= 1.01
+    } else if (ps.forwardLeading === 'hold-spread') {
+      mods.accuracyMult *= 1.03   // forwards hold position = better set shots
+      mods.markMult *= 1.02
+      mods.inside50Mult *= 0.97   // fewer link-up options in the corridor
+    } else if (ps.forwardLeading === 'rotate') {
+      mods.uncontestedMult *= 1.04  // constant movement creates space
+      mods.inside50Mult *= 1.02
+    }
+
+    // Tap direction
+    if (ps.tapDirection === 'forward') {
+      mods.inside50Mult *= 1.04     // more direct entries off the tap
+      mods.contestedMult *= 0.97    // opponents can read and position for it
+    } else if (ps.tapDirection === 'backward') {
+      mods.uncontestedMult *= 1.05  // midfielders collect cleanly in space
+      mods.inside50Mult *= 0.97
+    } else if (ps.tapDirection === 'read-and-react') {
+      mods.hitoutMult *= 1.04       // optimal reads = better hitout quality
+    }
+
+    // Stoppage movement
+    if (ps.stoppageMovement === 'flood-back') {
+      mods.opponentReboundMult *= 0.92  // defensively accountable
+      mods.uncontestedMult *= 1.03      // more bodies behind ball = cleaner possession
+      mods.inside50Mult *= 0.95         // fewer players pushing forward
+    } else if (ps.stoppageMovement === 'push-forward') {
+      mods.inside50Mult *= 1.06         // lots of targets forward of the ball
+      mods.opponentReboundMult *= 1.07  // exposed if clearance goes the wrong way
+      mods.contestedMult *= 1.02
+    } else if (ps.stoppageMovement === 'numbers') {
+      mods.contestedMult *= 1.04        // numerical advantage at the stoppage
+      mods.tackleMult *= 1.02
+    }
+    // 'balanced' = no modifier (default)
+
+    // Switch frequency
+    if (ps.switchFrequency === 'often') {
+      mods.uncontestedMult *= 1.05  // switches create uncontested wide options
+      mods.markMult *= 1.03         // ball arrives to open players
+      mods.inside50Mult *= 0.96     // more horizontal movement slows entries
+    } else if (ps.switchFrequency === 'rarely') {
+      mods.inside50Mult *= 1.04     // direct corridor play = more i50 entries
+      mods.uncontestedMult *= 0.96  // congested through the middle
+      mods.contestedMult *= 1.02
+    }
+
+    // No U-turns: maintain forward momentum, avoid reversing direction
+    if (ps.noUTurns) {
+      mods.uncontestedMult *= 1.02  // players run past = cleaner disposal targets
+      mods.accuracyMult *= 1.02     // less hesitation when disposing
+    }
+
+    // Handball to runner: prefer handball to player running past
+    if (ps.handbballToRunner) {
+      mods.uncontestedMult *= 1.04  // handball chains keep ball moving forward
+      mods.inside50Mult *= 1.01
+    }
+
+    // No kick back across goal: avoid backward/cross-face kicks in F50
+    if (ps.noKickBackAcrossGoal) {
+      mods.opponentReboundMult *= 0.93  // fewer risky turnovers in F50
+      mods.accuracyMult *= 1.01
+      mods.inside50Mult *= 0.97         // slightly fewer creative options
+    }
+  }
+
   return mods
 }
 

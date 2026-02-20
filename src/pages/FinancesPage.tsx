@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Separator } from '@/components/ui/separator'
+
 import {
   DollarSign,
   TrendingUp,
@@ -38,7 +38,6 @@ import {
   generateProjections,
   getDepartmentBudgetLines,
   getLoanOptions,
-  createLoan,
 } from '@/engine/clubs/financePlanningEngine'
 import {
   getClubBudgetAllocation,
@@ -179,15 +178,15 @@ function CapacityBadge({ level }: { level: string }) {
 
 function OverviewTab({ clubId }: { clubId: string }) {
   const navigate = useNavigate()
-  const { clubs, history, phase, runMembershipCampaign, sponsorshipOffers } = useGameStore((s) => ({
+  const { clubs, history, sponsorshipOffers } = useGameStore((s) => ({
     clubs: s.clubs,
     history: s.history,
-    phase: s.phase,
-    runMembershipCampaign: s.runMembershipCampaign,
     sponsorshipOffers: s.sponsorshipOffers,
   }))
-  const players = useGameStore((s) => Object.values(s.players))
-  const staff = useGameStore((s) => Object.values(s.staff))
+  const playersRecord = useGameStore((s) => s.players)
+  const staffRecord = useGameStore((s) => s.staff)
+  const players = useMemo(() => Object.values(playersRecord), [playersRecord])
+  const staff = useMemo(() => Object.values(staffRecord), [staffRecord])
 
   const club = clubs[clubId]
   if (!club) return null
@@ -207,16 +206,6 @@ function OverviewTab({ clubId }: { clubId: string }) {
     .slice()
     .reverse()
     .slice(0, 5)
-
-  const prevSeason = clubHistory[1]
-
-  function revChange(key: keyof Omit<RevenueBreakdown, 'total'>) {
-    if (!revenue || !prevSeason?.revenue) return null
-    const curr = revenue[key]
-    const prev = prevSeason.revenue[key]
-    if (prev === 0) return null
-    return ((curr - prev) / prev) * 100
-  }
 
   return (
     <div className="space-y-4">
@@ -690,8 +679,10 @@ function MembershipTab({ clubId }: { clubId: string }) {
 
 function BudgetTab({ clubId }: { clubId: string }) {
   const clubs = useGameStore((s) => s.clubs)
-  const players = useGameStore((s) => Object.values(s.players))
-  const staff = useGameStore((s) => Object.values(s.staff))
+  const playersRecord = useGameStore((s) => s.players)
+  const staffRecord = useGameStore((s) => s.staff)
+  const players = useMemo(() => Object.values(playersRecord), [playersRecord])
+  const staff = useMemo(() => Object.values(staffRecord), [staffRecord])
   const updateBudgetAllocation = useGameStore((s) => s.updateBudgetAllocation)
 
   const club = clubs[clubId]
@@ -852,8 +843,10 @@ function BudgetTab({ clubId }: { clubId: string }) {
 
 function ForecastTab({ clubId }: { clubId: string }) {
   const clubs = useGameStore((s) => s.clubs)
-  const players = useGameStore((s) => Object.values(s.players))
-  const staff = useGameStore((s) => Object.values(s.staff))
+  const playersRecord = useGameStore((s) => s.players)
+  const staffRecord = useGameStore((s) => s.staff)
+  const players = useMemo(() => Object.values(playersRecord), [playersRecord])
+  const staff = useMemo(() => Object.values(staffRecord), [staffRecord])
 
   const club = clubs[clubId]
   const projections = useMemo(() => generateProjections(club, players, staff, 4), [club, players, staff])

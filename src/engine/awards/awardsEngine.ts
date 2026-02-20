@@ -144,6 +144,31 @@ export function calculateRisingStar(
 }
 
 /**
+ * Score all eligible players for All-Australian selection, returning sorted list.
+ * Used to compute the AA team and to identify runners-up for the announcement ceremony.
+ */
+export function scoreAllAustralianCandidates(
+  players: Record<string, Player>,
+  ladder: LadderEntry[],
+): Array<{ player: Player; score: number }> {
+  const topClubs = new Set(ladder.slice(0, 8).map((e) => e.clubId))
+  return Object.values(players)
+    .filter((p) => p.seasonStats.gamesPlayed >= 10)
+    .map((p) => {
+      const gp = p.seasonStats.gamesPlayed
+      const score = (
+        (p.seasonStats.disposals / gp) * 1.0 +
+        (p.seasonStats.goals / gp) * 4.0 +
+        (p.seasonStats.marks / gp) * 1.2 +
+        (p.seasonStats.tackles / gp) * 0.8 +
+        (p.seasonStats.clearances / gp) * 1.5
+      ) * (topClubs.has(p.clubId) ? 1.15 : 1.0)
+      return { player: p, score }
+    })
+    .sort((a, b) => b.score - a.score)
+}
+
+/**
  * Select All-Australian team (best 22 players by position).
  * Distributes: 6 defenders, 8 midfielders, 6 forwards, 1 ruck, 1 interchange.
  */
@@ -266,6 +291,7 @@ export function computeSeasonAwards(
   brownlowTracker: BrownlowRound[],
   clubIds: string[],
   bfTracker?: ClubBFRound[],
+  preSelectedAllAustralian?: string[],
 ): SeasonAwards {
   const clubBestAndFairest =
     bfTracker && bfTracker.length > 0
@@ -277,7 +303,10 @@ export function computeSeasonAwards(
     brownlowMedal: calculateBrownlowWinner(brownlowTracker),
     colemanMedal: calculateColemanMedal(players),
     risingStar: calculateRisingStar(players),
-    allAustralian: selectAllAustralian(players, ladder),
+    allAustralian:
+      preSelectedAllAustralian && preSelectedAllAustralian.length > 0
+        ? preSelectedAllAustralian
+        : selectAllAustralian(players, ladder),
     clubBestAndFairest,
   }
 }

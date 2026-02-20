@@ -373,4 +373,6 @@ export interface Player {
   contractHistory?: PlayerContractHistoryEntry[]
   matchRatingHistory?: number[]
   lastMatchRating?: number
+  bio?: string
+  seasonStatsHistory?: { year: number; stats: PlayerCareerStats }[]
 }

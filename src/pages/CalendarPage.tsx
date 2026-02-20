@@ -1,13 +1,13 @@
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react'
 import {
   getEventDatesInMonth,
   getEventsForDate,
-  getUpcomingEvents,
   formatDate,
   addMonths,
   getFirstOfMonth,
@@ -53,6 +53,18 @@ const EVENT_LABELS: Record<GameEventType, string> = {
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
+function eventNavLink(type: GameEventType, _data?: Record<string, unknown>): string | null {
+  if (type === 'match') return '/match'
+  if (type === 'special-event') return '/calendar'
+  if (type === 'contract-deadline') return '/contracts'
+  if (type === 'trade-deadline') return '/trade'
+  if (type === 'draft') return '/draft'
+  if (type === 'tribunal') return '/tribunal'
+  return null
+}
+
+const UPCOMING_EXCLUDED_TYPES = new Set<GameEventType>(['training'])
+
 export function CalendarPage() {
   const calendar = useGameStore((s) => s.calendar)
   const currentDate = calendar.currentDate
@@ -76,9 +88,12 @@ export function CalendarPage() {
     [calendar, selectedDate],
   )
 
-  // Upcoming events
+  // Upcoming events — exclude training sessions so meaningful events (matches, special
+  // events, deadlines) aren't buried. Scan further ahead to always return enough.
   const upcoming = useMemo(
-    () => getUpcomingEvents(calendar, 8),
+    () => calendar.events
+      .filter((e) => !e.resolved && !UPCOMING_EXCLUDED_TYPES.has(e.type))
+      .slice(0, 12),
     [calendar],
   )
 
@@ -211,24 +226,38 @@ export function CalendarPage() {
                 {selectedEvents.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No events on this day.</p>
                 ) : (
-                  <div className="space-y-2">
-                    {selectedEvents.map((evt) => (
-                      <div key={evt.id} className="flex items-start gap-2">
-                        <div className={`h-2 w-2 rounded-full mt-1.5 ${EVENT_COLORS[evt.type]}`} />
-                        <div>
-                          <p className="text-sm font-medium">{evt.title}</p>
-                          {evt.description && (
-                            <p className="text-xs text-muted-foreground">{evt.description}</p>
-                          )}
-                          <Badge
-                            variant={evt.resolved ? 'secondary' : 'outline'}
-                            className="text-[10px] mt-1"
-                          >
-                            {evt.resolved ? 'Completed' : 'Upcoming'}
-                          </Badge>
+                  <div className="space-y-3">
+                    {selectedEvents.map((evt) => {
+                      const link = !evt.resolved ? eventNavLink(evt.type, evt.data) : null
+                      return (
+                        <div key={evt.id} className="flex items-start gap-2">
+                          <div className={`h-2 w-2 rounded-full mt-1.5 flex-shrink-0 ${EVENT_COLORS[evt.type]}`} />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium">{evt.title}</p>
+                            {evt.description && (
+                              <p className="text-xs text-muted-foreground">{evt.description}</p>
+                            )}
+                            <div className="flex items-center gap-2 mt-1">
+                              <Badge
+                                variant={evt.resolved ? 'secondary' : 'outline'}
+                                className="text-[10px]"
+                              >
+                                {evt.resolved ? 'Completed' : 'Upcoming'}
+                              </Badge>
+                              {link && (
+                                <Link
+                                  to={link}
+                                  className="text-[10px] text-primary flex items-center gap-0.5 hover:underline"
+                                >
+                                  {evt.type === 'match' ? 'Play Match' : evt.type === 'special-event' ? 'View Event' : 'Go'}
+                                  <ExternalLink className="h-2.5 w-2.5" />
+                                </Link>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </CardContent>
@@ -251,11 +280,23 @@ export function CalendarPage() {
                     const urgency = isDeadline
                       ? daysUntil <= 2 ? 'urgent' : daysUntil <= 7 ? 'warning' : null
                       : null
+                    const link = eventNavLink(evt.type, evt.data)
                     return (
                       <div key={evt.id} className="flex items-start gap-2">
                         <div className={`h-2 w-2 rounded-full mt-1.5 flex-shrink-0 ${EVENT_COLORS[evt.type]}`} />
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium truncate">{evt.title}</p>
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-sm font-medium truncate flex-1">{evt.title}</p>
+                            {link && (
+                              <Link
+                                to={link}
+                                className="text-[10px] text-primary flex items-center gap-0.5 hover:underline flex-shrink-0"
+                              >
+                                {evt.type === 'match' ? 'Play' : evt.type === 'special-event' ? 'View' : 'Go'}
+                                <ExternalLink className="h-2.5 w-2.5" />
+                              </Link>
+                            )}
+                          </div>
                           <div className="flex items-center gap-1.5">
                             <p className="text-[10px] text-muted-foreground">{formatDate(evt.date)}</p>
                             {urgency && (

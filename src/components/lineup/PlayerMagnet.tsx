@@ -11,6 +11,7 @@ export interface PlayerMagnetProps {
   slot?: string
   suitability: PositionSuitability
   compact?: boolean
+  onProfileClick?: () => void
 }
 
 export function getPositionSuitability(
@@ -32,7 +33,7 @@ const SUITABILITY_BG: Record<PositionSuitability, string> = {
   'out-of-position': 'bg-zinc-800/80',
 }
 
-export function PlayerMagnet({ player, slot, suitability }: PlayerMagnetProps) {
+export function PlayerMagnet({ player, slot, suitability, onProfileClick }: PlayerMagnetProps) {
   const borderClass = SUITABILITY_BORDER[suitability]
   const bgClass = SUITABILITY_BG[suitability]
 
@@ -64,8 +65,9 @@ export function PlayerMagnet({ player, slot, suitability }: PlayerMagnetProps) {
     <div
       draggable
       onDragStart={handleDragStart}
-      className={`flex items-center gap-[clamp(3px,0.45vw,7px)] rounded-md border-2 ${borderClass} ${bgClass} cursor-grab active:cursor-grabbing select-none w-[clamp(52px,8.2vw,118px)] h-[clamp(26px,3.9vw,46px)] px-[clamp(3px,0.55vw,7px)] shrink-0 shadow-sm`}
-      title={`${player.firstName} ${player.lastName} (${player.position.primary})`}
+      onClick={onProfileClick ? (e) => { e.stopPropagation(); onProfileClick() } : undefined}
+      className={`flex items-center gap-[clamp(3px,0.45vw,7px)] rounded-md border-2 ${borderClass} ${bgClass} ${onProfileClick ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'} select-none w-[clamp(52px,8.2vw,118px)] h-[clamp(26px,3.9vw,46px)] px-[clamp(3px,0.55vw,7px)] shrink-0 shadow-sm`}
+      title={`${player.firstName} ${player.lastName} (${player.position.primary}) — click to view profile`}
     >
       <span className="hidden min-[1150px]:block w-[clamp(18px,1.8vw,28px)] text-center text-[clamp(8px,1vw,12px)] font-bold leading-none text-white">
         #{player.jerseyNumber}

@@ -581,7 +581,7 @@ export function LineupPage() {
 
   const filledCount = Object.keys(safeLineup).length
   const handleOppositionPlayerClick = useCallback((playerId: string) => {
-    navigate(`/matchup-preview?targetPlayerId=${encodeURIComponent(playerId)}`)
+    navigate(`/player/${encodeURIComponent(playerId)}`)
   }, [navigate])
 
   // Filter unassigned players for the bench panel
@@ -931,6 +931,7 @@ export function LineupPage() {
               oppositionClubId={oppositionClubId}
               showOpposition={showOpposition}
               onOppositionPlayerClick={handleOppositionPlayerClick}
+              onPlayerClick={(id) => navigate(`/player/${encodeURIComponent(id)}`)}
               selectedSlot={selectedAssignSlot}
               onSelectSlot={(slot) => setSelectedAssignSlot(slot as LineupSlot)}
               onAssign={handleAssign}

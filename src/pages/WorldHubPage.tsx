@@ -284,6 +284,7 @@ export function WorldHubPage() {
               {[
                 { label: 'Club Directory', path: '/league' },
                 { label: 'Awards Night', path: '/awards-night' },
+                { label: 'AA Selection Night', path: '/all-australian-night' },
                 { label: 'Awards History', path: '/awards-history' },
                 { label: 'Records Book', path: '/records' },
                 { label: 'League History', path: '/history' },
