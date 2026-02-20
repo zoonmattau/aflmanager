@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { compareValues, comparisonClass } from '@/lib/comparisonUtils'
 import type { Player, PlayerCareerStats } from '@/types/player'
+import { calcDisposalEfficiency, calcKickingAccuracy, calcContestedPossessionPct } from '@/lib/efficiencyStats'
 
 interface CompareStatsProps {
   playerA: Player
@@ -12,6 +13,9 @@ interface CompareStatsProps {
 const INVERTED_STATS = new Set(['turnovers', 'clangers', 'freesAgainst'])
 
 function buildRows(stats: PlayerCareerStats, gamesPlayed: number) {
+  const deVal = calcDisposalEfficiency(stats.disposals, stats.clangers) ?? 0
+  const kaVal = calcKickingAccuracy(stats.goals, stats.behinds) ?? 0
+  const cpVal = calcContestedPossessionPct(stats.contestedPossessions, stats.uncontestedPossessions) ?? 0
   return [
     { code: 'GP', label: 'Games Played', key: 'gamesPlayed' as const, total: gamesPlayed, avg: null },
     { code: 'AF', label: 'AFL Fantasy', key: 'aflFantasyPoints' as const, total: stats.aflFantasyPoints, avg: gamesPlayed > 0 ? stats.aflFantasyPoints / gamesPlayed : null },
@@ -40,11 +44,15 @@ function buildRows(stats: PlayerCareerStats, gamesPlayed: number) {
     { code: 'TO', label: 'Turnovers', key: 'turnovers' as const, total: stats.turnovers, avg: gamesPlayed > 0 ? stats.turnovers / gamesPlayed : null },
     { code: 'CLG', label: 'Clangers', key: 'clangers' as const, total: stats.clangers, avg: gamesPlayed > 0 ? stats.clangers / gamesPlayed : null },
     { code: 'BO', label: 'Bounces', key: 'bounces' as const, total: stats.bounces, avg: gamesPlayed > 0 ? stats.bounces / gamesPlayed : null },
+    { code: 'DE%', label: 'Disposal Eff %', key: 'de_pct', total: deVal, avg: null, formatTotal: (v: number) => `${v.toFixed(1)}%` },
+    { code: 'KAcc', label: 'Kicking Accuracy', key: 'ka_pct', total: kaVal, avg: null, formatTotal: (v: number) => `${v.toFixed(1)}%` },
+    { code: 'CP%', label: 'Contested Poss %', key: 'cp_pct', total: cpVal, avg: null, formatTotal: (v: number) => `${v.toFixed(1)}%` },
   ]
 }
 
 export function CompareStats({ playerA, playerB }: CompareStatsProps) {
   const [mode, setMode] = useState<'season' | 'career'>('season')
+  const [displayMode, setDisplayMode] = useState<'totals' | 'averages'>('averages')
 
   const statsA = mode === 'season' ? playerA.seasonStats : playerA.careerStats
   const statsB = mode === 'season' ? playerB.seasonStats : playerB.careerStats
@@ -56,7 +64,7 @@ export function CompareStats({ playerA, playerB }: CompareStatsProps) {
   return (
     <Card>
       <CardHeader className="py-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <CardTitle className="text-sm">{mode === 'season' ? 'Season' : 'Career'} Stats</CardTitle>
           <div className="flex gap-1">
             <Button size="sm" variant={mode === 'season' ? 'default' : 'outline'} className="h-7 text-xs" onClick={() => setMode('season')}>
@@ -65,36 +73,80 @@ export function CompareStats({ playerA, playerB }: CompareStatsProps) {
             <Button size="sm" variant={mode === 'career' ? 'default' : 'outline'} className="h-7 text-xs" onClick={() => setMode('career')}>
               Career
             </Button>
+            <span className="w-px bg-border mx-1" />
+            <Button size="sm" variant={displayMode === 'totals' ? 'default' : 'outline'} className="h-7 text-xs" onClick={() => setDisplayMode('totals')}>
+              Totals
+            </Button>
+            <Button size="sm" variant={displayMode === 'averages' ? 'default' : 'outline'} className="h-7 text-xs" onClick={() => setDisplayMode('averages')}>
+              Avgs
+            </Button>
           </div>
         </div>
       </CardHeader>
       <CardContent>
         <div className="text-sm space-y-0.5">
           {/* Header */}
-          <div className="flex text-xs text-muted-foreground font-medium mb-1">
-            <span className="w-16 text-right">Total</span>
-            <span className="w-12 text-right">Avg</span>
-            <span className="flex-1 text-center">Stat</span>
-            <span className="w-12 text-left">Avg</span>
-            <span className="w-16 text-left">Total</span>
-          </div>
+          {displayMode === 'totals' ? (
+            <div className="flex text-xs text-muted-foreground font-medium mb-1">
+              <span className="w-16 text-right">Total</span>
+              <span className="w-12 text-right">Avg</span>
+              <span className="flex-1 text-center">Stat</span>
+              <span className="w-12 text-left">Avg</span>
+              <span className="w-16 text-left">Total</span>
+            </div>
+          ) : (
+            <div className="flex text-xs text-muted-foreground font-medium mb-1">
+              <span className="w-16 text-right">Avg/G</span>
+              <span className="w-12 text-right">Total</span>
+              <span className="flex-1 text-center">Stat</span>
+              <span className="w-12 text-left">Total</span>
+              <span className="w-16 text-left">Avg/G</span>
+            </div>
+          )}
           {rowsA.map((rA, i) => {
             const rB = rowsB[i]
             const inverted = INVERTED_STATS.has(rA.key)
-            const totalWinner = compareValues(rA.total, rB.total, inverted)
-            return (
-              <div key={rA.code} className="flex items-center">
-                <span className={`w-16 text-right font-mono text-xs ${comparisonClass(totalWinner, 'a')}`}>{rA.total}</span>
-                <span className="w-12 text-right font-mono text-[10px] text-muted-foreground">
-                  {rA.avg !== null ? rA.avg.toFixed(1) : '-'}
-                </span>
-                <span className="flex-1 text-center text-xs text-muted-foreground">{rA.code} - {rA.label}</span>
-                <span className="w-12 text-left font-mono text-[10px] text-muted-foreground">
-                  {rB.avg !== null ? rB.avg.toFixed(1) : '-'}
-                </span>
-                <span className={`w-16 text-left font-mono text-xs ${comparisonClass(totalWinner, 'b')}`}>{rB.total}</span>
-              </div>
-            )
+            const fmtA = (rA as { formatTotal?: (v: number) => string }).formatTotal
+            const fmtB = (rB as { formatTotal?: (v: number) => string }).formatTotal
+            if (displayMode === 'totals') {
+              const totalWinner = compareValues(rA.total, rB.total, inverted)
+              return (
+                <div key={rA.code} className="flex items-center">
+                  <span className={`w-16 text-right font-mono text-xs ${comparisonClass(totalWinner, 'a')}`}>
+                    {fmtA ? fmtA(rA.total) : rA.total}
+                  </span>
+                  <span className="w-12 text-right font-mono text-[10px] text-muted-foreground">
+                    {rA.avg !== null ? rA.avg.toFixed(1) : '-'}
+                  </span>
+                  <span className="flex-1 text-center text-xs text-muted-foreground">{rA.code} - {rA.label}</span>
+                  <span className="w-12 text-left font-mono text-[10px] text-muted-foreground">
+                    {rB.avg !== null ? rB.avg.toFixed(1) : '-'}
+                  </span>
+                  <span className={`w-16 text-left font-mono text-xs ${comparisonClass(totalWinner, 'b')}`}>
+                    {fmtB ? fmtB(rB.total) : rB.total}
+                  </span>
+                </div>
+              )
+            } else {
+              const avgWinner = rA.avg !== null && rB.avg !== null ? compareValues(rA.avg, rB.avg, inverted) : 'tie' as const
+              return (
+                <div key={rA.code} className="flex items-center">
+                  <span className={`w-16 text-right font-mono text-xs ${comparisonClass(avgWinner, 'a')}`}>
+                    {fmtA ? fmtA(rA.total) : (rA.avg !== null ? rA.avg.toFixed(1) : '-')}
+                  </span>
+                  <span className="w-12 text-right font-mono text-[10px] text-muted-foreground">
+                    {fmtA ? '-' : rA.total}
+                  </span>
+                  <span className="flex-1 text-center text-xs text-muted-foreground">{rA.code} - {rA.label}</span>
+                  <span className="w-12 text-left font-mono text-[10px] text-muted-foreground">
+                    {fmtB ? '-' : rB.total}
+                  </span>
+                  <span className={`w-16 text-left font-mono text-xs ${comparisonClass(avgWinner, 'b')}`}>
+                    {fmtB ? fmtB(rB.total) : (rB.avg !== null ? rB.avg.toFixed(1) : '-')}
+                  </span>
+                </div>
+              )
+            }
           })}
         </div>
       </CardContent>

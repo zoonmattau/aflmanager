@@ -49,6 +49,8 @@ import { getPositionBadgeClass, getPositionFilterButtonClass } from '@/lib/posit
 import { calcDisposalEfficiency, calcKickingAccuracy, calcContestedPossessionPct, fmtPct } from '@/lib/efficiencyStats'
 import { matchRatingColorClass } from '@/engine/match/matchRatings'
 import { ClubBFLeaderboardWidget } from '@/components/squad/ClubBFLeaderboardWidget'
+import type { PositionGroupBenchmark, PositionGroupKey } from '@/types/game'
+import { getPositionGroup } from '@/engine/benchmarks/positionBenchmarks'
 
 const columnHelper = createColumnHelper<Player>()
 
@@ -149,6 +151,9 @@ function NameCell({ playerId, name, leadershipRole }: { playerId: string; name: 
 function buildColumns(
   view: SquadView,
   reservesStatsByPlayer: Record<string, { gamesPlayed: number }>,
+  statsDisplayMode: 'totals' | 'averages',
+  vsAvgMode: boolean,
+  benchmarks: Record<PositionGroupKey, PositionGroupBenchmark> | undefined,
   assignment?: {
     enabled: boolean
     getAssignedSlot: (playerId: string) => AssignmentSlot | null
@@ -297,6 +302,7 @@ function buildColumns(
   }
 
   if (view === 'stats') {
+    const avg = statsDisplayMode === 'averages'
     return [
       ...base,
       columnHelper.accessor((row) => row.lastMatchRating ?? -1, {
@@ -314,88 +320,82 @@ function buildColumns(
         size: 80,
       }),
       columnHelper.accessor((row) => row.seasonStats.gamesPlayed, {
-        id: 'gp_sc',
-        header: 'GP S/C',
-        cell: (i) => <span className="text-xs tabular-nums">{i.row.original.seasonStats.gamesPlayed}/{i.row.original.careerStats.gamesPlayed}</span>,
-        size: 72,
+        id: 'gp',
+        header: 'GP',
+        cell: (i) => <span className="text-xs tabular-nums">{i.row.original.seasonStats.gamesPlayed}</span>,
+        size: 52,
       }),
-      columnHelper.accessor((row) => row.seasonStats.disposals, {
+      columnHelper.accessor((row) => avg ? (row.seasonStats.gamesPlayed > 0 ? row.seasonStats.disposals / row.seasonStats.gamesPlayed : 0) : row.seasonStats.disposals, {
         id: 'disp_ctx',
-        header: 'Disp S/C Avg',
+        header: avg ? 'Disp/G' : 'Disposals',
         cell: (i) => {
           const p = i.row.original
-          return <span className="text-xs tabular-nums">{safeAvg(p.seasonStats.disposals, p.seasonStats.gamesPlayed)} / {safeAvg(p.careerStats.disposals, p.careerStats.gamesPlayed)}</span>
+          return <span className="text-xs tabular-nums">{avg ? safeAvg(p.seasonStats.disposals, p.seasonStats.gamesPlayed) : p.seasonStats.disposals}</span>
         },
-        size: 110,
+        size: avg ? 72 : 84,
       }),
-      columnHelper.accessor((row) => row.seasonStats.goals, {
+      columnHelper.accessor((row) => avg ? (row.seasonStats.gamesPlayed > 0 ? row.seasonStats.goals / row.seasonStats.gamesPlayed : 0) : row.seasonStats.goals, {
         id: 'goals_ctx',
-        header: 'Goals S/C Avg',
+        header: avg ? 'Goals/G' : 'Goals',
         cell: (i) => {
           const p = i.row.original
-          return <span className="text-xs tabular-nums">{safeAvg(p.seasonStats.goals, p.seasonStats.gamesPlayed)} / {safeAvg(p.careerStats.goals, p.careerStats.gamesPlayed)}</span>
+          return <span className="text-xs tabular-nums">{avg ? safeAvg(p.seasonStats.goals, p.seasonStats.gamesPlayed) : p.seasonStats.goals}</span>
         },
-        size: 110,
+        size: avg ? 72 : 64,
       }),
-      columnHelper.accessor((row) => row.seasonStats.tackles, {
+      columnHelper.accessor((row) => avg ? (row.seasonStats.gamesPlayed > 0 ? row.seasonStats.tackles / row.seasonStats.gamesPlayed : 0) : row.seasonStats.tackles, {
         id: 'tack_ctx',
-        header: 'Tck S/C Avg',
+        header: avg ? 'Tck/G' : 'Tackles',
         cell: (i) => {
           const p = i.row.original
-          return <span className="text-xs tabular-nums">{safeAvg(p.seasonStats.tackles, p.seasonStats.gamesPlayed)} / {safeAvg(p.careerStats.tackles, p.careerStats.gamesPlayed)}</span>
+          return <span className="text-xs tabular-nums">{avg ? safeAvg(p.seasonStats.tackles, p.seasonStats.gamesPlayed) : p.seasonStats.tackles}</span>
         },
-        size: 108,
+        size: avg ? 64 : 72,
       }),
-      columnHelper.accessor((row) => row.seasonStats.aflFantasyPoints, {
+      columnHelper.accessor((row) => avg ? (row.seasonStats.gamesPlayed > 0 ? row.seasonStats.aflFantasyPoints / row.seasonStats.gamesPlayed : 0) : row.seasonStats.aflFantasyPoints, {
         id: 'af_ctx',
-        header: 'AF S/C Avg',
+        header: avg ? 'AF/G' : 'AFL Fantasy',
         cell: (i) => {
           const p = i.row.original
-          return <span className="text-xs tabular-nums">{safeAvg(p.seasonStats.aflFantasyPoints, p.seasonStats.gamesPlayed)} / {safeAvg(p.careerStats.aflFantasyPoints, p.careerStats.gamesPlayed)}</span>
+          return <span className="text-xs tabular-nums">{avg ? safeAvg(p.seasonStats.aflFantasyPoints, p.seasonStats.gamesPlayed) : p.seasonStats.aflFantasyPoints}</span>
         },
-        size: 108,
+        size: avg ? 60 : 88,
       }),
-      columnHelper.accessor((row) => row.seasonStats.superCoachPoints, {
+      columnHelper.accessor((row) => avg ? (row.seasonStats.gamesPlayed > 0 ? row.seasonStats.superCoachPoints / row.seasonStats.gamesPlayed : 0) : row.seasonStats.superCoachPoints, {
         id: 'sc_ctx',
-        header: 'SC S/C Avg',
+        header: avg ? 'SC/G' : 'SC Pts',
         cell: (i) => {
           const p = i.row.original
-          return <span className="text-xs tabular-nums">{safeAvg(p.seasonStats.superCoachPoints, p.seasonStats.gamesPlayed)} / {safeAvg(p.careerStats.superCoachPoints, p.careerStats.gamesPlayed)}</span>
+          return <span className="text-xs tabular-nums">{avg ? safeAvg(p.seasonStats.superCoachPoints, p.seasonStats.gamesPlayed) : p.seasonStats.superCoachPoints}</span>
         },
-        size: 108,
+        size: avg ? 60 : 72,
       }),
       columnHelper.accessor((row) => calcDisposalEfficiency(row.seasonStats.disposals, row.seasonStats.clangers) ?? 0, {
         id: 'de_pct',
-        header: 'DE% S/C',
+        header: 'DE%',
         cell: (i) => {
           const p = i.row.original
-          const s = fmtPct(calcDisposalEfficiency(p.seasonStats.disposals, p.seasonStats.clangers))
-          const c = fmtPct(calcDisposalEfficiency(p.careerStats.disposals, p.careerStats.clangers))
-          return <span className="text-xs tabular-nums">{s} / {c}</span>
+          return <span className="text-xs tabular-nums">{fmtPct(calcDisposalEfficiency(p.seasonStats.disposals, p.seasonStats.clangers))}</span>
         },
-        size: 112,
+        size: 64,
       }),
       columnHelper.accessor((row) => calcKickingAccuracy(row.seasonStats.goals, row.seasonStats.behinds) ?? 0, {
         id: 'ka_pct',
-        header: 'KAcc% S/C',
+        header: 'KAcc%',
         cell: (i) => {
           const p = i.row.original
-          const s = fmtPct(calcKickingAccuracy(p.seasonStats.goals, p.seasonStats.behinds))
-          const c = fmtPct(calcKickingAccuracy(p.careerStats.goals, p.careerStats.behinds))
-          return <span className="text-xs tabular-nums">{s} / {c}</span>
+          return <span className="text-xs tabular-nums">{fmtPct(calcKickingAccuracy(p.seasonStats.goals, p.seasonStats.behinds))}</span>
         },
-        size: 116,
+        size: 72,
       }),
       columnHelper.accessor((row) => calcContestedPossessionPct(row.seasonStats.contestedPossessions, row.seasonStats.uncontestedPossessions) ?? 0, {
         id: 'cp_pct',
-        header: 'CP% S/C',
+        header: 'CP%',
         cell: (i) => {
           const p = i.row.original
-          const s = fmtPct(calcContestedPossessionPct(p.seasonStats.contestedPossessions, p.seasonStats.uncontestedPossessions))
-          const c = fmtPct(calcContestedPossessionPct(p.careerStats.contestedPossessions, p.careerStats.uncontestedPossessions))
-          return <span className="text-xs tabular-nums">{s} / {c}</span>
+          return <span className="text-xs tabular-nums">{fmtPct(calcContestedPossessionPct(p.seasonStats.contestedPossessions, p.seasonStats.uncontestedPossessions))}</span>
         },
-        size: 108,
+        size: 64,
       }),
       ...status,
     ]
@@ -536,6 +536,9 @@ export function SquadPage() {
   }
   const [search, setSearch] = useState('')
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('all')
+  const [statsDisplayMode, setStatsDisplayMode] = useState<'totals' | 'averages'>(
+    () => (localStorage.getItem('squad-stats-mode') as 'totals' | 'averages' | null) ?? 'averages',
+  )
 
   const lineupSlots = useMemo(
     () => getLineupSlots(settings.matchRules.interchangePlayers),
@@ -909,7 +912,7 @@ export function SquadPage() {
 
   const columns = useMemo(
     () =>
-      buildColumns(view, reserves.seasonStatsByPlayer, {
+      buildColumns(view, reserves.seasonStatsByPlayer, statsDisplayMode, {
         enabled: clubId === playerClubId,
         getAssignedSlot: (playerId: string) => assignedSlotByPlayer.get(playerId) ?? null,
         getSlotOptions: getSlotOptionsForPlayer,
@@ -924,6 +927,7 @@ export function SquadPage() {
       handleChangeAssignedSlot,
       playerClubId,
       reserves.seasonStatsByPlayer,
+      statsDisplayMode,
       view,
     ],
   )
@@ -1037,15 +1041,43 @@ export function SquadPage() {
         )}
       </div>
 
-      <Tabs value={view} onValueChange={(v) => setView(v as SquadView)}>
-        <TabsList>
-          {VIEW_OPTIONS.map((v) => (
-            <TabsTrigger key={v.key} value={v.key}>
-              {v.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
+      <div className="flex items-center gap-3 flex-wrap">
+        <Tabs value={view} onValueChange={(v) => setView(v as SquadView)}>
+          <TabsList>
+            {VIEW_OPTIONS.map((v) => (
+              <TabsTrigger key={v.key} value={v.key}>
+                {v.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        {view === 'stats' && (
+          <div className="flex gap-1">
+            <Button
+              size="sm"
+              variant={statsDisplayMode === 'totals' ? 'default' : 'outline'}
+              className="h-8 text-xs"
+              onClick={() => {
+                setStatsDisplayMode('totals')
+                localStorage.setItem('squad-stats-mode', 'totals')
+              }}
+            >
+              Totals
+            </Button>
+            <Button
+              size="sm"
+              variant={statsDisplayMode === 'averages' ? 'default' : 'outline'}
+              className="h-8 text-xs"
+              onClick={() => {
+                setStatsDisplayMode('averages')
+                localStorage.setItem('squad-stats-mode', 'averages')
+              }}
+            >
+              Averages
+            </Button>
+          </div>
+        )}
+      </div>
 
       {clubId === playerClubId && unassignedErrorPlayerIds.size > 0 && (
         <div className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2">
