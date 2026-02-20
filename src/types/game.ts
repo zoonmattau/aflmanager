@@ -25,6 +25,7 @@ import type { FacilityUpgradeTracker } from './facilityUpgrade'
 import type { BoardApprovalTracker } from './boardApproval'
 import type { AgentRelationship } from './agent'
 import type { YouthPathwayState } from './youthPathway'
+import type { AllAustralianState } from './allAustralian'
 
 export type GamePhase =
   | 'setup'           // Choosing club
@@ -182,6 +183,9 @@ export interface RealismSettings {
 
   // Finance
   allowLoans: boolean                 // Allow clubs to take out loans (default true)
+
+  // Tampering
+  contractTampering?: boolean         // Enable pre-FA tampering mechanics
 }
 
 export interface ManagerCareer {
@@ -342,6 +346,13 @@ export interface GameSettings {
   gameStartDate: string          // ISO date, day after previous GF, default computed from startingYear
   /** AFL distribution rules: ladder prizes, finals bonuses, equalisation, travel comp */
   aflDistributions?: import('@/types/distributions').AflDistributionConfig
+  /** Simulated in-game betting markets (no real money) */
+  betting?: import('@/types/betting').BettingSettings
+  /** Commissioner/cheat mode flags */
+  commissionerMode?: boolean
+  injuriesEnabled?: boolean
+  /** Custom stadiums for League Customiser */
+  customStadiums?: import('@/types/stadium').CustomStadium[]
 }
 
 export interface SigningNotificationPreferences {
@@ -456,12 +467,20 @@ export interface GameState {
   bfTracker: ClubBFRound[]
   brownlowRevealed: boolean        // Whether Brownlow votes have been revealed this season
   awardsNightCompleted: boolean    // Whether the full Awards Night ceremony has been completed
+  allAustralianNightCompleted: boolean // Whether the AA Selection Night ceremony has been viewed
+  allAustralian?: AllAustralianState   // 40-man squad + final team (current season)
 
   // State leagues
   stateLeagues: Record<StateLeagueId, StateLeague> | null
 
   // Youth pathway (U16/U18 competitions, player generation, tournaments)
   youthPathway: YouthPathwayState | null
+
+  // Tampering tracker (covert contacts + pre-FA expressions)
+  tamperingTracker: {
+    contacts: import('@/types/contract').TamperingContact[]
+    preFAExpressions: import('@/types/contract').PreFAExpression[]
+  } | null
 
   // Offseason pipeline
   offseasonState: OffseasonState | null
@@ -522,6 +541,9 @@ export interface GameState {
 
   // Pending sponsorship offers for the player's club (generated at season end)
   sponsorshipOffers: import('@/types/club').SponsorshipOffer[]
+
+  /** Simulated betting market state — null when feature is disabled */
+  bettingMarkets: import('@/types/betting').BettingMarketsState | null
 }
 
 export interface WeeklyGameplan {

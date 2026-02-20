@@ -27,6 +27,7 @@ export interface GlobalSettings {
   showTutorialHints: boolean
   tableViews: TableViewSettings
   lineupAutofill: LineupAutofillSettings
+  commissionerMode?: boolean
 }
 
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {

@@ -91,6 +91,8 @@ export interface OffseasonState {
   practiceMatchState?: PracticeMatchState
   /** Scheduled league evolution events to apply at the start of the following season. */
   pendingLeagueEvolution?: import('@/types/leagueEvolution').LeagueEvolutionEvent[]
+  /** Pending RFA matching right decisions for the user's club. */
+  rfaMatchingRights?: import('@/types/contract').RFAMatchingRight[]
 }
 
 // ---------------------------------------------------------------------------
@@ -240,9 +242,6 @@ function getPositionalCounts(
   return counts
 }
 
-function round1(value: number): number {
-  return Math.round(value * 10) / 10
-}
 
 export function qualifiesForHallOfFame(player: Player): boolean {
   const games = player.careerStats.gamesPlayed
@@ -1088,14 +1087,18 @@ export function processAIFreeAgency(
   signings: { playerId: string; newClubId: string }[]
   news: NewsItem[]
 } {
-  // Clone players
+  // Clone players — deep-clone contract so processEndOfSeasonContracts can
+  // mutate yearsRemaining/yearByYear without hitting frozen Zustand state
   const updatedPlayers: Record<string, Player> = {}
   for (const [id, p] of Object.entries(players)) {
-    updatedPlayers[id] = { ...p }
+    updatedPlayers[id] = {
+      ...p,
+      contract: { ...p.contract, yearByYear: [...p.contract.yearByYear] },
+    }
   }
 
   // Process end-of-season contracts first to identify expired contracts
-  processEndOfSeasonContracts(updatedPlayers)
+  processEndOfSeasonContracts(updatedPlayers, currentYear)
 
   const signings: { playerId: string; newClubId: string }[] = []
   const newsItems: NewsItem[] = []

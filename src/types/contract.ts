@@ -158,3 +158,64 @@ export interface NegotiationTracker {
   completed: CompletedNegotiation[]
   refusedPlayerIds: string[]        // Players who refused to negotiate this season
 }
+
+// ---------------------------------------------------------------------------
+// Restricted Free Agency Matching Rights
+// ---------------------------------------------------------------------------
+
+/** Represents a live RFA matching-rights situation. */
+export interface RFAMatchingRight {
+  id: string
+  playerId: string
+  playerName: string
+  /** The club that holds the matching right (the player's previous club). */
+  holdingClubId: string
+  /** The club that made the outside offer. */
+  offeringClubId: string
+  aav: number
+  years: number
+  yearByYear: number[]
+  /** ISO date string when the offer was recorded. */
+  offeredAt: string
+  status: 'pending' | 'matched' | 'declined'
+}
+
+// ---------------------------------------------------------------------------
+// Tampering & Pre-FA Expression Types
+// ---------------------------------------------------------------------------
+
+export type TamperingContactResponse = 'interested' | 'lukewarm' | 'not-interested'
+export type PreFAExpressionResponse = 'interested' | 'neutral' | 'not-interested'
+
+export interface TamperingContact {
+  id: string
+  playerId: string
+  /** Alias for playerId — the player who was contacted */
+  targetPlayerId: string
+  playerName: string
+  targetClubId: string
+  initiatingClubId: string
+  response: TamperingContactResponse
+  /** Alias for response */
+  playerResponse: TamperingContactResponse
+  detected: boolean
+  date: string
+  madeAtRound: number
+}
+
+export interface PreFAExpression {
+  id: string
+  playerId: string
+  /** Alias for playerId */
+  targetPlayerId: string
+  playerName: string
+  targetClubId: string
+  /** Club the player is leaving */
+  originalClubId: string
+  aav: number
+  years: number
+  response: PreFAExpressionResponse
+  /** Alias for response */
+  playerResponse: PreFAExpressionResponse
+  date: string
+}

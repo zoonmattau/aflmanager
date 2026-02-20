@@ -27,7 +27,7 @@ import {
  */
 export function getLoanOptions(
   club: Club,
-  currentYear: number,
+  _currentYear: number,
   allowLoans: boolean,
 ): LoanOption[] {
   const balance = club.finances.balance
@@ -453,7 +453,7 @@ export function createLoan(
  * Process annual loan repayment at season end for a single club.
  * Mutates the loan array in-place. Returns the total cash outflow.
  */
-export function processLoanRepayments(loans: ClubLoan[], currentYear: number): number {
+export function processLoanRepayments(loans: ClubLoan[], _currentYear: number): number {
   let totalOutflow = 0
   for (const loan of loans) {
     if (loan.status !== 'active') continue

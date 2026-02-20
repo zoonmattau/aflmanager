@@ -100,7 +100,7 @@ export function TrendCharts({
                 />
                 <Tooltip
                   formatter={(value) => [ordinal(Number(value)), 'Position']}
-                  labelFormatter={(label: string) => `Season ${label}`}
+                  labelFormatter={(label: unknown) => `Season ${label}`}
                   contentStyle={{ fontSize: 12 }}
                 />
                 <ReferenceLine
@@ -154,7 +154,7 @@ export function TrendCharts({
                 />
                 <Tooltip
                   formatter={(value) => [ordinal(Number(value)), 'Position']}
-                  labelFormatter={(label: string) => label}
+                  labelFormatter={(label: unknown) => String(label)}
                   contentStyle={{ fontSize: 12 }}
                 />
                 <ReferenceLine

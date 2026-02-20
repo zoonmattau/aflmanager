@@ -1,6 +1,7 @@
 import type { Club } from '@/types/club'
 import type { Player, PlayerAttributes } from '@/types/player'
 import type { NewsItem, ReservesPlayerPerformance, ReservesSystemState } from '@/types/game'
+import type { ReservesStaffImpact } from '@/engine/staff/staffEngine'
 import { SeededRNG } from '@/engine/core/rng'
 import { isPlayerSuspended } from '@/engine/players/availability'
 import { hasActiveStateLeagueContract, isAflListedPlayer, isStateLeagueContracted } from '@/engine/players/contracts'
@@ -133,6 +134,8 @@ export function simulateReservesRound(params: {
   userClubId: string
   reserves: ReservesSystemState
   rng: SeededRNG
+  opponentAflClubId?: string
+  staffImpact?: ReservesStaffImpact
 }): { reserves: ReservesSystemState; news: NewsItem[] } {
   const { players, clubs, playedPlayerIds, currentRound, currentDate, userClubId, rng } = params
   const seasonStatsByPlayer: Record<string, ReservesSystemState['seasonStatsByPlayer'][string]> = {

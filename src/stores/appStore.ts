@@ -20,9 +20,11 @@ import {
   saveCustomLeagueTemplate as saveCustomLeagueTemplateDB,
   deleteCustomLeagueTemplate as deleteCustomLeagueTemplateDB,
   migrateLegacySave,
+  createCheckpoint,
+  deleteCheckpoint as deleteCheckpointFromDB,
 } from '@/lib/saveManager'
 
-export type AppScreen = 'home' | 'game' | 'new-game' | 'settings' | 'league-presets' | 'custom-league-builder'
+export type AppScreen = 'home' | 'game' | 'new-game' | 'settings' | 'league-presets' | 'custom-league-builder' | 'mod-manager'
 
 interface AppState {
   currentScreen: AppScreen
@@ -45,6 +47,8 @@ interface AppActions {
   deleteLeaguePreset: (presetId: string) => Promise<void>
   createOrUpdateCustomLeagueTemplate: (template: CustomLeagueTemplate) => Promise<void>
   deleteCustomLeagueTemplate: (templateId: string) => Promise<void>
+  createManualSave: (gameState: GameState, label: string) => Promise<void>
+  deleteCheckpoint: (gameId: string, checkpointId: string) => Promise<void>
 }
 
 export type AppStore = AppState & AppActions
@@ -166,5 +170,13 @@ export const useAppStore = create<AppStore>()((set, get) => ({
     await deleteCustomLeagueTemplateDB(templateId)
     const customLeagueTemplates = await getCustomLeagueTemplates()
     set({ customLeagueTemplates })
+  },
+
+  createManualSave: async (gameState, label) => {
+    await createCheckpoint(gameState, 'manual', label)
+  },
+
+  deleteCheckpoint: async (gameId, checkpointId) => {
+    await deleteCheckpointFromDB(gameId, checkpointId)
   },
 }))

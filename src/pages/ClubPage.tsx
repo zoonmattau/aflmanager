@@ -73,6 +73,9 @@ import {
   projectBudgetImpacts,
 } from '@/engine/clubs/budgetEngine'
 
+// Stable fallback for optional inflationHistory (avoids new-reference-per-render)
+const EMPTY_ARR: import('@/engine/inflation/inflationEngine').InflationYearRecord[] = []
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -356,9 +359,8 @@ export function ClubPage() {
   const manager = useGameStore((s) => s.manager)
   const facilityUpgrades = useGameStore((s) => s.facilityUpgrades)
   const currentDate = useGameStore((s) => s.currentDate)
-  const matchResults = useGameStore((s) => s.matchResults)
   const inflationIndex = useGameStore((s) => s.inflationIndex ?? 1.0)
-  const inflationHistory = useGameStore((s) => s.inflationHistory ?? [])
+  const inflationHistory = useGameStore((s) => s.inflationHistory) ?? EMPTY_ARR
   const inflationSettings = useGameStore((s) => s.settings.inflation)
   const doRequestUpgrade = useGameStore((s) => s.requestFacilityUpgrade)
   const doUpdateBudget = useGameStore((s) => s.updateBudgetAllocation)
