@@ -27,6 +27,22 @@ export type MidMatchDecisionType =
   | 'protect-lead'
   | 'chase-game'
   | 'stay-course'
+  | 'apply-gameplan-sliders'
+
+export interface CoachSuggestion {
+  id: string
+  priority: 'critical' | 'major' | 'minor'
+  title: string
+  detail: string
+  suggestedAction?: string
+}
+
+export interface GameplanSliders {
+  tempo: number          // 0-100
+  corridorUse: number    // 0-100
+  defensivePress: number // 0-100
+  stoppageSetup: number  // 0-100
+}
 
 export interface MidMatchDecision {
   id: string
@@ -38,10 +54,13 @@ export interface MidMatchDecision {
     aggression?: 'high' | 'medium' | 'low'
     offensiveStyle?: 'attacking' | 'balanced' | 'defensive'
     defensiveLine?: 'press' | 'zone' | 'hold' | 'run'
+    centreTactic?: 'spread' | 'balanced' | 'cluster'
+    stoppageTactic?: 'spread' | 'balanced' | 'cluster'
     activateSubForPlayerId?: string
     tagTargetPlayerId?: string
     movePlayerId?: string
     moveDirection?: 'forward' | 'back'
+    sliders?: GameplanSliders
   }
 }
 
@@ -81,6 +100,7 @@ export interface LiveMatchDisplayState {
     playerId?: string
     clubId: string
   }>
+  playByPlay: import('@/types/match').PlayByPlayEvent[]
   tacticalEvents: TacticalEvent[]
   availableDecisions: MidMatchDecision[]
   quarterInjuries: QuarterInjury[]
@@ -88,4 +108,11 @@ export interface LiveMatchDisplayState {
   subActivated: boolean
   adjustmentsMade: MidMatchAdjustment[]
   attendance?: number
+  coachSuggestions: CoachSuggestion[]
+  userGameplanSnapshot: {
+    tempo: 'fast' | 'medium' | 'slow'
+    centreTactic: 'spread' | 'balanced' | 'cluster'
+    defensiveLine: 'press' | 'zone' | 'hold' | 'run'
+    stoppageTactic: 'spread' | 'balanced' | 'cluster'
+  } | null
 }

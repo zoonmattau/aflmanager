@@ -1,9 +1,17 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { h2hKey, isRivalryMatch, h2hPerspective } from '@/engine/history/h2hTracker'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import {
   Tooltip,
@@ -17,7 +25,7 @@ import {
   Play, FastForward, SkipForward, ChevronLeft, ChevronRight, ArrowRight,
   Plus, Moon, X,
   Users, ClipboardList, Shield, BarChart3, Gamepad2,
-  AlertTriangle, GraduationCap, Scale, Mail, FileText, DollarSign,
+  AlertTriangle, GraduationCap, Scale, Mail, FileText, Cog, DollarSign,
   Newspaper, TrendingUp, TrendingDown, Minus,
 } from 'lucide-react'
 import type { Match } from '@/types/match'
@@ -58,6 +66,7 @@ import { getFinalsFormatById, hasTopFourDoubleChanceAdvantage } from '@/engine/s
 import {
   formatOffseasonDateTime,
 } from '@/engine/offseason/offseasonCalendar'
+import { MatchEngagementBanner } from '@/components/dashboard/MatchEngagementBanner'
 import { RecommendedActions } from '@/components/dashboard/RecommendedActions'
 import { ClubListNeedsCard } from '@/components/dashboard/ClubListNeedsCard'
 import { OffseasonPhaseCard } from '@/components/dashboard/OffseasonPhaseCard'
@@ -71,6 +80,10 @@ import { isPlayerSuspended } from '@/engine/players/availability'
 import { canBeSelectedForAfl } from '@/engine/players/contracts'
 import { PLAYER_TRAINING_FOCUS_LABELS } from '@/engine/players/trainingFocus'
 import { applyMediaCoverage, deriveMediaStories } from '@/engine/media/mediaFeedEngine'
+import { LiveMatchView } from '@/components/match/LiveMatchView'
+import { buildSpecialEventSimInput } from '@/engine/specialEvents/specialEventSimInput'
+import type { SimulateMatchInput } from '@/engine/match/simulateMatch'
+import type { SpecialEventInstance } from '@/types/specialEvents'
 
 // Stable fallback for optional h2hRecords (avoids new-reference-per-render in selector)
 const EMPTY_H2H: Record<string, import('@/types/history').H2HRecord> = {}
@@ -447,12 +460,17 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
   const effectiveDate = isOffseason ? offseasonDate : currentDate
 
   const [lastResult, setLastResult] = useState<Match | null>(null)
-  const [lastSpecialResult, setLastSpecialResult] = useState<import('@/types/specialEvents').SpecialEventMatchResult | null>(null)
+  const [lastSpecialResult, _setLastSpecialResult] = useState<import('@/types/specialEvents').SpecialEventMatchResult | null>(null)
   const [lastSpecialEventTitle, setLastSpecialEventTitle] = useState<string | null>(null)
   const [simming, setSimming] = useState(false)
   const [premierMsg, setPremierMsg] = useState<string | null>(null)
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [weekStart, setWeekStart] = useState(() => getWeekStart(effectiveDate))
+  const [matchBlockDialog, setMatchBlockDialog] = useState<import('@/types/calendar').GameEvent | null>(null)
+  const [liveSpecialEvent, setLiveSpecialEvent] = useState<{
+    instance: SpecialEventInstance
+    simInput: SimulateMatchInput
+  } | null>(null)
 
   // Auto-scroll calendar to current week when effective date changes
   useEffect(() => {
@@ -869,17 +887,91 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
     setSimming(false)
   }
 
+  const openSpecialEventLiveView = (eventInstanceId: string, eventTitle: string) => {
+    const state = useGameStore.getState()
+    const instance = state.specialEvents?.events.find((e) => e.id === eventInstanceId)
+    if (!instance || instance.status !== 'scheduled') return
+    const simInput = buildSpecialEventSimInput(instance, state.players, state.rngSeed)
+    setLastSpecialEventTitle(eventTitle)
+    setLiveSpecialEvent({ instance, simInput })
+  }
+
   const handleSimPreseasonEvent = () => {
     if (!nextEvent || nextEvent.type !== 'special-event') return
     const eventInstanceId = nextEvent.data?.specialEventId as string | undefined
     if (!eventInstanceId) return
-    setLastResult(null)
-    setLastSpecialResult(null)
-    const { result } = simSpecialEvent(eventInstanceId)
-    setLastSpecialResult(result)
-    setLastSpecialEventTitle(nextEvent.title)
-    advanceDateToNextCalendarEvent()
+    openSpecialEventLiveView(eventInstanceId, nextEvent.title)
   }
+
+  // Unresolved special-event (e.g. SOO) that falls on or before the current date
+  // while in the offseason phase — user should be able to simulate it directly.
+  const pendingOffseasonSpecialEvent = useMemo(() => {
+    if (!isOffseason) return null
+    return calendar.events.find(
+      (e) => !e.resolved && e.type === 'special-event' && e.date <= currentDate,
+    ) ?? null
+  }, [isOffseason, calendar.events, currentDate])
+
+  const handleSimOffseasonSpecialEvent = () => {
+    const evt = pendingOffseasonSpecialEvent
+    if (!evt) return
+    const eventInstanceId = evt.data?.specialEventId as string | undefined
+    if (!eventInstanceId) return
+    openSpecialEventLiveView(eventInstanceId, evt.title)
+  }
+
+  // Only 'delegate' mode silently auto-resolves. All other modes block and let the user decide.
+  const autoResolveMatches = (settings.notifications.liveSimMode ?? 'always-live') === 'delegate'
+
+  // --- Match-skip guard for day-advance actions ---
+  // Returns the first unresolved match/special-event that would be skipped if
+  // the calendar were advanced to proposedDate (i.e. its date falls strictly
+  // between currentDate and proposedDate).
+  const findSkippedMatch = useCallback(
+    (proposedDate: string): import('@/types/calendar').GameEvent | null => {
+      return (
+        calendar.events.find(
+          (e) =>
+            !e.resolved &&
+            (e.type === 'match' || e.type === 'special-event') &&
+            e.date >= currentDate &&
+            e.date < proposedDate,
+        ) ?? null
+      )
+    },
+    [calendar, currentDate],
+  )
+
+  const handleAdvanceOneDay = useCallback(() => {
+    if (simming || simulationActive) return
+    const proposed = addDays(currentDate, 1)
+    const blocked = findSkippedMatch(proposed)
+    if (blocked) {
+      if (autoResolveMatches) {
+        handleSimWeek()
+      } else {
+        setMatchBlockDialog(blocked)
+      }
+      return
+    }
+    advanceOneDay()
+  }, [simming, simulationActive, currentDate, findSkippedMatch, autoResolveMatches, advanceOneDay])
+
+  const handleSkipToNextEvent = useCallback(() => {
+    if (simming || simulationActive) return
+    const nextCalEvent = calendar.events.find((e) => !e.resolved && e.date > currentDate)
+    const proposed = nextCalEvent?.date ?? currentDate
+    const blocked = findSkippedMatch(proposed)
+    if (blocked) {
+      if (autoResolveMatches) {
+        handleSimWeek()
+      } else {
+        setMatchBlockDialog(blocked)
+      }
+      return
+    }
+    advanceDateToNextCalendarEvent()
+  }, [simming, simulationActive, calendar, currentDate, findSkippedMatch, autoResolveMatches, advanceDateToNextCalendarEvent])
 
   const handleAutoFillTraining = () => {
     // Rotation of focuses the assistant coach picks, balanced across position groups
@@ -928,12 +1020,25 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
     return getFixtureDateIso(settings.seasonStartDate, currentRound, nextFixture.matchDay)
   }, [settings.seasonStartDate, currentRound, phase, nextFixture])
 
+  // For finals phase, derive the next match date from the calendar events
+  const finalsMatchDate = useMemo(() => {
+    if (phase !== 'finals') return null
+    return (
+      calendar.events.find(
+        (e) => !e.resolved && e.type === 'match' && e.date >= effectiveDate,
+      )?.date ?? null
+    )
+  }, [phase, calendar.events, effectiveDate])
+
+  // Combined upcoming match date covering both regular season and finals
+  const upcomingMatchDate = nextMatchDate ?? finalsMatchDate
+
   const daysToNextMatch = useMemo(() => {
-    if (!nextMatchDate) return null
-    const now = new Date(effectiveDate + 'T00:00:00').getTime()
-    const then = new Date(nextMatchDate + 'T00:00:00').getTime()
+    if (!upcomingMatchDate) return null
+    const now  = new Date(effectiveDate      + 'T00:00:00').getTime()
+    const then = new Date(upcomingMatchDate  + 'T00:00:00').getTime()
     return Math.max(0, Math.round((then - now) / 86_400_000))
-  }, [effectiveDate, nextMatchDate])
+  }, [effectiveDate, upcomingMatchDate])
 
   // Pending actions
   // Training schedule summary
@@ -1214,109 +1319,121 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
               }
             </p>
           </div>
-          {isOffseason ? (
-            /* Offseason sim controls */
+          {!seasonComplete && (
+            /* Unified time-advance controls — always visible */
             <div className="flex flex-col items-end gap-1">
               <div className="flex gap-1">
                 <TooltipProvider delayDuration={300}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button size="lg" className="h-11 px-3.5" onClick={simHalfDay}>
-                        <Play className="h-5 w-5" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Sim Half Day</TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button size="lg" variant="outline" className="h-11 px-3.5" onClick={simFullDay}>
-                        <FastForward className="h-5 w-5" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Sim Full Day</TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button size="lg" variant="outline" className="h-11 px-3.5" onClick={simToMilestone}>
-                        <SkipForward className="h-5 w-5" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Sim to Next Milestone</TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-            </div>
-          ) : isPreseasonSpecialEvent ? (
-            <div className="flex flex-col items-end gap-1">
-              <Button
-                size="lg"
-                className="h-11 px-5 text-base font-bold bg-amber-600 hover:bg-amber-700"
-                onClick={handleSimPreseasonEvent}
-                disabled={simming || simulationActive}
-              >
-                <Play className="mr-2 h-5 w-5" />
-                Simulate Event
-              </Button>
-              <span className="text-[10px] text-muted-foreground">
-                {nextEvent?.title}
-              </span>
-            </div>
-          ) : !seasonComplete ? (
-            <div className="flex flex-col items-end gap-1">
-              <div className="flex gap-1">
-                <TooltipProvider delayDuration={300}>
+                  {/* ½ Day (offseason) or 1 Day (regular) */}
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
                         size="lg"
                         className="h-11 px-3.5"
-                        onClick={advanceOneDay}
+                        onClick={isOffseason ? simHalfDay : handleAdvanceOneDay}
                         disabled={simming || simulationActive}
                       >
                         <Play className="h-5 w-5" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>Advance 1 Day</TooltipContent>
+                    <TooltipContent>{isOffseason ? 'Sim Half Day' : 'Advance 1 Day'}</TooltipContent>
                   </Tooltip>
+                  {/* Full Day (offseason) or Skip to Next Event (regular) */}
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
                         size="lg"
                         variant="outline"
                         className="h-11 px-3.5"
-                        onClick={advanceDateToNextCalendarEvent}
+                        onClick={isOffseason ? simFullDay : handleSkipToNextEvent}
                         disabled={simming || simulationActive}
                       >
                         <FastForward className="h-5 w-5" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>Skip to Next Event</TooltipContent>
+                    <TooltipContent>{isOffseason ? 'Sim Full Day' : 'Skip to Next Event'}</TooltipContent>
                   </Tooltip>
+                  {/* To Next Milestone (offseason) or Simulate Round (regular) */}
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
                         size="lg"
                         variant="outline"
                         className="h-11 px-3.5"
-                        onClick={handleSimWeek}
+                        onClick={isOffseason ? simToMilestone : handleSimWeek}
                         disabled={simming || simulationActive}
                       >
                         <SkipForward className="h-5 w-5" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>Simulate Round</TooltipContent>
+                    <TooltipContent>{isOffseason ? 'Sim to Next Milestone' : 'Simulate Round'}</TooltipContent>
                   </Tooltip>
+                  {/* Special event button — shown when an event is ready to simulate */}
+                  {(pendingOffseasonSpecialEvent || isPreseasonSpecialEvent) && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="lg"
+                          className="h-11 px-3.5 bg-amber-600 hover:bg-amber-700"
+                          onClick={pendingOffseasonSpecialEvent ? handleSimOffseasonSpecialEvent : handleSimPreseasonEvent}
+                          disabled={simming || simulationActive}
+                        >
+                          <Moon className="h-5 w-5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Simulate: {pendingOffseasonSpecialEvent?.title ?? nextEvent?.title}
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
                 </TooltipProvider>
               </div>
-              {nextEvent && (
+              {(pendingOffseasonSpecialEvent || isPreseasonSpecialEvent) ? (
+                <span className="text-[10px] text-amber-500 font-medium">
+                  Event ready: {pendingOffseasonSpecialEvent?.title ?? nextEvent?.title}
+                </span>
+              ) : nextEvent ? (
                 <span className="text-[10px] text-muted-foreground">
                   Next: {nextEvent.title}
                 </span>
-              )}
+              ) : null}
             </div>
-          ) : null}
+          )}
         </div>
       </div>
+
+      {/* Match-skip block dialog */}
+      <Dialog open={matchBlockDialog !== null} onOpenChange={(open) => { if (!open) setMatchBlockDialog(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Match Resolution Required
+            </DialogTitle>
+            <DialogDescription>
+              You have a match scheduled on <strong>{matchBlockDialog ? formatDate(matchBlockDialog.date) : ''}</strong> that must be resolved before you can advance past this point.
+              <br /><br />
+              Use <strong>Simulate Round</strong> to quick-resolve it now, or switch to <strong>Delegate</strong> mode in Live Sim Settings to allow automatic resolution.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex flex-col gap-2 sm:flex-row">
+            <Button
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => { setMatchBlockDialog(null); navigate('/game-settings') }}
+            >
+              <Cog className="h-4 w-4" />
+              Settings
+            </Button>
+            <Button
+              onClick={() => { setMatchBlockDialog(null); handleSimWeek() }}
+            >
+              <SkipForward className="mr-1.5 h-4 w-4" />
+              Simulate Round
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Premier message */}
       {premierMsg && (
@@ -1326,6 +1443,23 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
             <p className="text-lg font-bold">{premierMsg}</p>
           </CardContent>
         </Card>
+      )}
+
+      {/* Match Engagement Reminder */}
+      {!isOffseason && !seasonComplete && !isBye && (
+        <MatchEngagementBanner
+          daysToMatch={daysToNextMatch}
+          matchDate={upcomingMatchDate}
+          opponent={opponent}
+          isHome={isHome}
+          roundName={nextRound?.name ?? (phase === 'finals' ? `Finals Week ${season.finalsRounds.length + 1}` : null)}
+          isFinals={phase === 'finals'}
+          liveSimMode={settings.notifications.liveSimMode ?? 'always-live'}
+          opponentColor={opponent?.colors.primary}
+          onGoToMatchDay={() => navigate('/match-day')}
+          onGoToLineup={() => navigate('/lineup')}
+          onSimulate={handleSimWeek}
+        />
       )}
 
       {/* Week Calendar */}
@@ -1369,11 +1503,13 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
                       ? 'border-primary border-2 bg-primary/20 ring-2 ring-primary/50 shadow-lg shadow-primary/25'
                       : isSelected
                         ? 'border-accent-foreground/30 bg-accent'
-                        : day.hasMatch
-                          ? 'border-blue-500/40 bg-blue-500/5 hover:bg-blue-500/10'
-                          : day.hasMilestone
-                            ? 'border-pink-500/40 bg-pink-500/5 hover:bg-pink-500/10'
-                            : 'border-border hover:bg-accent/50'
+                        : day.date === upcomingMatchDate && !isPastDay
+                          ? 'border-amber-500/60 bg-amber-500/8 hover:bg-amber-500/12'
+                          : day.hasMatch
+                            ? 'border-blue-500/40 bg-blue-500/5 hover:bg-blue-500/10'
+                            : day.hasMilestone
+                              ? 'border-pink-500/40 bg-pink-500/5 hover:bg-pink-500/10'
+                              : 'border-border hover:bg-accent/50'
                     }
                     ${isPastDay ? 'opacity-40' : ''}
                   `}
@@ -2371,6 +2507,51 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
         </Card>
       )}
 
+      {/* Live special event viewer — fullscreen overlay */}
+      {liveSpecialEvent && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-background/95 p-4">
+          <div className="mx-auto max-w-2xl">
+            <div className="mb-3 flex items-center gap-3">
+              <h2 className="text-lg font-bold">{lastSpecialEventTitle}</h2>
+            </div>
+            <LiveMatchView
+              simInput={liveSpecialEvent.simInput}
+              userClubId={liveSpecialEvent.simInput.homeClubId}
+              homeClub={liveSpecialEvent.simInput.clubs[liveSpecialEvent.simInput.homeClubId]}
+              awayClub={liveSpecialEvent.simInput.clubs[liveSpecialEvent.simInput.awayClubId]}
+              spectatorMode
+              onComplete={(match) => {
+                const r = match.result
+                if (r) {
+                  const inst = liveSpecialEvent.instance
+                  const precomputed: import('@/types/specialEvents').SpecialEventMatchResult = {
+                    teamAScore: {
+                      goals: r.homeScores.reduce((s, q) => s + q.goals, 0),
+                      behinds: r.homeScores.reduce((s, q) => s + q.behinds, 0),
+                      total: r.homeTotalScore,
+                    },
+                    teamBScore: {
+                      goals: r.awayScores.reduce((s, q) => s + q.goals, 0),
+                      behinds: r.awayScores.reduce((s, q) => s + q.behinds, 0),
+                      total: r.awayTotalScore,
+                    },
+                    userClubParticipants: [...inst.teamA.playerIds, ...inst.teamB.playerIds],
+                    bestOnGround: [...r.homePlayerStats, ...r.awayPlayerStats]
+                      .sort((a, b) =>
+                        (b.goals * 6 + b.disposals + b.marks + b.tackles) -
+                        (a.goals * 6 + a.disposals + a.marks + a.tackles)
+                      )[0]?.playerId,
+                  }
+                  simSpecialEvent(inst.id, precomputed)
+                }
+                setLiveSpecialEvent(null)
+              }}
+              onCancel={() => setLiveSpecialEvent(null)}
+            />
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
@@ -2895,7 +3076,7 @@ function MatchupCard({
 
           <div className="mt-5 space-y-2">
             <div className="flex flex-wrap justify-center gap-2">
-              <Button onClick={() => navigate('/match-day')} variant="default">
+              <Button onClick={() => navigate('/fixture')} variant="default">
                 <Calendar className="mr-1 h-4 w-4" />
                 Match Day
               </Button>

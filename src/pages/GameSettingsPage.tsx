@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useGameStore } from '@/stores/gameStore'
-import type { GameSettings, RealismSettings } from '@/types/game'
+import type { GameSettings, RealismSettings, LiveSimMode } from '@/types/game'
 import {
   Dialog,
   DialogContent,
@@ -618,6 +618,67 @@ export function GameSettingsPage() {
             <div className="space-y-1.5">
               <Label>Salary Cap Amount</Label>
               <Input type="number" value={draft.salaryCapAmount} onChange={(e) => setDraft((p) => ({ ...p, salaryCapAmount: toPositiveInt(e.target.value, 0) }))} />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle className="text-base">Simulation Preferences</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>Live Sim Mode</Label>
+              <p className="text-[11px] text-muted-foreground">
+                Controls how your managed matches are handled when you advance the calendar.
+              </p>
+              {(
+                [
+                  {
+                    value: 'always-live',
+                    label: 'Always Live',
+                    desc: 'Always opens the Live Match view for your games. You control every match.',
+                  },
+                  {
+                    value: 'finals-only',
+                    label: 'Live for Finals Only',
+                    desc: 'Regular season games are quick-simmed with full stats. Finals open Live.',
+                  },
+                  {
+                    value: 'quick-sim',
+                    label: 'Quick Sim with Full Stats',
+                    desc: 'All matches simulate instantly. Full stats and match report are always shown.',
+                  },
+                  {
+                    value: 'delegate',
+                    label: 'Delegate to Assistant',
+                    desc: 'Your assistant auto-resolves all matches silently. Check results on the dashboard.',
+                  },
+                ] as { value: LiveSimMode; label: string; desc: string }[]
+              ).map((opt) => {
+                const active = (draft.notifications.liveSimMode ?? 'always-live') === opt.value
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() =>
+                      setDraft((p) => ({
+                        ...p,
+                        notifications: { ...p.notifications, liveSimMode: opt.value },
+                      }))
+                    }
+                    className={[
+                      'w-full text-left rounded-lg border px-3 py-2.5 transition-colors',
+                      active
+                        ? 'border-primary bg-primary/8 text-foreground'
+                        : 'border-border bg-transparent text-muted-foreground hover:bg-muted/40',
+                    ].join(' ')}
+                  >
+                    <div className={['text-sm font-medium', active ? 'text-foreground' : ''].join(' ')}>
+                      {opt.label}
+                    </div>
+                    <div className="text-[11px] mt-0.5 leading-snug">{opt.desc}</div>
+                  </button>
+                )
+              })}
             </div>
           </CardContent>
         </Card>

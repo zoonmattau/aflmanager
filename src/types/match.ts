@@ -50,6 +50,26 @@ export interface MatchKeyEvent {
   clubId: string
 }
 
+export type PlayByPlayEventType =
+  | 'goal' | 'behind' | 'miss' | 'inside50'
+  | 'turnover' | 'clearance' | 'mark' | 'contested-mark'
+  | 'free-kick' | 'intercept' | 'tackle' | 'quarter-break'
+
+export interface PlayByPlayEvent {
+  id: string
+  quarter: number
+  minute: number
+  type: PlayByPlayEventType
+  clubId: string
+  playerId?: string
+  receiverPlayerId?: string
+  defenderPlayerId?: string
+  defenderClubId?: string
+  commentary: string
+  detail?: string
+  isHighlight: boolean
+}
+
 export interface MatchResult {
   homeScores: QuarterScore[]    // Q1, Q2, Q3, Q4
   awayScores: QuarterScore[]    // Q1, Q2, Q3, Q4
@@ -58,6 +78,7 @@ export interface MatchResult {
   homePlayerStats: MatchPlayerStats[]
   awayPlayerStats: MatchPlayerStats[]
   keyEvents: MatchKeyEvent[]
+  playByPlay?: PlayByPlayEvent[]
   midMatchAdjustments?: import('@/types/matchEvent').MidMatchAdjustment[]
   midMatchInjuredPlayerIds?: string[]
   effectiveAggressionLevel?: 'high' | 'medium' | 'low'

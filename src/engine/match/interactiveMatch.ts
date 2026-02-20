@@ -2,6 +2,8 @@ import type {
   TacticalEvent,
   MidMatchDecision,
   QuarterInjury,
+  CoachSuggestion,
+  GameplanSliders,
 } from '@/types/matchEvent'
 import type {
   MatchContext,
@@ -473,6 +475,188 @@ export function applyMidMatchDecision(
     })
     return
   }
+}
+
+// ---------------------------------------------------------------------------
+// Coach suggestions
+// ---------------------------------------------------------------------------
+
+export function generateCoachSuggestions(
+  ctx: MatchContext,
+  userClubId: string,
+): CoachSuggestion[] {
+  const suggestions: CoachSuggestion[] = []
+  const isHome = userClubId === ctx.input.homeClubId
+  const userStats = isHome ? ctx.homeStats : ctx.awayStats
+  const oppStats  = isHome ? ctx.awayStats  : ctx.homeStats
+  const userScore = isHome ? ctx.currentHomeTotal : ctx.currentAwayTotal
+  const oppScore  = isHome ? ctx.currentAwayTotal : ctx.currentHomeTotal
+  const margin    = userScore - oppScore
+  const quarter   = ctx.quartersCompleted
+
+  const sum = (arr: typeof userStats, key: keyof typeof arr[0]): number =>
+    arr.reduce((t, s) => t + (s[key] as number), 0)
+
+  const userDisposals = sum(userStats, 'disposals')
+  const oppDisposals  = sum(oppStats,  'disposals')
+  const userI50       = sum(userStats, 'insideFifties')
+  const oppI50        = sum(oppStats,  'insideFifties')
+  const userClearances = sum(userStats, 'clearances')
+  const oppClearances  = sum(oppStats,  'clearances')
+  const userContested  = sum(userStats, 'contestedPossessions')
+  const oppContested   = sum(oppStats,  'contestedPossessions')
+  const userTackles    = sum(userStats, 'tackles')
+  const oppTackles     = sum(oppStats,  'tackles')
+  const userGoals      = sum(userStats, 'goals')
+  const userI50Shots   = Math.max(1, userI50)
+
+  // 1. Possession dominance
+  if (oppDisposals > userDisposals * 1.2 && userDisposals > 0) {
+    suggestions.push({
+      id: 'possession-deficit',
+      priority: 'major',
+      title: 'Possession Imbalance',
+      detail: `Opponent is winning the ball ${oppDisposals}–${userDisposals}. You need to win more of the ball at ground level.`,
+      suggestedAction: 'Raise Tempo to force more contest opportunities',
+    })
+  }
+
+  // 2. Clearance trouble
+  if (oppClearances > userClearances * 1.35 && userClearances > 0) {
+    suggestions.push({
+      id: 'clearance-deficit',
+      priority: 'critical',
+      title: 'Losing the Stoppage Battle',
+      detail: `Opponent winning clearances ${oppClearances}–${userClearances}. The ball is coming out the wrong way at stoppages.`,
+      suggestedAction: 'Adjust Stoppage Setup to cluster more numbers around the ball',
+    })
+  }
+
+  // 3. Inside 50 drought
+  if (oppI50 > userI50 * 1.4 && oppI50 > 5) {
+    suggestions.push({
+      id: 'inside50-drought',
+      priority: margin < 0 ? 'critical' : 'major',
+      title: 'Not Getting the Ball Inside 50',
+      detail: `Opponent has ${oppI50} inside-50 entries to your ${userI50}. The forward line is starved of supply.`,
+      suggestedAction: 'Increase Corridor Use to drive the ball directly to your forwards',
+    })
+  }
+
+  // 4. Accuracy problem — converting less than 50% from I50
+  const conversionRate = userGoals / userI50Shots
+  if (userI50 > 4 && conversionRate < 0.35) {
+    suggestions.push({
+      id: 'accuracy-issue',
+      priority: 'major',
+      title: 'Poor Goal Conversion',
+      detail: `Only ${(conversionRate * 100).toFixed(0)}% conversion from inside-50. Reduce tempo to create better set-shot opportunities.`,
+      suggestedAction: 'Lower Tempo — more time for quality shots at goal',
+    })
+  }
+
+  // 5. Getting outworked physically
+  if (oppContested > userContested * 1.3 && userContested > 0) {
+    suggestions.push({
+      id: 'contested-deficit',
+      priority: 'major',
+      title: 'Losing Contested Possessions',
+      detail: `Opponent winning contested ball ${oppContested}–${userContested}. Consider pushing your hardest workers up to spread the load.`,
+      suggestedAction: 'Raise Defensive Press to crowd contests',
+    })
+  }
+
+  // 6. Opponents being physical — high tackle count
+  if (oppTackles > userTackles * 1.4 && quarter >= 2) {
+    suggestions.push({
+      id: 'tackle-pressure',
+      priority: 'minor',
+      title: 'Under Heavy Tackle Pressure',
+      detail: `Opponent has laid ${oppTackles} tackles to your ${userTackles}. Moving the ball quicker out of congestion could help.`,
+      suggestedAction: 'Increase Tempo to reduce time holding the ball',
+    })
+  }
+
+  // 7. Blowout situation
+  if (margin <= -40 && quarter <= 3) {
+    suggestions.push({
+      id: 'blowout-response',
+      priority: 'critical',
+      title: 'Significant Deficit — Drastic Action Needed',
+      detail: `Down by ${Math.abs(margin)} points. Standard adjustments won't be enough — need high-risk, high-reward changes now.`,
+      suggestedAction: 'Chase the Game — attack fast, press hard, leave nothing behind',
+    })
+  }
+
+  // 8. Protecting a lead in Q4
+  if (margin >= 20 && quarter === 3) {
+    suggestions.push({
+      id: 'protect-lead-q4',
+      priority: 'major',
+      title: 'Protect the Lead Into Q4',
+      detail: `Up by ${margin} points heading into the final quarter. Consider slowing the game down to reduce opponent opportunities.`,
+      suggestedAction: 'Lower Tempo + Raise Defensive Press to suffocate their attack',
+    })
+  }
+
+  // Cap at 4, prioritise by severity
+  const order: Record<CoachSuggestion['priority'], number> = { critical: 0, major: 1, minor: 2 }
+  return suggestions.sort((a, b) => order[a.priority] - order[b.priority]).slice(0, 4)
+}
+
+// ---------------------------------------------------------------------------
+// Gameplan slider application
+// ---------------------------------------------------------------------------
+
+function sliderToTempo(v: number): 'slow' | 'medium' | 'fast' {
+  return v <= 33 ? 'slow' : v <= 66 ? 'medium' : 'fast'
+}
+function sliderToCentreTactic(v: number): 'spread' | 'balanced' | 'cluster' {
+  return v <= 33 ? 'spread' : v <= 66 ? 'balanced' : 'cluster'
+}
+function sliderToDefensiveLine(v: number): 'zone' | 'run' | 'hold' | 'press' {
+  return v <= 25 ? 'zone' : v <= 50 ? 'run' : v <= 75 ? 'hold' : 'press'
+}
+function sliderToStoppageTactic(v: number): 'spread' | 'balanced' | 'cluster' {
+  return v <= 33 ? 'spread' : v <= 66 ? 'balanced' : 'cluster'
+}
+
+export function gameplanToSliders(gameplan: import('@/types/club').ClubGameplan): GameplanSliders {
+  const tempoMap: Record<string, number> = { slow: 15, medium: 50, fast: 85 }
+  const tacticMap: Record<string, number> = { spread: 15, balanced: 50, cluster: 85 }
+  const defMap: Record<string, number> = { zone: 10, run: 35, hold: 62, press: 85 }
+  return {
+    tempo: tempoMap[gameplan.tempo ?? 'medium'] ?? 50,
+    corridorUse: tacticMap[gameplan.centreTactic ?? 'balanced'] ?? 50,
+    defensivePress: defMap[gameplan.defensiveLine ?? 'hold'] ?? 62,
+    stoppageSetup: tacticMap[gameplan.stoppageTactic ?? 'balanced'] ?? 50,
+  }
+}
+
+export function applyGameplanSliders(
+  ctx: MatchContext,
+  sliders: GameplanSliders,
+  userClubId: string,
+): void {
+  const isHome = userClubId === ctx.input.homeClubId
+  const gameplan = isHome ? ctx.resolvedHomeGameplan : ctx.resolvedAwayGameplan
+  const updated = {
+    ...gameplan,
+    tempo: sliderToTempo(sliders.tempo),
+    centreTactic: sliderToCentreTactic(sliders.corridorUse),
+    defensiveLine: sliderToDefensiveLine(sliders.defensivePress),
+    stoppageTactic: sliderToStoppageTactic(sliders.stoppageSetup),
+  }
+  if (isHome) ctx.resolvedHomeGameplan = updated
+  else ctx.resolvedAwayGameplan = updated
+  rerunModifierChain(ctx, isHome)
+
+  const quarter = ctx.quartersCompleted
+  ctx.midMatchAdjustments.push({
+    quarter,
+    decisionType: 'apply-gameplan-sliders',
+    description: `Gameplan updated — Tempo: ${updated.tempo}, Corridor: ${updated.centreTactic}, Press: ${updated.defensiveLine}, Stoppage: ${updated.stoppageTactic}.`,
+  })
 }
 
 // ---------------------------------------------------------------------------

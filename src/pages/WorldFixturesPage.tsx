@@ -5,15 +5,27 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Calendar } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Calendar, BarChart3 } from 'lucide-react'
+import { PostMatchBoxScore } from '@/components/match/PostMatchBoxScore'
+import type { Match } from '@/types/match'
 
 export function WorldFixturesPage() {
   const navigate = useNavigate()
   const clubs = useGameStore((s) => s.clubs)
+  const players = useGameStore((s) => s.players)
   const season = useGameStore((s) => s.season)
   const matchResults = useGameStore((s) => s.matchResults)
   const playerClubId = useGameStore((s) => s.playerClubId)
   const currentRound = useGameStore((s) => s.currentRound)
+
+  const [statsMatch, setStatsMatch] = useState<Match | null>(null)
 
   const allRounds = useMemo(() => {
     const regular = season.rounds.map((_r, i) => ({ label: `Round ${i + 1}`, index: i, isFinals: false }))
@@ -179,12 +191,18 @@ export function WorldFixturesPage() {
 
                     {/* Score or VS */}
                     <div className="flex items-center gap-1 font-mono font-bold tabular-nums min-w-[80px] justify-center">
-                      {played ? (
-                        <>
+                      {played && match ? (
+                        <button
+                          type="button"
+                          onClick={() => setStatsMatch(match)}
+                          className="flex items-center gap-1 rounded px-1 py-0.5 hover:bg-muted transition-colors group"
+                          title="View box score"
+                        >
                           <span className={homeWon ? '' : 'text-muted-foreground'}>{h}</span>
                           <span className="text-muted-foreground text-xs font-normal">–</span>
                           <span className={awayWon ? '' : 'text-muted-foreground'}>{a}</span>
-                        </>
+                          <BarChart3 className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity ml-0.5" />
+                        </button>
                       ) : (
                         <span className="text-muted-foreground text-xs font-normal">vs</span>
                       )}
@@ -246,6 +264,29 @@ export function WorldFixturesPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Box score dialog for played matches */}
+      <Dialog open={!!statsMatch} onOpenChange={(open) => { if (!open) setStatsMatch(null) }}>
+        <DialogContent className="max-w-4xl w-full p-0">
+          <DialogHeader className="px-6 pt-6 pb-0">
+            <DialogTitle>
+              {statsMatch
+                ? `${clubs[statsMatch.homeClubId]?.abbreviation ?? '?'} vs ${clubs[statsMatch.awayClubId]?.abbreviation ?? '?'} — Box Score`
+                : 'Box Score'}
+            </DialogTitle>
+          </DialogHeader>
+          <ScrollArea className="max-h-[80vh] px-6 pb-6">
+            {statsMatch && (
+              <PostMatchBoxScore
+                match={statsMatch}
+                clubs={clubs}
+                players={players}
+                playerClubId={playerClubId ?? ''}
+              />
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

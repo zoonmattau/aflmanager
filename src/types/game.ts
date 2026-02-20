@@ -362,8 +362,17 @@ export interface SigningNotificationPreferences {
   dailyDigest: boolean
 }
 
+/** Controls how the user's managed matches are handled by default */
+export type LiveSimMode =
+  | 'always-live'   // Always open Live Match view for user's games
+  | 'finals-only'   // Live only for finals, Quick Sim otherwise
+  | 'quick-sim'     // Always quick-simulate with full stats shown
+  | 'delegate'      // Let the assistant auto-resolve silently
+
 export interface NotificationSettings {
   signings: SigningNotificationPreferences
+  autoResolveMatches: boolean
+  liveSimMode: LiveSimMode
 }
 
 export interface JumperManagementState {

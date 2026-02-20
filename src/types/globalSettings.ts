@@ -31,7 +31,7 @@ export interface GlobalSettings {
 }
 
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
-  theme: 'dark',
+  theme: 'system',
   autoSaveEnabled: true,
   autoSaveIntervalMinutes: 5,
   defaultSimSpeed: 'normal',

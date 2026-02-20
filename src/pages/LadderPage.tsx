@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/table'
 import { getCareerLeaders } from '@/engine/history/historyEngine'
 import { getBrownlowLeaderboard, getColemanLeaderboard } from '@/engine/awards/awardsEngine'
-import { getEffectiveFinalsFormat, hasTopFourDoubleChanceAdvantage } from '@/engine/season/finalsFormats'
+import { getEffectiveFinalsFormat, hasTopFourDoubleChanceAdvantage, getFinalsZones } from '@/engine/season/finalsFormats'
 import { labelLadderQualification, computeQualificationRules } from '@/engine/season/finalsQualification'
 import type { PlayerCareerStats } from '@/types/player'
 import { Trophy, Medal, Star, Lock } from 'lucide-react'
@@ -264,6 +264,18 @@ export function LadderPage() {
     [effectiveFormat],
   )
 
+  const finalsZones = useMemo(() => getFinalsZones(effectiveFormat), [effectiveFormat])
+
+  const rankToZone = useMemo(() => {
+    const map = new Map<number, number>()
+    for (const zone of finalsZones) {
+      for (const rank of zone.ranks) {
+        map.set(rank, zone.zoneIndex)
+      }
+    }
+    return map
+  }, [finalsZones])
+
   const qualificationSlots = useMemo(
     () => labelLadderQualification(ladder, leagueConfig, finalsQualifyingTeams, hasTop4FinalsAdvantage),
     [ladder, leagueConfig, finalsQualifyingTeams, hasTop4FinalsAdvantage],
@@ -316,15 +328,29 @@ export function LadderPage() {
                       const club = clubs[entry.clubId]
                       const isPlayer = entry.clubId === playerClubId
                       const slot = qualificationSlots[i]
-                      const inFinalsZone = i < finalsQualifyingTeams
-                      const inTop4Zone = hasTop4FinalsAdvantage && i < 4
-                      const inLowerFinalsZone = inFinalsZone && !inTop4Zone
-                      const isTop4CutLine = hasTop4FinalsAdvantage && i === 3
+                      const rank1 = i + 1 // 1-indexed
+                      const rowZone = rank1 <= finalsQualifyingTeams ? rankToZone.get(rank1) : undefined
+                      const nextZone = (rank1 + 1) <= finalsQualifyingTeams ? rankToZone.get(rank1 + 1) : undefined
+                      const isZoneTransition = rowZone !== undefined && nextZone !== undefined && rowZone !== nextZone
                       const isFinalsCutLine = finalsQualifyingTeams > 0 && i === finalsQualifyingTeams - 1
+                      const zoneBg = rowZone === 0
+                        ? 'bg-cyan-500/12'
+                        : rowZone === 1
+                          ? 'bg-emerald-500/6'
+                          : rowZone === 2
+                            ? 'bg-amber-500/10'
+                            : ''
+                      const cutLineClass = isZoneTransition
+                        ? (rowZone === 0
+                          ? 'border-b-2 border-dashed border-cyan-500/50'
+                          : 'border-b-2 border-dashed border-emerald-500/40')
+                        : isFinalsCutLine
+                          ? 'border-b-2 border-dashed border-emerald-500/40'
+                          : ''
                       return (
                         <TableRow
                           key={entry.clubId}
-                          className={`${inTop4Zone ? 'bg-cyan-500/12' : ''} ${inLowerFinalsZone ? 'bg-emerald-500/5' : ''} ${isPlayer ? 'bg-accent font-semibold' : ''} ${isTop4CutLine ? 'border-b-2 border-dashed border-cyan-500/50' : ''} ${isFinalsCutLine ? 'border-b-2 border-dashed border-emerald-500/40' : ''}`}
+                          className={[zoneBg, isPlayer ? 'bg-accent font-semibold' : '', cutLineClass].filter(Boolean).join(' ')}
                         >
                           <TableCell className="text-center text-muted-foreground">{i + 1}</TableCell>
                           <TableCell>
@@ -365,28 +391,32 @@ export function LadderPage() {
                 </Table>
                 <div className="border-t px-4 py-3">
                   <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                    {hasTop4FinalsAdvantage && (
-                      <span className="inline-flex items-center gap-1.5">
-                        <span className="h-2.5 w-2.5 rounded-sm bg-cyan-500/60" />
-                        Top 4 (double chance)
-                      </span>
-                    )}
-                    {finalsQualifyingTeams > 0 && (
-                      <span className="inline-flex items-center gap-1.5">
-                        <span className="h-2.5 w-2.5 rounded-sm bg-emerald-500/50" />
-                        Finals zone ({finalsQualifyingTeams} teams)
-                      </span>
-                    )}
+                    {finalsZones.map((zone) => {
+                      const swatchClass = zone.zoneIndex === 0
+                        ? 'bg-cyan-500/60'
+                        : zone.zoneIndex === 1
+                          ? 'bg-emerald-500/50'
+                          : 'bg-amber-500/60'
+                      const r = zone.ranks
+                      const rRange = r.length > 1 ? `${r[0]}–${r[r.length - 1]}` : `${r[0]}`
+                      const label = zone.firstWeek === Infinity
+                        ? `Top ${r[r.length - 1]} (bye)`
+                        : !zone.isElimination
+                          ? `Qualifying Finals (${rRange})`
+                          : finalsZones.length > 2 && zone.zoneIndex === finalsZones.length - 1
+                            ? `Wildcard Weekend (${rRange})`
+                            : `Finals zone (${rRange})`
+                      return (
+                        <span key={zone.zoneIndex} className="inline-flex items-center gap-1.5">
+                          <span className={`h-2.5 w-2.5 rounded-sm ${swatchClass}`} />
+                          {label}
+                        </span>
+                      )
+                    })}
                     {qualificationSlots.some((s) => s.type === 'wildcard') && (
                       <span className="inline-flex items-center gap-1.5">
                         <Badge variant="outline" className="text-[10px] px-1 py-0 leading-4 border-amber-500/60 text-amber-400">WC</Badge>
                         Wildcard
-                      </span>
-                    )}
-                    {hasTop4FinalsAdvantage && (
-                      <span className="inline-flex items-center gap-1.5">
-                        <span className="h-0.5 w-3 rounded bg-cyan-500/70" />
-                        Top 4 cut line
                       </span>
                     )}
                     {finalsQualifyingTeams > 0 && (

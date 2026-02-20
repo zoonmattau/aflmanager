@@ -3,6 +3,7 @@ import { Sidebar } from './Sidebar'
 import { TopBar } from './TopBar'
 import { SubNav } from './SubNav'
 import { SimulationOverlay } from './SimulationOverlay'
+import { MatchReadyModal } from '@/components/match/MatchReadyModal'
 
 export function AppLayout({ children }: { children: ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -10,6 +11,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen overflow-hidden">
       <SimulationOverlay />
+      <MatchReadyModal />
       <Sidebar
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}

@@ -8,7 +8,7 @@ import {
   getLineupSlots,
 } from '@/engine/core/constants'
 import { createDefaultGameplan } from '@/engine/gameplan/defaults'
-import type { Match, MatchResult, MatchPlayerStats, QuarterScore, MatchKeyEvent } from '@/types/match'
+import type { Match, MatchResult, MatchPlayerStats, QuarterScore, MatchKeyEvent, PlayByPlayEvent } from '@/types/match'
 import type { Player } from '@/types/player'
 import type { Club, ClubGameplan } from '@/types/club'
 import type { MatchDay } from '@/types/season'
@@ -112,6 +112,7 @@ export interface MatchContext {
   homeScores: QuarterScore[]
   awayScores: QuarterScore[]
   keyEvents: MatchKeyEvent[]
+  playByPlay: PlayByPlayEvent[]
   currentHomeTotal: number
   currentAwayTotal: number
   quartersCompleted: number
@@ -982,6 +983,7 @@ export function createMatchContext(input: SimulateMatchInput): MatchContext {
     homeScores: [],
     awayScores: [],
     keyEvents,
+    playByPlay: [],
     currentHomeTotal: 0,
     currentAwayTotal: 0,
     quartersCompleted: 0,
@@ -1018,6 +1020,78 @@ export function createMatchContext(input: SimulateMatchInput): MatchContext {
   }
 }
 
+// ── Play-by-play commentary helpers ──────────────────────────────────────────
+
+function pbpAbbrev(p: { firstName: string; lastName: string }): string {
+  return `${p.firstName[0]}. ${p.lastName}`
+}
+
+const PBP_TURNOVER_KICK = [
+  (p: string) => `${p} turns it over — kick out on the full`,
+  (p: string) => `${p} kicks it straight to the opposition`,
+  (p: string) => `${p} misses the target under pressure`,
+]
+const PBP_TURNOVER_GENERAL = [
+  (p: string) => `${p} loses possession`,
+  (p: string) => `${p} fumbles under heavy pressure`,
+  (p: string) => `${p} gives it away carelessly`,
+]
+const PBP_CLEARANCE = [
+  (p: string) => `${p} wins the clearance`,
+  (p: string) => `${p} bursts through the congestion`,
+  (p: string) => `${p} clears from the stoppage`,
+]
+const PBP_MARK = [
+  (p: string) => `${p} takes the mark`,
+  (p: string) => `${p} marks strongly`,
+  (p: string) => `${p} holds the mark`,
+]
+const PBP_CONTESTED_MARK = [
+  (p: string) => `${p} takes a contested mark`,
+  (p: string) => `${p} wins the aerial battle`,
+  (p: string) => `${p} marks over the pack`,
+]
+const PBP_TACKLE = [
+  (t: string, p: string) => `${t} tackles ${p}`,
+  (t: string, p: string) => `${t} brings down ${p}`,
+  (t: string, _p: string) => `${t} makes the tackle`,
+]
+const PBP_FREE_KICK = [
+  (p: string) => `Free kick to ${p}`,
+  (p: string) => `${p} wins a free kick`,
+  (p: string) => `${p} awarded the free`,
+]
+const PBP_INSIDE50 = [
+  (p: string) => `${p} delivers into the forward 50`,
+  (p: string) => `${p} goes inside 50`,
+  (p: string) => `${p} carries into the attacking zone`,
+]
+const PBP_GOAL = [
+  (p: string, a?: string) => a ? `${p} converts — ${a} with the delivery` : `${p} kicks truly`,
+  (p: string) => `${p} marks and converts from set shot`,
+  (p: string) => `${p} snaps truly`,
+  (p: string) => `${p} slots the goal`,
+]
+const PBP_BEHIND = [
+  (p: string) => `${p} kicks a behind`,
+  (p: string) => `${p} scores a point`,
+  (p: string) => `${p} hits the post`,
+]
+const PBP_MISS = [
+  (p: string) => `${p} has a shot but misses`,
+  (p: string) => `${p} can't convert from inside 50`,
+  (p: string) => `Ball goes in but no score — ${p}`,
+]
+const PBP_INTERCEPT = [
+  (d: string) => `${d} intercepts`,
+  (d: string) => `${d} reads the play and intercepts`,
+  (d: string) => `${d} cuts off the chain`,
+]
+
+function pickLine<T extends ((...args: never[]) => string)>(arr: T[], counter: number): T {
+  return arr[counter % arr.length]
+}
+
 export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
   const {
     rng, input, homeStats, awayStats, keyEvents,
@@ -1050,6 +1124,22 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
     65,
     Math.round((possessionsBase + avgPossessionBonus + rng.nextInt(-20, 20)) * weather.possessionMult),
   )
+
+  // Play-by-play tracking (uses counter for template variety, no extra rng calls)
+  const pbp = ctx.playByPlay
+  const qNum = quarterIndex + 1
+  let pbpCtr = pbp.length  // globally unique counter seed across quarters
+
+  // Quarter-break divider marks the start of this quarter
+  pbp.push({
+    id: `pbp-qbreak-${qNum}`,
+    quarter: qNum,
+    minute: 0,
+    type: 'quarter-break',
+    clubId: '',
+    commentary: `Quarter ${qNum}`,
+    isHighlight: false,
+  })
 
   for (let p = 0; p < possessions; p++) {
     const homeChance = adjustedHomeRating / (adjustedHomeRating + adjustedAwayRating)
@@ -1116,6 +1206,13 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
       if (!rng.chance(kickExecution)) {
         attackingStats[primaryStatIndex].turnovers++
         if (rng.chance(0.55)) attackingStats[primaryStatIndex].clangers++
+        pbp.push({
+          id: `pbp-${qNum}-${pbpCtr++}`,
+          quarter: qNum, minute: Math.floor((p / possessions) * 30),
+          type: 'turnover', clubId: attackClubId, playerId: primaryPlayer.id,
+          commentary: pickLine(PBP_TURNOVER_KICK, pbpCtr)(pbpAbbrev(primaryPlayer)),
+          isHighlight: true,
+        })
         continue
       }
     }
@@ -1136,11 +1233,31 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
         const tacklerIdx = defStats.findIndex((s) => s.playerId === tackler.id)
         attackingStats[primaryStatIndex].freesAgainst++
         if (tacklerIdx >= 0) defStats[tacklerIdx].freesFor++
+        pbp.push({
+          id: `pbp-${qNum}-${pbpCtr++}`,
+          quarter: qNum, minute: Math.floor((p / possessions) * 30),
+          type: 'free-kick',
+          clubId: homeWins ? awayClubId : homeClubId,
+          playerId: tacklerIdx >= 0 ? tackler.id : undefined,
+          defenderPlayerId: primaryPlayer.id, defenderClubId: attackClubId,
+          commentary: tacklerIdx >= 0
+            ? pickLine(PBP_FREE_KICK, pbpCtr)(pbpAbbrev(tackler))
+            : 'Free kick awarded',
+          detail: 'Holding the ball',
+          isHighlight: false,
+        })
         continue
       }
       const clearanceChance = clampChance(0.1 + primaryPlayer.attributes.clearance * 0.003 + primaryRatings.decisionMaking * 0.0015)
       if (rng.chance(clearanceChance)) {
         attackingStats[primaryStatIndex].clearances++
+        pbp.push({
+          id: `pbp-${qNum}-${pbpCtr++}`,
+          quarter: qNum, minute: Math.floor((p / possessions) * 30),
+          type: 'clearance', clubId: attackClubId, playerId: primaryPlayer.id,
+          commentary: pickLine(PBP_CLEARANCE, pbpCtr)(pbpAbbrev(primaryPlayer)),
+          isHighlight: false,
+        })
       }
     } else {
       const uncontestedRoll = 0.65 + (primaryRatings.decisionMaking + primaryRatings.agility) / 220
@@ -1168,6 +1285,21 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
       attackingStats[markerIdx].marks++
       if (rng.chance(clampChance(0.08 + marker.attributes.markingContested * 0.005))) {
         attackingStats[markerIdx].contestedMarks++
+        pbp.push({
+          id: `pbp-${qNum}-${pbpCtr++}`,
+          quarter: qNum, minute: Math.floor((p / possessions) * 30),
+          type: 'contested-mark', clubId: attackClubId, playerId: marker.id,
+          commentary: pickLine(PBP_CONTESTED_MARK, pbpCtr)(pbpAbbrev(marker)),
+          isHighlight: true,
+        })
+      } else {
+        pbp.push({
+          id: `pbp-${qNum}-${pbpCtr++}`,
+          quarter: qNum, minute: Math.floor((p / possessions) * 30),
+          type: 'mark', clubId: attackClubId, playerId: marker.id,
+          commentary: pickLine(PBP_MARK, pbpCtr)(pbpAbbrev(marker)),
+          isHighlight: false,
+        })
       }
     }
 
@@ -1203,6 +1335,24 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
       if (rng.chance(highContactChance)) {
         defStats[tacklerIdx].freesAgainst++
         attackingStats[primaryStatIndex].freesFor++
+        pbp.push({
+          id: `pbp-${qNum}-${pbpCtr++}`,
+          quarter: qNum, minute: Math.floor((p / possessions) * 30),
+          type: 'free-kick', clubId: attackClubId, playerId: primaryPlayer.id,
+          defenderPlayerId: tackler.id, defenderClubId: homeWins ? awayClubId : homeClubId,
+          commentary: pickLine(PBP_FREE_KICK, pbpCtr)(pbpAbbrev(primaryPlayer)),
+          detail: 'High contact tackle',
+          isHighlight: false,
+        })
+      } else {
+        pbp.push({
+          id: `pbp-${qNum}-${pbpCtr++}`,
+          quarter: qNum, minute: Math.floor((p / possessions) * 30),
+          type: 'tackle', clubId: homeWins ? awayClubId : homeClubId,
+          playerId: tackler.id, defenderPlayerId: primaryPlayer.id,
+          commentary: pickLine(PBP_TACKLE, pbpCtr)(pbpAbbrev(tackler), pbpAbbrev(primaryPlayer)),
+          isHighlight: false,
+        })
       }
     }
 
@@ -1230,6 +1380,15 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
       const i50Ratings = getGranularRatings(i50Player)
       attackingStats[i50Idx].insideFifties++
 
+      const i50Min = Math.floor((p / possessions) * 30)
+      pbp.push({
+        id: `pbp-${qNum}-${pbpCtr++}`,
+        quarter: qNum, minute: i50Min,
+        type: 'inside50', clubId: attackClubId, playerId: i50Player.id,
+        commentary: pickLine(PBP_INSIDE50, pbpCtr)(pbpAbbrev(i50Player)),
+        isHighlight: false,
+      })
+
       const scoreChance = clampChance(0.16 + i50Ratings.decisionMaking * 0.0015 + i50Ratings.kicking * 0.001)
       if (rng.chance(scoreChance)) {
         const scorer = pickScoringPlayer(rng, attackingPlayers, attClutchCtx, positionOverrides)
@@ -1246,24 +1405,52 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
           attackingStats[scorerIdx].goals++
           attackingStats[scorerIdx].scoreInvolvements++
 
-          if (i50Player.id !== scorer.id) {
+          const hasAssist = i50Player.id !== scorer.id
+          if (hasAssist) {
             attackingStats[i50Idx].goalAssists++
             attackingStats[i50Idx].scoreInvolvements++
           }
 
           keyEvents.push({
             quarter: quarterIndex + 1,
-            minute: Math.floor((p / possessions) * 30),
+            minute: i50Min,
             type: 'goal',
             description: `${scorer.firstName} ${scorer.lastName} kicks a goal`,
             playerId: scorer.id,
             clubId: attackClubId,
           })
+          pbp.push({
+            id: `pbp-${qNum}-${pbpCtr++}`,
+            quarter: qNum, minute: i50Min,
+            type: 'goal', clubId: attackClubId,
+            playerId: scorer.id,
+            receiverPlayerId: hasAssist ? i50Player.id : undefined,
+            commentary: pickLine(PBP_GOAL, pbpCtr)(
+              pbpAbbrev(scorer),
+              hasAssist ? pbpAbbrev(i50Player) : undefined,
+            ),
+            isHighlight: true,
+          })
         } else {
           if (homeWins) homeBehinds++
           else awayBehinds++
           attackingStats[scorerIdx].behinds++
+          pbp.push({
+            id: `pbp-${qNum}-${pbpCtr++}`,
+            quarter: qNum, minute: i50Min,
+            type: 'behind', clubId: attackClubId, playerId: scorer.id,
+            commentary: pickLine(PBP_BEHIND, pbpCtr)(pbpAbbrev(scorer)),
+            isHighlight: false,
+          })
         }
+      } else {
+        pbp.push({
+          id: `pbp-${qNum}-${pbpCtr++}`,
+          quarter: qNum, minute: i50Min,
+          type: 'miss', clubId: attackClubId, playerId: i50Player.id,
+          commentary: pickLine(PBP_MISS, pbpCtr)(pbpAbbrev(i50Player)),
+          isHighlight: false,
+        })
       }
     }
 
@@ -1293,6 +1480,13 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
       if (rng.chance(clampChance(0.3 + (100 - primaryRatings.decisionMaking) * 0.004))) {
         attackingStats[primaryStatIndex].clangers++
       }
+      pbp.push({
+        id: `pbp-${qNum}-${pbpCtr++}`,
+        quarter: qNum, minute: Math.floor((p / possessions) * 30),
+        type: 'turnover', clubId: attackClubId, playerId: primaryPlayer.id,
+        commentary: pickLine(PBP_TURNOVER_GENERAL, pbpCtr)(pbpAbbrev(primaryPlayer)),
+        isHighlight: false,
+      })
     }
 
     const interceptBaseChance = clampChance(0.03 + (100 - primaryRatings.kicking) * 0.0007 + (100 - primaryRatings.decisionMaking) * 0.0008)
@@ -1311,6 +1505,15 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
         ),
       ) ? 2 : 1
       defStats[intIdx].intercepts += interceptGain
+      pbp.push({
+        id: `pbp-${qNum}-${pbpCtr++}`,
+        quarter: qNum, minute: Math.floor((p / possessions) * 30),
+        type: 'intercept',
+        clubId: homeWins ? awayClubId : homeClubId,
+        playerId: interceptor.id, defenderPlayerId: primaryPlayer.id, defenderClubId: attackClubId,
+        commentary: pickLine(PBP_INTERCEPT, pbpCtr)(pbpAbbrev(interceptor)),
+        isHighlight: true,
+      })
     }
 
     if (rng.chance(0.03 + averageGranularRating(defendingPlayers, 'spoiling') * 0.00035)) {
@@ -1435,6 +1638,7 @@ export function finalizeMatch(ctx: MatchContext, skipUserSubForSide?: 'home' | '
     homePlayerStats: homeStats,
     awayPlayerStats: awayStats,
     keyEvents,
+    playByPlay: ctx.playByPlay,
     midMatchAdjustments: midMatchAdjustments.length > 0 ? midMatchAdjustments : undefined,
     midMatchInjuredPlayerIds: midMatchInjuredPlayerIds.size > 0 ? [...midMatchInjuredPlayerIds] : undefined,
     effectiveAggressionLevel: effectiveAggressionQuarters.length > 0 ? effectiveAggressionLevel : undefined,

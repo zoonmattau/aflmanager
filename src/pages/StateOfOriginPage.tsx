@@ -313,10 +313,12 @@ function MatchResultCard({
   evt,
   playerName,
   matchIndex,
+  onReplay,
 }: {
   evt: SpecialEventInstance
   playerName: (id: string) => string
   matchIndex: number
+  onReplay?: (evt: SpecialEventInstance) => void
 }) {
   if (!evt.result) return null
   const { teamAScore, teamBScore, userClubParticipants, bestOnGround } = evt.result
@@ -330,8 +332,15 @@ function MatchResultCard({
         <span className="text-xs font-medium text-muted-foreground">
           Game {matchIndex} · {new Date(evt.scheduledDate).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}
         </span>
-        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-          <MapPin className="h-3 w-3" />{evt.venue}
+        <div className="flex items-center gap-2">
+          {onReplay && (
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-xs gap-1" onClick={() => onReplay(evt)}>
+              <Play className="h-3 w-3" /> Replay
+            </Button>
+          )}
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <MapPin className="h-3 w-3" />{evt.venue}
+          </div>
         </div>
       </div>
       <CardContent className="pt-4 pb-4">
@@ -424,15 +433,18 @@ export function StateOfOriginPage() {
   const navigate = useNavigate()
   const specialEvents = useGameStore((s) => s.specialEvents)
   const players = useGameStore((s) => s.players)
-  const playerClubId = useGameStore((s) => s.playerClubId)
   const settings = useGameStore((s) => s.settings)
   const currentYear = useGameStore((s) => s.currentYear)
   const simSpecialEvent = useGameStore((s) => s.simSpecialEvent)
+  const getSpecialEventSimResult = useGameStore((s) => s.getSpecialEventSimResult)
 
-  // State for the live view — holds the event+result while watching
+  // State for the live view — holds the event+result while watching.
+  // `pending` = true means the result was computed locally and must be
+  // persisted via simSpecialEvent when the user finishes watching.
   const [liveMatch, setLiveMatch] = useState<{
     evt: SpecialEventInstance
     result: SpecialEventMatchResult
+    pending: boolean
   } | null>(null)
 
   const playerName = useCallback((id: string) => {
@@ -463,17 +475,26 @@ export function StateOfOriginPage() {
   const originEnabled = settings.specialEvents?.enabled && settings.specialEvents.events['state-of-origin']
 
   const handleWatch = useCallback((evt: SpecialEventInstance) => {
-    // Sim the event to store the result, then capture it for the live view
-    const { result } = simSpecialEvent(evt.id)
-    if (result) {
-      // After simSpecialEvent, read the updated event from the store
-      setLiveMatch({ evt, result })
+    if (evt.status === 'completed' && evt.result) {
+      // Already persisted — replay using stored result (no pending persist needed)
+      setLiveMatch({ evt, result: evt.result, pending: false })
+      return
     }
-  }, [simSpecialEvent])
+    // Upcoming — compute result locally WITHOUT persisting yet.
+    // It will be persisted only after the user finishes watching.
+    const result = getSpecialEventSimResult(evt.id)
+    if (result) {
+      setLiveMatch({ evt, result, pending: true })
+    }
+  }, [getSpecialEventSimResult])
 
   const handleLiveDone = useCallback(() => {
+    if (liveMatch?.pending) {
+      // User has finished watching — now persist the result
+      simSpecialEvent(liveMatch.evt.id, liveMatch.result)
+    }
     setLiveMatch(null)
-  }, [])
+  }, [liveMatch, simSpecialEvent])
 
   if (!originEnabled || sooEvents.length === 0) {
     return (
@@ -659,7 +680,7 @@ export function StateOfOriginPage() {
         <div className="space-y-3">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Results</h2>
           {completedEvents.map((evt, i) => (
-            <MatchResultCard key={evt.id} evt={evt} playerName={playerName} matchIndex={i + 1} />
+            <MatchResultCard key={evt.id} evt={evt} playerName={playerName} matchIndex={i + 1} onReplay={handleWatch} />
           ))}
         </div>
       )}

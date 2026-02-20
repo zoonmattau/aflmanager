@@ -446,6 +446,8 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
       email: true,
       dailyDigest: false,
     },
+    autoResolveMatches: false,
+    liveSimMode: 'always-live',
   },
   stateLeagueAffiliations: {
     allowCustomAffiliations: false,
@@ -491,6 +493,8 @@ export function createDefaultSettings(): GameSettings {
     },
     notifications: {
       signings: { ...DEFAULT_GAME_SETTINGS.notifications.signings },
+      autoResolveMatches: DEFAULT_GAME_SETTINGS.notifications.autoResolveMatches,
+      liveSimMode: DEFAULT_GAME_SETTINGS.notifications.liveSimMode,
     } satisfies NotificationSettings,
     stateLeagueAffiliations: {
       allowCustomAffiliations: DEFAULT_GAME_SETTINGS.stateLeagueAffiliations.allowCustomAffiliations,

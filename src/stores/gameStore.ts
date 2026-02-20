@@ -36,6 +36,7 @@ import type {
   PlayerTrainingFocus,
 } from '@/types/player'
 import type { Match } from '@/types/match'
+import type { PostMatchReviewPayload, LadderSnapshot } from '@/types/postMatch'
 import type { Season, LadderEntry, Fixture, MatchDay } from '@/types/season'
 import type { ClubGameplan } from '@/types/club'
 import type { GameCalendar } from '@/types/calendar'
@@ -259,6 +260,7 @@ import {
   computePhaseForDate,
   advanceHalfDay as advanceHalfDayEngine,
   advanceToNextMilestone as advanceToNextMilestoneEngine,
+  getNextMilestone,
   validateOffseasonProgression,
 } from '@/engine/offseason/offseasonCalendar'
 import { averageAttributes } from '@/engine/contracts/negotiation'
@@ -1546,15 +1548,17 @@ interface GameActions {
 
   // Special events
   scheduleSpecialEvents: () => void
-  simSpecialEvent: (eventId: string) => { result: import('@/types/specialEvents').SpecialEventMatchResult | null }
+  /** Simulate a special event match locally without persisting the result. */
+  getSpecialEventSimResult: (eventId: string) => import('@/types/specialEvents').SpecialEventMatchResult | null
+  simSpecialEvent: (eventId: string, precomputed?: import('@/types/specialEvents').SpecialEventMatchResult) => { result: import('@/types/specialEvents').SpecialEventMatchResult | null }
   advanceDateToNextCalendarEvent: () => void
   advanceOneDay: () => void
 
   // Season progression
-  simCurrentRound: (options?: { internal?: boolean; precomputedUserMatch?: Match }) => { userMatch: Match | null }
+  simCurrentRound: (options?: { internal?: boolean; precomputedUserMatch?: Match; precomputedMatches?: Match[] }) => { userMatch: Match | null; reviewPayload: PostMatchReviewPayload | null }
   simToEnd: () => void
   startFinals: () => void
-  simFinalsRound: () => { userMatch: Match | null; seasonOver: boolean }
+  simFinalsRound: () => { userMatch: Match | null; seasonOver: boolean; reviewPayload: PostMatchReviewPayload | null }
 
   // Membership management
   setMembershipTierPrice: (clubId: string, tierId: MembershipTierId, price: number) => void
@@ -5990,8 +5994,35 @@ export const useGameStore = create<GameStore>()(
         if (progressionError) return { success: false, error: progressionError }
         startSimulationStatus(set as (fn: (state: GameState) => void) => void, 'Offseason Simulation', 'Advancing to next milestone...')
         try {
-        const nextCal = advanceToNextMilestoneEngine(state.offseasonState.calendarState)
-        const nextDate = nextCal.currentDate
+        // Next unresolved special-event (e.g. post-season SOO) in the main calendar
+        const nextSpecialEvent = state.calendar.events.find(
+          (e) => !e.resolved && e.type === 'special-event' && e.date > state.currentDate,
+        )
+        // Next off-season milestone (null if none remain)
+        const nextMilestoneObj = getNextMilestone(state.offseasonState.calendarState)
+        // Pick whichever target comes first; fall back to the other if one is absent
+        let nextDate: string
+        let jumpToSpecialEvent = false
+        if (nextSpecialEvent && nextMilestoneObj) {
+          if (nextSpecialEvent.date <= nextMilestoneObj.date) {
+            nextDate = nextSpecialEvent.date
+            jumpToSpecialEvent = true
+          } else {
+            nextDate = nextMilestoneObj.date
+          }
+        } else if (nextSpecialEvent) {
+          nextDate = nextSpecialEvent.date
+          jumpToSpecialEvent = true
+        } else if (nextMilestoneObj) {
+          nextDate = nextMilestoneObj.date
+        } else {
+          // Nothing to advance to
+          finishSimulationStatus(set as (fn: (state: GameState) => void) => void)
+          return { success: false, error: 'No upcoming milestones or events' }
+        }
+        const nextCal = jumpToSpecialEvent
+          ? { ...state.offseasonState.calendarState, currentDate: nextDate, halfDay: 'AM' as const }
+          : advanceToNextMilestoneEngine(state.offseasonState.calendarState)
         const expired = expireTradeInboxItems(state.tradeInbox, nextDate)
         set((s) => {
           if (!s.offseasonState?.calendarState) return
@@ -6002,7 +6033,7 @@ export const useGameStore = create<GameStore>()(
           s.currentDate = nextDate
           s.tradeInbox = expired
         })
-        updateSimulationStatus(set as (fn: (state: GameState) => void) => void, `Reached milestone on ${nextDate}.`)
+        updateSimulationStatus(set as (fn: (state: GameState) => void) => void, `Reached ${jumpToSpecialEvent ? 'event' : 'milestone'} on ${nextDate}.`)
         return { success: true }
         } finally {
           finishSimulationStatus(set as (fn: (state: GameState) => void) => void)
@@ -8132,7 +8163,18 @@ export const useGameStore = create<GameStore>()(
         })
       },
 
-      simSpecialEvent: (eventInstanceId: string) => {
+      getSpecialEventSimResult: (eventInstanceId: string) => {
+        const state = get()
+        if (!state.specialEvents) return null
+        const idx = state.specialEvents.events.findIndex((e) => e.id === eventInstanceId)
+        if (idx < 0) return null
+        const instance = state.specialEvents.events[idx]!
+        if (instance.status !== 'scheduled') return null
+        const rng = new SeededRNG(state.rngSeed + eventInstanceId.length * 7919 + idx * 31)
+        return simulateSpecialMatch(instance, state.players, rng, state.playerClubId)
+      },
+
+      simSpecialEvent: (eventInstanceId: string, precomputedResult?: import('@/types/specialEvents').SpecialEventMatchResult) => {
         const state = get()
         if (!state.specialEvents) return { result: null }
 
@@ -8143,7 +8185,7 @@ export const useGameStore = create<GameStore>()(
         if (instance.status !== 'scheduled') return { result: null }
 
         const rng = new SeededRNG(state.rngSeed + eventInstanceId.length * 7919 + idx * 31)
-        const result = simulateSpecialMatch(instance, state.players, rng, state.playerClubId)
+        const result = precomputedResult ?? simulateSpecialMatch(instance, state.players, rng, state.playerClubId)
 
         set((s) => {
           if (!s.specialEvents) return
@@ -8221,10 +8263,26 @@ export const useGameStore = create<GameStore>()(
        */
       advanceDateToNextCalendarEvent: () => {
         set((s) => {
+          // If the current date is already at (or past) an unresolved match event,
+          // don't advance any further — the match must be played first.
+          const blockedByMatch = s.calendar.events.some(
+            (e) => !e.resolved && (e.type === 'match' || e.type === 'special-event') && e.date <= s.currentDate,
+          )
+          if (blockedByMatch) return
+
           const next = s.calendar.events.find(
             (e) => !e.resolved && e.date > s.currentDate,
           )
-          const nextDate = next?.date ?? s.settings.seasonStartDate ?? s.currentDate
+          if (!next) return
+
+          // If the next event is past an unresolved match, only advance to that match.
+          const nextUnresolvedMatch = s.calendar.events.find(
+            (e) => !e.resolved && (e.type === 'match' || e.type === 'special-event') && e.date > s.currentDate,
+          )
+          const nextDate = nextUnresolvedMatch && nextUnresolvedMatch.date <= next.date
+            ? nextUnresolvedMatch.date
+            : next.date
+
           s.currentDate = nextDate
           s.calendar.currentDate = nextDate
         })
@@ -8232,16 +8290,26 @@ export const useGameStore = create<GameStore>()(
 
       advanceOneDay: () => {
         set((s) => {
+          // Don't advance past an unresolved match event
+          const blockedByMatch = s.calendar.events.some(
+            (e) => !e.resolved && (e.type === 'match' || e.type === 'special-event') && e.date <= s.currentDate,
+          )
+          if (blockedByMatch) return
           const tomorrow = addDays(s.currentDate, 1)
-          s.currentDate = tomorrow
-          s.calendar.currentDate = tomorrow
+          // Stop at an upcoming match date rather than skipping past it
+          const nextMatch = s.calendar.events.find(
+            (e) => !e.resolved && (e.type === 'match' || e.type === 'special-event') && e.date > s.currentDate && e.date <= tomorrow,
+          )
+          const nextDate = nextMatch ? nextMatch.date : tomorrow
+          s.currentDate = nextDate
+          s.calendar.currentDate = nextDate
         })
       },
 
-      simCurrentRound: (options?: { internal?: boolean; precomputedUserMatch?: Match }) => {
+      simCurrentRound: (options?: { internal?: boolean; precomputedUserMatch?: Match; precomputedMatches?: Match[] }) => {
         const internal = options?.internal === true
         let state = get()
-        if (state.simulation.active && !internal) return { userMatch: null }
+        if (state.simulation.active && !internal) return { userMatch: null, reviewPayload: null }
         if (!internal) {
           startSimulationStatus(
             set as (fn: (state: GameState) => void) => void,
@@ -8251,8 +8319,20 @@ export const useGameStore = create<GameStore>()(
           appendSimulationLog(set as (fn: (state: GameState) => void) => void, 'Processing fixtures, injuries, morale, tribunal, and ladder updates.')
         }
         try {
+        // Auto-sim special events that were missed (scheduled BEFORE today's date).
+        // Events scheduled for the current week or later are left for the user to
+        // watch on the State of Origin page — they'll be caught here next round if skipped.
+        if (state.specialEvents) {
+          for (const spe of state.specialEvents.events) {
+            if (spe.status === 'scheduled' && spe.scheduledDate < state.currentDate) {
+              get().simSpecialEvent(spe.id)
+            }
+          }
+          state = get()
+        }
+
         const round = state.season.rounds[state.currentRound]
-        if (!round) return { userMatch: null }
+        if (!round) return { userMatch: null, reviewPayload: null }
         const preRoundCareerStats: Record<string, Pick<Player['careerStats'], 'gamesPlayed' | 'goals' | 'disposals' | 'marks' | 'tackles'>> = {}
         for (const player of Object.values(state.players)) {
           preRoundCareerStats[player.id] = {
@@ -8400,6 +8480,16 @@ export const useGameStore = create<GameStore>()(
             result.matches.push(precomputed)
           }
           result.userMatch = precomputed
+        }
+
+        // Replace any other precomputed matches (e.g. non-user fixtures watched/simmed individually)
+        if (options?.precomputedMatches) {
+          for (const pm of options.precomputedMatches) {
+            const idx = result.matches.findIndex(
+              (m) => m !== null && m.homeClubId === pm.homeClubId && m.awayClubId === pm.awayClubId,
+            )
+            if (idx >= 0) result.matches[idx] = pm
+          }
         }
 
         // Accumulate venue revenue
@@ -9303,6 +9393,16 @@ export const useGameStore = create<GameStore>()(
             }
           }
 
+          // Resolve all calendar events up to and including the round just played.
+          // Without this, match events remain "upcoming" forever since currentDate
+          // jumps straight to the next round's date.
+          const playedRoundDate = s.currentDate
+          for (const evt of s.calendar.events) {
+            if (!evt.resolved && evt.date <= playedRoundDate) {
+              evt.resolved = true
+            }
+          }
+
           const nextRound = s.currentRound + 1
           s.currentRound = nextRound
           const seasonStartDate = s.settings.seasonStartDate ?? '2026-03-20'
@@ -9406,22 +9506,41 @@ export const useGameStore = create<GameStore>()(
           })
         }
 
-        // Auto-sim any special events whose scheduled date has passed
-        const postRoundState = get()
-        if (postRoundState.specialEvents) {
-          for (const spe of postRoundState.specialEvents.events) {
-            if (spe.status === 'scheduled' && spe.scheduledDate <= postRoundState.currentDate) {
-              get().simSpecialEvent(spe.id)
-            }
-          }
-        }
+        // Special events whose date has now passed but which the user never watched
+        // are auto-simmed at the START of the NEXT simCurrentRound call (see below),
+        // giving the user a window between rounds to visit the SOO page and watch them.
 
         if (!internal) {
           updateSimulationStatus(set as (fn: (state: GameState) => void) => void, `Round ${round.number} complete.`)
         }
         // Refresh betting markets after each round (no-op if betting disabled)
         if (!internal) get().refreshBettingMarkets()
-        return { userMatch: result.userMatch }
+        let reviewPayload: PostMatchReviewPayload | null = null
+        if (!internal && result.userMatch?.result) {
+          const um = result.userMatch
+          const finalState = get()
+          const ladder = finalState.ladder
+          const matchReport = (finalState.history.matchReports ?? []).find(r => r.matchId === um.id) ?? null
+          const milestones = (finalState.history.milestones ?? []).filter(
+            m => m.round === um.round && m.year === finalState.currentYear && m.clubId === finalState.playerClubId,
+          )
+          const homeIdx = ladder.findIndex(e => e.clubId === um.homeClubId)
+          const awayIdx = ladder.findIndex(e => e.clubId === um.awayClubId)
+          const homeEntry = homeIdx >= 0 ? ladder[homeIdx] : null
+          const awayEntry = awayIdx >= 0 ? ladder[awayIdx] : null
+          const ladderSnapshot: LadderSnapshot | null = homeEntry && awayEntry ? {
+            homeRank: homeIdx + 1,
+            awayRank: awayIdx + 1,
+            homePoints: homeEntry.points,
+            awayPoints: awayEntry.points,
+            homePercentage: homeEntry.percentage,
+            awayPercentage: awayEntry.percentage,
+            homePositionBefore: homeIdx + 1,
+            awayPositionBefore: awayIdx + 1,
+          } : null
+          reviewPayload = { userMatch: um, matchReport, milestones, ladderSnapshot }
+        }
+        return { userMatch: result.userMatch, reviewPayload }
         } finally {
           if (!internal) {
             finishSimulationStatus(set as (fn: (state: GameState) => void) => void)
@@ -9464,7 +9583,7 @@ export const useGameStore = create<GameStore>()(
 
       simFinalsRound: () => {
         const preState = get()
-        if (preState.simulation.active) return { userMatch: null, seasonOver: false }
+        if (preState.simulation.active) return { userMatch: null, seasonOver: false, reviewPayload: null }
         startSimulationStatus(
           set as (fn: (state: GameState) => void) => void,
           'Finals Simulation',
@@ -9517,7 +9636,7 @@ export const useGameStore = create<GameStore>()(
           const round = generateFinalsRound(finalsWeek, state.ladder, finalsMatches, state.clubs, format, state.season.finalsRounds, state.settings.finals, state.currentYear)
 
           if (!round || round.fixtures.length === 0) {
-            return { userMatch: null, seasonOver: true }
+            return { userMatch: null, seasonOver: true, reviewPayload: null }
           }
 
           // Add round to season
@@ -10081,10 +10200,35 @@ export const useGameStore = create<GameStore>()(
           })
 
           get().refreshBettingMarkets()
-          return { userMatch: result.userMatch, seasonOver }
+          let finalsReviewPayload: PostMatchReviewPayload | null = null
+          if (result.userMatch?.result) {
+            const um = result.userMatch
+            const finalState = get()
+            const ladder = finalState.ladder
+            const matchReport = (finalState.history.matchReports ?? []).find(r => r.matchId === um.id) ?? null
+            const milestones = (finalState.history.milestones ?? []).filter(
+              m => m.round === finalsRoundMarker && m.year === finalState.currentYear && m.clubId === finalState.playerClubId,
+            )
+            const homeIdx = ladder.findIndex(e => e.clubId === um.homeClubId)
+            const awayIdx = ladder.findIndex(e => e.clubId === um.awayClubId)
+            const homeEntry = homeIdx >= 0 ? ladder[homeIdx] : null
+            const awayEntry = awayIdx >= 0 ? ladder[awayIdx] : null
+            const ladderSnapshot: LadderSnapshot | null = homeEntry && awayEntry ? {
+              homeRank: homeIdx + 1,
+              awayRank: awayIdx + 1,
+              homePoints: homeEntry.points,
+              awayPoints: awayEntry.points,
+              homePercentage: homeEntry.percentage,
+              awayPercentage: awayEntry.percentage,
+              homePositionBefore: homeIdx + 1,
+              awayPositionBefore: awayIdx + 1,
+            } : null
+            finalsReviewPayload = { userMatch: um, matchReport, milestones, ladderSnapshot }
+          }
+          return { userMatch: result.userMatch, seasonOver, reviewPayload: finalsReviewPayload }
         } catch {
           // Finals module not available yet
-          return { userMatch: null, seasonOver: false }
+          return { userMatch: null, seasonOver: false, reviewPayload: null }
         }
         } finally {
           finishSimulationStatus(set as (fn: (state: GameState) => void) => void)
@@ -10260,6 +10404,8 @@ export const useGameStore = create<GameStore>()(
               email: true,
               dailyDigest: false,
             },
+            autoResolveMatches: false,
+            liveSimMode: 'always-live',
           }
         }
         const notificationSettings = merged.settings?.notifications as unknown as Record<string, unknown> | undefined

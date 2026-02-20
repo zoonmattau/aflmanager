@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Sun, Moon, Calendar, Hash, Save, Home, Menu, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTheme } from '@/components/layout/ThemeProvider'
 import { useGameStore } from '@/stores/gameStore'
 import { useAppStore } from '@/stores/appStore'
+import { useMatchReadyStore } from '@/stores/matchReadyStore'
 import { Badge } from '@/components/ui/badge'
 import {
   DropdownMenu,
@@ -31,10 +32,22 @@ export function TopBar() {
   const phase = useGameStore((s) => s.phase)
   const saveGame = useGameStore((s) => s.saveGame)
   const meta = useGameStore((s) => s.meta)
+  const calendar = useGameStore((s) => s.calendar)
+  const simulation = useGameStore((s) => s.simulation)
   const setScreen = useAppStore((s) => s.setScreen)
+  const { setDismissed } = useMatchReadyStore()
 
   const [showMainMenuConfirm, setShowMainMenuConfirm] = useState(false)
   const [showSavedBadge, setShowSavedBadge] = useState(false)
+
+  // True when there is a pending match event for today or earlier (and no simulation running)
+  const isMatchDay = useMemo(
+    () =>
+      (phase === 'regular-season' || phase === 'finals') &&
+      !simulation.active &&
+      calendar.events.some((e) => !e.resolved && e.type === 'match' && e.date <= (currentDate ?? '')),
+    [phase, simulation.active, calendar.events, currentDate],
+  )
 
   const phaseLabel = {
     'setup': 'Setup',
@@ -85,6 +98,16 @@ export function TopBar() {
             </Badge>
           )}
           <Badge variant="outline">{phaseLabel}</Badge>
+          {isMatchDay && (
+            <button
+              type="button"
+              onClick={() => setDismissed(false)}
+              className="inline-flex animate-pulse cursor-pointer items-center rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400 transition-colors hover:bg-amber-500/25"
+              title="Match Day — click to open match options"
+            >
+              Match Day
+            </button>
+          )}
           {showSavedBadge && (
             <Badge variant="secondary" className="text-green-500 animate-in fade-in">
               Saved

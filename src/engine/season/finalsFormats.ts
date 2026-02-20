@@ -783,6 +783,75 @@ export function generateStandardKnockout(n: number): FinalsFormat {
   }
 }
 
+// ── Finals zone derivation ─────────────────────────────────────────────────
+
+export interface FinalsZone {
+  /** 1-indexed ranks belonging to this zone */
+  ranks: number[]
+  /** False if these teams have a non-elimination first game (or a bye) */
+  isElimination: boolean
+  /** Earliest week number any team in this zone plays (Infinity = has a bye) */
+  firstWeek: number
+  /** Zone index: 0 = best (plays latest / non-elimination), higher = more peril */
+  zoneIndex: number
+}
+
+/**
+ * Derives distinct qualification zones from a finals format by inspecting
+ * when each seeded rank first plays and whether that game is elimination.
+ *
+ * Returns zones sorted best-to-worst (index 0 = most advantaged).
+ * Examples:
+ *   Top 8  → [{1-4, non-elim}, {5-8, elim}]
+ *   Top 10 → [{1-4, non-elim wk2}, {5-6, elim wk2}, {7-10, elim wk1}]
+ *   Top 6  → [{1-2, bye}, {3-6, elim}]
+ */
+export function getFinalsZones(format: FinalsFormat): FinalsZone[] {
+  const rankFirst = new Map<number, { firstWeek: number; isElimination: boolean }>()
+
+  for (const week of [...format.weeks].sort((a, b) => a.weekNumber - b.weekNumber)) {
+    for (const matchup of week.matchups) {
+      for (const source of [matchup.home, matchup.away]) {
+        if (source.type !== 'ladder' || source.rank == null) continue
+        const rank = source.rank
+        if (rank < 1 || rank > format.qualifyingTeams) continue
+        if (!rankFirst.has(rank)) {
+          rankFirst.set(rank, { firstWeek: week.weekNumber, isElimination: matchup.isElimination })
+        }
+      }
+    }
+  }
+
+  // Group by (firstWeek, isElimination)
+  const zoneMap = new Map<string, { firstWeek: number; isElimination: boolean; ranks: number[] }>()
+  for (const [rank, info] of rankFirst) {
+    const key = `${info.firstWeek}-${info.isElimination}`
+    if (!zoneMap.has(key)) zoneMap.set(key, { ...info, ranks: [] })
+    zoneMap.get(key)!.ranks.push(rank)
+  }
+
+  // Ranks that never appear with a fixed ladder source (i.e. they have a bye)
+  const byeRanks: number[] = []
+  for (let r = 1; r <= format.qualifyingTeams; r++) {
+    if (!rankFirst.has(r)) byeRanks.push(r)
+  }
+  if (byeRanks.length > 0) {
+    zoneMap.set('bye', { firstWeek: Infinity, isElimination: false, ranks: byeRanks })
+  }
+
+  // Sort: best zone first = plays latest (higher week), then non-elim before elim
+  const sorted = [...zoneMap.values()].sort((a, b) => {
+    if (b.firstWeek !== a.firstWeek) return b.firstWeek - a.firstWeek
+    return a.isElimination === b.isElimination ? 0 : a.isElimination ? 1 : -1
+  })
+
+  return sorted.map((z, i) => ({
+    ...z,
+    ranks: [...z.ranks].sort((a, b) => a - b),
+    zoneIndex: i,
+  }))
+}
+
 /**
  * Returns the effective finals format reflecting the qualifying teams setting.
  * For presets: if the slider matches the preset, use it; otherwise generate a knockout.

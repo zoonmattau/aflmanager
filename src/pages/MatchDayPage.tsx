@@ -1,4 +1,5 @@
-import { useMemo, useState, useCallback } from 'react'
+import { useMemo, useState, useCallback, useEffect } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { h2hKey, isRivalryMatch } from '@/engine/history/h2hTracker'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -12,17 +13,15 @@ import {
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
+import { simulateMatch } from '@/engine/match/simulateMatch'
 import type { SimulateMatchInput } from '@/engine/match/simulateMatch'
 import { LiveMatchView } from '@/components/match/LiveMatchView'
+import { PostMatchBoxScore } from '@/components/match/PostMatchBoxScore'
+import { selectBestLineup } from '@/engine/ai/lineupSelection'
 import { MatchReportModal } from '@/components/match/MatchReportModal'
+import { PlayByPlayPanel } from '@/components/match/PlayByPlayPanel'
+import { PostMatchReview } from '@/components/match/PostMatchReview'
+import type { PostMatchReviewPayload } from '@/types/postMatch'
 import { getOverallRating } from '@/engine/player/playerRating'
 import { VENUES } from '@/data/venues'
 import type { Club } from '@/types/club'
@@ -56,6 +55,7 @@ import {
   ChevronRight,
   Users,
   Eye,
+  Zap,
 } from 'lucide-react'
 
 const EMPTY_H2H: Record<string, import('@/types/history').H2HRecord> = {}
@@ -135,6 +135,11 @@ function getFixtureResult(matchResults: Match[], roundIdx: number, fixture: Fixt
 
 function getFixtureKey(fixture: Fixture): string {
   return `${fixture.homeClubId}__${fixture.awayClubId}__${fixture.matchDay ?? 'Saturday-Twilight'}__${fixture.scheduledTime ?? ''}__${fixture.venue}`
+}
+
+/** Lightweight key used for the resolved-matches map (unique within a round). */
+function fixtureKey(fixture: Fixture): string {
+  return `${fixture.homeClubId}-${fixture.awayClubId}`
 }
 
 type EditableFixtureForm = {
@@ -326,6 +331,9 @@ function computeWinProbabilities(args: {
 }
 
 export function MatchDayPage() {
+  const navigate = useNavigate()
+  const location = useLocation()
+
   const playerClubId = useGameStore((s) => s.playerClubId)
   const clubs = useGameStore((s) => s.clubs)
   const players = useGameStore((s) => s.players)
@@ -335,15 +343,20 @@ export function MatchDayPage() {
   const matchResults = useGameStore((s) => s.matchResults)
   const ladder = useGameStore((s) => s.ladder)
   const rngSeed = useGameStore((s) => s.rngSeed)
+  const currentDate = useGameStore((s) => s.currentDate)
   const simCurrentRound = useGameStore((s) => s.simCurrentRound)
   const updateFixtureGame = useGameStore((s) => s.updateFixtureGame)
   const moveFixtureInRound = useGameStore((s) => s.moveFixtureInRound)
   const swapFixturesInRound = useGameStore((s) => s.swapFixturesInRound)
 
+  const selectedLineup = useGameStore((s) => s.selectedLineup)
+  const weeklyGameplans = useGameStore((s) => s.weeklyGameplans)
+
   const matchReports = useGameStore((s) => s.history.matchReports)
   const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
 
   const [lastMatchResult, setLastMatchResult] = useState<Match | null>(null)
+  const [reviewPayload, setReviewPayload] = useState<PostMatchReviewPayload | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
   const [viewingRound, setViewingRound] = useState<number | null>(null)
   const [selectedFixtureKey, setSelectedFixtureKey] = useState<string | null>(null)
@@ -354,8 +367,44 @@ export function MatchDayPage() {
   const [editorNotice, setEditorNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null)
   const [fixtureEditorOpen, setFixtureEditorOpen] = useState<boolean>(false)
   const [liveMatchActive, setLiveMatchActive] = useState(false)
+  // stepThrough mode: quarters now start paused automatically via LiveMatchView
+  const [liveOtherMatches, setLiveOtherMatches] = useState<Match[]>([])
 
-  const displayRoundIdx = viewingRound ?? currentRound
+  // Per-fixture watch/sim state for non-user matches
+  const [resolvedMatches, setResolvedMatches] = useState<Map<string, Match>>(new Map())
+  const [watchingSpectator, setWatchingSpectator] = useState<{
+    fixture: Fixture
+    fixtureIndex: number
+    simInput: SimulateMatchInput
+  } | null>(null)
+
+  // Auto-trigger live/step mode when navigated here from the MatchReadyModal
+  const autoMode = (location.state as { autoMode?: string } | null)?.autoMode ?? null
+  const roundPlayedForAutoMode = matchResults.some((m) => m.round === currentRound && m.result !== null)
+
+  useEffect(() => {
+    if (!autoMode || roundPlayedForAutoMode) return
+    if (autoMode === 'live' || autoMode === 'step') {
+      setLiveMatchActive(true)
+    }
+    // Clear navigation state so back-navigation doesn't re-trigger
+    navigate('/fixture', { replace: true, state: {} })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoMode])
+
+  // Reset per-fixture resolved state whenever the round advances
+  useEffect(() => {
+    setResolvedMatches(new Map())
+    setWatchingSpectator(null)
+  }, [currentRound])
+
+  // Default to the last played round when the current round hasn't started yet.
+  // After simCurrentRound(), currentRound advances to the next (unplayed) round —
+  // we want users to see the results they just generated, not the empty upcoming round.
+  const currentRoundHasResults = matchResults.some((m) => m.round === currentRound && m.result !== null)
+  const defaultRound = !currentRoundHasResults && currentRound > 0 ? currentRound - 1 : currentRound
+
+  const displayRoundIdx = viewingRound ?? defaultRound
   const round = season?.rounds?.[displayRoundIdx]
   const isCurrentRound = displayRoundIdx === currentRound
   const canEditFixture = currentRound === 0 && !matchResults.some((m) => m.result !== null)
@@ -506,11 +555,36 @@ export function MatchDayPage() {
     )
   }
 
+  // Post-match review gate — renders instead of fixture list until dismissed
+  if (reviewPayload) {
+    return (
+      <PostMatchReview
+        payload={reviewPayload}
+        clubs={clubs}
+        players={players}
+        playerClubId={playerClubId}
+        onContinue={() => setReviewPayload(null)}
+      />
+    )
+  }
+
   const roundPlayed = matchResults.some((m) => m.round === displayRoundIdx && m.result !== null)
+
+  // The earliest match in this round (Thursday games start the week)
+  const earliestRoundMatchDate = useMemo(() => {
+    if (!round?.fixtures?.length || !settings?.seasonStartDate) return null
+    const dates = round.fixtures.map((f) =>
+      getFixtureDateIso(settings.seasonStartDate, displayRoundIdx, f.matchDay),
+    )
+    return dates.reduce((min, d) => (d < min ? d : min))
+  }, [round, displayRoundIdx, settings?.seasonStartDate])
+
+  // Buttons are live only when the game date has reached the first match of this round
+  const isMatchDay = earliestRoundMatchDate ? (currentDate ?? '') >= earliestRoundMatchDate : true
 
   const setDisplayRound = (idx: number) => {
     const clamped = Math.max(0, Math.min(season.rounds.length - 1, idx))
-    setViewingRound(clamped === currentRound ? null : clamped)
+    setViewingRound(clamped === defaultRound ? null : clamped)
     setEditorFixtureIndex(0)
     setEditorForm(null)
     setSwapTargetIndex('')
@@ -574,20 +648,112 @@ export function MatchDayPage() {
   }
 
   const handleSimRound = () => {
-    const result = simCurrentRound()
-    if (result.userMatch) setLastMatchResult(result.userMatch)
+    const result = simCurrentRound({
+      precomputedMatches: resolvedMatches.size > 0 ? [...resolvedMatches.values()] : undefined,
+    })
+    if (result.reviewPayload) {
+      setReviewPayload(result.reviewPayload)
+    } else if (result.userMatch) {
+      setLastMatchResult(result.userMatch)
+    }
   }
 
   const handlePlayLive = () => {
+    // Pre-simulate all other fixtures in this round so the user can see concurrent
+    // scores while playing their own game live. Uses the exact same seeds that
+    // simCurrentRound will use, so results will match when the round is committed.
+    if (round) {
+      const otherMatches: Match[] = []
+      round.fixtures.forEach((fixture, i) => {
+        if (fixture.homeClubId === playerClubId || fixture.awayClubId === playerClubId) return
+        const match = simulateMatch({
+          homeClubId: fixture.homeClubId,
+          awayClubId: fixture.awayClubId,
+          venue: fixture.venue,
+          venueId: fixture.venueId,
+          matchDay: fixture.matchDay,
+          round: currentRound,
+          players,
+          clubs,
+          seed: rngSeed + currentRound * 100 + i,
+          matchRules: settings.matchRules,
+          realism: settings.realism,
+          injuryFrequency: settings.injuryFrequency,
+        })
+        otherMatches.push(match)
+      })
+      setLiveOtherMatches(otherMatches)
+    }
     setLiveMatchActive(true)
   }
 
+  const handleSimOtherFixture = useCallback((fixture: Fixture) => {
+    if (!round) return
+    const fixtureIdx = round.fixtures.findIndex(
+      (f) => f.homeClubId === fixture.homeClubId && f.awayClubId === fixture.awayClubId,
+    )
+    const match = simulateMatch({
+      homeClubId: fixture.homeClubId,
+      awayClubId: fixture.awayClubId,
+      venue: fixture.venue,
+      venueId: fixture.venueId,
+      matchDay: fixture.matchDay,
+      round: currentRound,
+      players,
+      clubs,
+      seed: rngSeed + currentRound * 100 + fixtureIdx,
+      matchRules: settings.matchRules,
+      realism: settings.realism,
+      injuryFrequency: settings.injuryFrequency,
+    })
+    setResolvedMatches((prev) => new Map(prev).set(fixtureKey(fixture), match))
+  }, [round, currentRound, players, clubs, rngSeed, settings])
+
+  const handleWatchOtherFixture = useCallback((fixture: Fixture) => {
+    if (!round) return
+    const fixtureIdx = round.fixtures.findIndex(
+      (f) => f.homeClubId === fixture.homeClubId && f.awayClubId === fixture.awayClubId,
+    )
+    setWatchingSpectator({
+      fixture,
+      fixtureIndex: fixtureIdx,
+      simInput: {
+        homeClubId: fixture.homeClubId,
+        awayClubId: fixture.awayClubId,
+        venue: fixture.venue,
+        venueId: fixture.venueId,
+        matchDay: fixture.matchDay,
+        round: currentRound,
+        players,
+        clubs,
+        seed: rngSeed + currentRound * 100 + fixtureIdx,
+        matchRules: settings.matchRules,
+        realism: settings.realism,
+        injuryFrequency: settings.injuryFrequency,
+      },
+    })
+  }, [round, currentRound, players, clubs, rngSeed, settings])
+
+  const handleSpectatorComplete = useCallback((match: Match) => {
+    if (!watchingSpectator) return
+    setResolvedMatches((prev) => new Map(prev).set(fixtureKey(watchingSpectator.fixture), match))
+    setWatchingSpectator(null)
+  }, [watchingSpectator])
+
   const handleLiveMatchComplete = useCallback((match: Match) => {
     // Route through the full post-round pipeline via simCurrentRound
-    const result = simCurrentRound({ precomputedUserMatch: match })
+    const result = simCurrentRound({
+      precomputedUserMatch: match,
+      precomputedMatches: resolvedMatches.size > 0 ? [...resolvedMatches.values()] : undefined,
+    })
     setLiveMatchActive(false)
-    setLastMatchResult(result.userMatch ?? match)
-  }, [simCurrentRound])
+    setLiveOtherMatches([])
+    if (result.reviewPayload) {
+      setReviewPayload(result.reviewPayload)
+    } else {
+      setLastMatchResult(result.userMatch ?? match)
+    }
+  }, [simCurrentRound, resolvedMatches])
 
   // Build SimulateMatchInput for the user's fixture (used by LiveMatchView)
   const userFixtureSimInput: SimulateMatchInput | null = useMemo(() => {
@@ -608,6 +774,46 @@ export function MatchDayPage() {
       injuryFrequency: settings.injuryFrequency,
     }
   }, [playerFixture, round, currentRound, players, clubs, rngSeed, settings])
+
+  // Lineup data for the field view
+  const opponentClubId = playerFixture
+    ? playerFixture.homeClubId === playerClubId
+      ? playerFixture.awayClubId
+      : playerFixture.homeClubId
+    : null
+
+  const userLineupForField = useMemo<Record<string, string>>(() => {
+    if (!playerClubId || !selectedLineup) return {}
+    // Only return on-field slots (exclude interchange)
+    const result: Record<string, string> = {}
+    for (const [slot, pid] of Object.entries(selectedLineup)) {
+      if (pid && !slot.startsWith('I')) result[slot] = pid
+    }
+    return result
+  }, [playerClubId, selectedLineup])
+
+  const opponentLineupForField = useMemo<Record<string, string>>(() => {
+    if (!opponentClubId) return {}
+    const { lineup } = selectBestLineup(Object.values(players), opponentClubId, {
+      interchangePlayers: settings.matchRules.interchangePlayers,
+      club: clubs[opponentClubId],
+    })
+    // Only on-field slots
+    const result: Record<string, string> = {}
+    for (const [slot, pid] of Object.entries(lineup)) {
+      if (pid && !slot.startsWith('I')) result[slot] = pid
+    }
+    return result
+  }, [opponentClubId, players, settings.matchRules.interchangePlayers, clubs])
+
+  const userIsHomeForField = playerClubId === playerFixture?.homeClubId
+  const homeSlotLineupForField = userIsHomeForField ? userLineupForField : opponentLineupForField
+  const awaySlotLineupForField = userIsHomeForField ? opponentLineupForField : userLineupForField
+
+  const userWeeklyGameplan = playerClubId ? weeklyGameplans[playerClubId] : undefined
+  const userGameplanForField = playerClubId ? clubs[playerClubId]?.gameplan ?? null : null
+  const opponentGameplanForField = opponentClubId ? clubs[opponentClubId]?.gameplan ?? null : null
+  const userMatchupTacticsForField = userWeeklyGameplan?.matchupTactics ?? null
 
   return (
     <div className="space-y-6">
@@ -662,20 +868,49 @@ export function MatchDayPage() {
             <Settings2 className="h-4 w-4" />
             {fixtureEditorOpen ? 'Hide Fixture Editor' : 'Edit Fixture'}
           </Button>
-          {isCurrentRound && !roundPlayed && !liveMatchActive && (
-            <>
-              {playerFixture && userFixtureSimInput && (
-                <Button variant="secondary" onClick={handlePlayLive} className="flex items-center gap-2">
-                  <Eye className="h-4 w-4" />
-                  Play Live
-                </Button>
-              )}
-              <Button onClick={handleSimRound} className="flex items-center gap-2">
-                <Play className="h-4 w-4" />
-                Simulate Round
-              </Button>
-            </>
-          )}
+          {isCurrentRound && !roundPlayed && !liveMatchActive && (() => {
+            const liveSimMode = settings.notifications.liveSimMode ?? 'always-live'
+            const isFinalsRound = round?.isFinals ?? false
+            // Determine which buttons to show based on Live Sim Mode
+            const showLive =
+              liveSimMode === 'always-live' ||
+              liveSimMode === 'delegate' ||
+              (liveSimMode === 'finals-only' && isFinalsRound)
+            const showSim =
+              liveSimMode !== 'always-live' ||
+              !playerFixture  // always allow sim if no player fixture
+            const liveIsPrimary =
+              liveSimMode === 'always-live' ||
+              (liveSimMode === 'finals-only' && isFinalsRound)
+            return (
+              <>
+                {showLive && playerFixture && userFixtureSimInput && (
+                  <Button
+                    variant={liveIsPrimary ? 'default' : 'secondary'}
+                    onClick={handlePlayLive}
+                    disabled={!isMatchDay}
+                    title={!isMatchDay ? `Match day not yet reached (${earliestRoundMatchDate})` : undefined}
+                    className="flex items-center gap-2"
+                  >
+                    <Eye className="h-4 w-4" />
+                    {liveSimMode === 'finals-only' && isFinalsRound ? 'Begin Final' : 'Play Live'}
+                  </Button>
+                )}
+                {showSim && (
+                  <Button
+                    variant={liveIsPrimary ? 'secondary' : 'default'}
+                    onClick={handleSimRound}
+                    disabled={!isMatchDay}
+                    title={!isMatchDay ? `Match day not yet reached (${earliestRoundMatchDate})` : undefined}
+                    className="flex items-center gap-2"
+                  >
+                    <Play className="h-4 w-4" />
+                    {liveSimMode === 'quick-sim' ? 'Quick Simulate' : 'Simulate Round'}
+                  </Button>
+                )}
+              </>
+            )
+          })()}
         </div>
       </div>
 
@@ -695,7 +930,24 @@ export function MatchDayPage() {
           homeClub={clubs[playerFixture.homeClubId]}
           awayClub={clubs[playerFixture.awayClubId]}
           onComplete={handleLiveMatchComplete}
-          onCancel={() => setLiveMatchActive(false)}
+          onCancel={() => { setLiveMatchActive(false); setLiveOtherMatches([]) }}
+          homeSlotLineup={homeSlotLineupForField}
+          awaySlotLineup={awaySlotLineupForField}
+          homeGameplan={userIsHomeForField ? userGameplanForField : opponentGameplanForField}
+          awayGameplan={userIsHomeForField ? opponentGameplanForField : userGameplanForField}
+          homeMatchupTactics={userIsHomeForField ? userMatchupTacticsForField : null}
+        />
+      )}
+
+      {watchingSpectator && (
+        <LiveMatchView
+          simInput={watchingSpectator.simInput}
+          userClubId={playerClubId}
+          homeClub={clubs[watchingSpectator.fixture.homeClubId]}
+          awayClub={clubs[watchingSpectator.fixture.awayClubId]}
+          spectatorMode={true}
+          onComplete={handleSpectatorComplete}
+          onCancel={() => setWatchingSpectator(null)}
         />
       )}
 
@@ -886,8 +1138,14 @@ export function MatchDayPage() {
                 const isUserMatch = fixture === playerFixture
                 const isSelected = selectedFixture ? getFixtureKey(fixture) === getFixtureKey(selectedFixture) : false
                 const result = getFixtureResult(matchResults, displayRoundIdx, fixture)
-                const played = !!result?.result
-
+                const fKey = fixtureKey(fixture)
+                const resolvedMatch = !result?.result ? resolvedMatches.get(fKey) : undefined
+                // During live match, show pre-simulated scores for other games
+                const livePreview = !result?.result && !resolvedMatch && liveMatchActive
+                  ? liveOtherMatches.find(
+                      (m) => m.homeClubId === fixture.homeClubId && m.awayClubId === fixture.awayClubId,
+                    )
+                  : null
                 return (
                   <button
                     type="button"
@@ -936,10 +1194,22 @@ export function MatchDayPage() {
                       </div>
 
                       <div className="text-right text-xs">
-                        {played ? (
+                        {result?.result ? (
                           <span className="font-mono">
-                            {result?.result?.homeTotalScore} - {result?.result?.awayTotalScore}
+                            {result.result.homeTotalScore} – {result.result.awayTotalScore}
                           </span>
+                        ) : resolvedMatch?.result ? (
+                          <span className="font-mono text-muted-foreground">
+                            {resolvedMatch.result.homeTotalScore} – {resolvedMatch.result.awayTotalScore}
+                            <span className="ml-1 text-[10px] text-blue-400 font-semibold">✓</span>
+                          </span>
+                        ) : livePreview?.result ? (
+                          <span className="font-mono text-muted-foreground">
+                            {livePreview.result.homeTotalScore} – {livePreview.result.awayTotalScore}
+                            <span className="ml-1 text-[10px] text-emerald-500 font-semibold">FT</span>
+                          </span>
+                        ) : isUserMatch && liveMatchActive ? (
+                          <span className="text-[10px] text-primary font-semibold animate-pulse">LIVE</span>
                         ) : (
                           <span className="text-muted-foreground">Upcoming</span>
                         )}
@@ -948,13 +1218,40 @@ export function MatchDayPage() {
 
                     <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
                       <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{fixture.venue}</span>
-                      {result?.result?.simulationContext?.attendance != null && (
+                      {(result?.result?.simulationContext?.attendance ?? resolvedMatch?.result?.simulationContext?.attendance ?? livePreview?.result?.simulationContext?.attendance) != null && (
                         <span className="inline-flex items-center gap-1">
                           <Users className="h-3 w-3" />
-                          {result.result.simulationContext.attendance.toLocaleString()}
+                          {(result?.result?.simulationContext?.attendance ?? resolvedMatch?.result?.simulationContext?.attendance ?? livePreview?.result?.simulationContext?.attendance)!.toLocaleString()}
                         </span>
                       )}
                     </div>
+
+                    {isCurrentRound && !roundPlayed && !isUserMatch && !liveMatchActive && !watchingSpectator && (
+                      resolvedMatch ? (
+                        <div className="mt-1.5 text-[11px] text-muted-foreground">
+                          Result locked in — will be committed when you advance the round.
+                        </div>
+                      ) : (
+                        <div className="mt-1.5 flex gap-1.5" onClick={(e) => e.stopPropagation()}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-6 px-2 text-[11px]"
+                            onClick={(e) => { e.stopPropagation(); handleWatchOtherFixture(fixture) }}
+                          >
+                            <Eye className="h-3 w-3 mr-1" />Watch
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-6 px-2 text-[11px]"
+                            onClick={(e) => { e.stopPropagation(); handleSimOtherFixture(fixture) }}
+                          >
+                            <Zap className="h-3 w-3 mr-1" />Sim
+                          </Button>
+                        </div>
+                      )
+                    )}
                   </button>
                 )
               })}
@@ -1182,118 +1479,46 @@ function MatchResultView({
 }) {
   const result = match.result!
   const homeClub = clubs[match.homeClubId]
-  const awayClub = clubs[match.awayClubId]
-  const isHome = match.homeClubId === playerClubId
-
-  const userStats = isHome ? result.homePlayerStats : result.awayPlayerStats
+  const [showCommentary, setShowCommentary] = useState(false)
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardContent className="py-6">
-          <div className="flex items-center justify-center gap-8">
-            <div className="flex flex-col items-center gap-1">
-              <div className="h-12 w-12 rounded-full" style={{ backgroundColor: homeClub?.colors.primary }} />
-              <span className="font-bold">{homeClub?.abbreviation}</span>
-            </div>
-            <div className="text-center">
-              <div className="text-3xl font-bold">{result.homeTotalScore} - {result.awayTotalScore}</div>
-              <div className="mt-1 text-xs text-muted-foreground font-mono">
-                {result.homeScores.map((q) => `${q.goals}.${q.behinds}`).join(' | ')}
-                <br />
-                {result.awayScores.map((q) => `${q.goals}.${q.behinds}`).join(' | ')}
-              </div>
-            </div>
-            <div className="flex flex-col items-center gap-1">
-              <div className="h-12 w-12 rounded-full" style={{ backgroundColor: awayClub?.colors.primary }} />
-              <span className="font-bold">{awayClub?.abbreviation}</span>
-            </div>
-          </div>
-          {result.simulationContext && (
-            <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{match.venue}</span>
-              {result.simulationContext.attendance != null && (
-                <span className="inline-flex items-center gap-1">
-                  <Users className="h-3 w-3" />
-                  {result.simulationContext.attendance.toLocaleString()}
-                  {result.simulationContext.capacityPct != null && (
-                    <span>({result.simulationContext.capacityPct}%)</span>
-                  )}
-                </span>
-              )}
-              <span>{result.simulationContext.weather}, {result.simulationContext.groundCondition}</span>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <PostMatchBoxScore
+        match={match}
+        clubs={clubs}
+        players={players}
+        playerClubId={playerClubId}
+      />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Your Player Stats</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Player</TableHead>
-                  <TableHead className="text-center">D</TableHead>
-                  <TableHead className="text-center">MIN</TableHead>
-                  <TableHead className="text-center">AF</TableHead>
-                  <TableHead className="text-center">SC</TableHead>
-                  <TableHead className="text-center">K</TableHead>
-                  <TableHead className="text-center">HB</TableHead>
-                  <TableHead className="text-center">M</TableHead>
-                  <TableHead className="text-center">T</TableHead>
-                  <TableHead className="text-center">G</TableHead>
-                  <TableHead className="text-center">B</TableHead>
-                  <TableHead className="text-center">CP</TableHead>
-                  <TableHead className="text-center">UP</TableHead>
-                  <TableHead className="text-center">CL</TableHead>
-                  <TableHead className="text-center">I50</TableHead>
-                  <TableHead className="text-center">R50</TableHead>
-                  <TableHead className="text-center">HO</TableHead>
-                  <TableHead className="text-center">INT</TableHead>
-                  <TableHead className="text-center">SI</TableHead>
-                  <TableHead className="text-center">GA</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {[...userStats]
-                  .sort((a, b) => b.disposals - a.disposals)
-                  .map((stat) => {
-                    const player = players[stat.playerId]
-                    if (!player) return null
-                    return (
-                      <TableRow key={stat.playerId} className="text-sm">
-                        <TableCell className="font-medium whitespace-nowrap">{player.firstName.charAt(0)}. {player.lastName}</TableCell>
-                        <TableCell className="text-center">{stat.disposals}</TableCell>
-                        <TableCell className="text-center">{stat.minutesPlayed}</TableCell>
-                        <TableCell className="text-center font-medium">{stat.aflFantasyPoints ?? 0}</TableCell>
-                        <TableCell className="text-center font-medium">{stat.superCoachPoints ?? 0}</TableCell>
-                        <TableCell className="text-center">{stat.kicks}</TableCell>
-                        <TableCell className="text-center">{stat.handballs}</TableCell>
-                        <TableCell className="text-center">{stat.marks}</TableCell>
-                        <TableCell className="text-center">{stat.tackles}</TableCell>
-                        <TableCell className="text-center font-bold">{stat.goals > 0 ? stat.goals : ''}</TableCell>
-                        <TableCell className="text-center">{stat.behinds > 0 ? stat.behinds : ''}</TableCell>
-                        <TableCell className="text-center">{stat.contestedPossessions}</TableCell>
-                        <TableCell className="text-center">{stat.uncontestedPossessions ?? stat.uncountestedPossessions ?? 0}</TableCell>
-                        <TableCell className="text-center">{stat.clearances}</TableCell>
-                        <TableCell className="text-center">{stat.insideFifties}</TableCell>
-                        <TableCell className="text-center">{stat.rebound50s}</TableCell>
-                        <TableCell className="text-center">{stat.hitouts > 0 ? stat.hitouts : ''}</TableCell>
-                        <TableCell className="text-center">{stat.intercepts}</TableCell>
-                        <TableCell className="text-center">{stat.scoreInvolvements}</TableCell>
-                        <TableCell className="text-center">{stat.goalAssists}</TableCell>
-                      </TableRow>
-                    )
-                  })}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
+      {result.playByPlay && result.playByPlay.length > 0 && (
+        <>
+          <Button
+            size="sm"
+            variant={showCommentary ? 'default' : 'outline'}
+            onClick={() => setShowCommentary((v) => !v)}
+          >
+            {showCommentary ? 'Hide Commentary' : 'Show Commentary'}
+          </Button>
+          {showCommentary && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Match Commentary</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <PlayByPlayPanel
+                  events={result.playByPlay}
+                  homeClubId={match.homeClubId}
+                  awayClubId={match.awayClubId}
+                  homeClubName={homeClub?.name ?? match.homeClubId}
+                  awayClubName={clubs[match.awayClubId]?.name ?? match.awayClubId}
+                  players={players}
+                  maxHeight="max-h-[600px]"
+                />
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )}
     </div>
   )
 }
