@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ArrowLeft, ArrowLeftRight, Heart, Zap, TrendingUp, Shield, AlertTriangle, Trophy, Info } from 'lucide-react'
+import { FieldSvg } from '@/components/lineup/FieldSvg'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { Player, PlayerJumperPreferenceLevel, PlayerPositionType, PlayerTrainingFocus } from '@/types/player'
 import {
@@ -18,7 +19,7 @@ import { TrainingProjectionPanel } from '@/components/training/TrainingProjectio
 import { getPlayerEligiblePositionTypes } from '@/engine/player/positionEligibility'
 import { getOverallRating, getPlayerStarRating } from '@/engine/player/playerRating'
 import { PlayerStarRating } from '@/components/player/PlayerStarRating'
-import { getPositionBadgeClass } from '@/lib/positionColor'
+import { getPositionBadgeClass, getPositionBadgeStrongClass } from '@/lib/positionColor'
 import { ShortlistAssignMenu } from '@/components/shortlists/ShortlistManager'
 import { ATTR_CATEGORIES, attrColor, attrBgColor } from '@/lib/attributeCategories'
 import { matchRatingColorClass } from '@/engine/match/matchRatings'
@@ -57,19 +58,21 @@ function getJumperPreferenceMoraleImpact(player: Player): number {
   return preference.level === 'demand' ? -2 : -1
 }
 
+// Landscape coordinates: new_left = 100 - portrait_top, new_top = portrait_left
+// (FB defending on left, FF attacking on right)
 const FIELD_POSITION_COORDS: Record<PlayerPositionType, { x: number; y: number }> = {
-  BP: { x: 20, y: 86 },
-  FB: { x: 50, y: 90 },
-  HBF: { x: 80, y: 86 },
-  CHB: { x: 50, y: 72 },
-  W: { x: 16, y: 50 },
-  IM: { x: 42, y: 50 },
-  OM: { x: 58, y: 50 },
-  RK: { x: 50, y: 50 },
-  HFF: { x: 20, y: 14 },
-  CHF: { x: 50, y: 28 },
-  FP: { x: 80, y: 14 },
-  FF: { x: 50, y: 10 },
+  FB:  { x: 92.1, y: 50.0 },
+  BP:  { x: 86.5, y: 31.5 },
+  HBF: { x: 74.3, y: 76.9 },
+  CHB: { x: 74.3, y: 50.0 },
+  W:   { x: 50.0, y: 15.7 },
+  IM:  { x: 56.0, y: 38.5 },
+  OM:  { x: 50.0, y: 84.3 },
+  RK:  { x: 50.0, y: 50.0 },
+  HFF: { x: 25.7, y: 23.1 },
+  CHF: { x: 25.7, y: 50.0 },
+  FP:  { x: 13.5, y: 68.5 },
+  FF:  { x:  7.9, y: 50.0 },
 }
 
 function PositionHeatMapCard({ player }: { player: Player }) {
@@ -79,10 +82,10 @@ function PositionHeatMapCard({ player }: { player: Player }) {
   )
 
   function getChipStyle(pos: PlayerPositionType): string {
-    const base = getPositionBadgeClass(pos)
-    if (pos === player.position.primary) return `${base} ring-1 ring-white/60`
+    const base = getPositionBadgeStrongClass(pos)
+    if (pos === player.position.primary) return `${base} ring-2 ring-white`
     if (secondary.has(pos)) return base
-    return `${base} opacity-85`
+    return `${base} opacity-70`
   }
 
   return (
@@ -91,28 +94,22 @@ function PositionHeatMapCard({ player }: { player: Player }) {
         <CardTitle className="text-sm">Position Heat Map</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="mx-auto w-full max-w-sm aspect-[3/4] rounded-[40%] border border-emerald-600/50 bg-gradient-to-b from-emerald-600/30 via-emerald-700/25 to-emerald-800/25 p-3">
-          <div className="relative h-full w-full rounded-[42%] border border-emerald-400/35">
-            <div className="absolute left-1/2 top-1/2 h-[38%] w-[52%] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/30" />
-            <div className="absolute left-1/2 top-1/2 h-[15%] w-[22%] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/30" />
-            <div className="absolute left-1/2 top-0 h-[18%] w-[42%] -translate-x-1/2 border-b border-white/25" />
-            <div className="absolute left-1/2 bottom-0 h-[18%] w-[42%] -translate-x-1/2 border-t border-white/25" />
-
-            {(Object.keys(FIELD_POSITION_COORDS) as PlayerPositionType[])
-              .filter((pos) => eligible.has(pos))
-              .map((pos) => {
-                const coords = FIELD_POSITION_COORDS[pos]
-                return (
-                  <div
-                    key={pos}
-                    className={`absolute -translate-x-1/2 -translate-y-1/2 rounded border px-2 py-0.5 text-[10px] font-bold tracking-wide shadow ${getChipStyle(pos)}`}
-                    style={{ left: `${coords.x}%`, top: `${coords.y}%` }}
-                  >
-                    {pos}
-                  </div>
-                )
-              })}
-          </div>
+        <div className="mx-auto w-full max-w-[368px] aspect-[35/27] relative">
+          <FieldSvg idPrefix="player-heatmap" landscape />
+          {(Object.keys(FIELD_POSITION_COORDS) as PlayerPositionType[])
+            .filter((pos) => eligible.has(pos))
+            .map((pos) => {
+              const coords = FIELD_POSITION_COORDS[pos]
+              return (
+                <div
+                  key={pos}
+                  className={`absolute -translate-x-1/2 -translate-y-1/2 rounded border px-2 py-0.5 text-[10px] font-bold tracking-wide shadow ${getChipStyle(pos)}`}
+                  style={{ left: `${coords.x}%`, top: `${coords.y}%` }}
+                >
+                  {pos}
+                </div>
+              )
+            })}
         </div>
 
         <div className="flex flex-wrap items-center gap-2 text-xs">
