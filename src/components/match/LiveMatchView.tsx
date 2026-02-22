@@ -5,8 +5,8 @@ import { Badge } from '@/components/ui/badge'
 import { TacticalTimeoutPanel } from '@/components/match/TacticalTimeoutPanel'
 import { LiveScoreboard, type PlaybackSpeed } from '@/components/match/LiveScoreboard'
 import { CommentaryFeed } from '@/components/match/CommentaryFeed'
-import { GoalStoppagePanel } from '@/components/match/GoalStoppagePanel'
 import { InjuryStoppagePanel } from '@/components/match/InjuryStoppagePanel'
+import { SpeechSystem } from '@/components/matchviewer/SpeechSystem'
 import { useInterval } from '@/hooks/useInterval'
 import {
   createMatchContext,
@@ -42,6 +42,7 @@ import type {
   GameplanSliders,
 } from '@/types/matchEvent'
 import type { WeeklyMatchupTactics } from '@/types/game'
+import type { SpeechTone, SpeechEffect, SpeechDelivery } from '@/engine/coach/speechEngine'
 import { LiveFieldView, type FieldInstruction } from '@/components/match/LiveFieldView'
 import { Play, ChevronRight, MapPin, Users, X } from 'lucide-react'
 
@@ -217,6 +218,7 @@ export function LiveMatchView({
   const allAdjustmentsRef = useRef<MidMatchAdjustment[]>([])
   const quarterSnapshotsRef = useRef<QuarterSnapshot[]>([])
   const currentQInjuriesRef = useRef<QuarterInjury[]>([])
+  const quarterBreakPlayerIdsRef = useRef<string[]>([])
 
   // Tick playback refs (mutated at high frequency — not state)
   const ticksRef = useRef<MatchTick[]>([])
@@ -234,6 +236,9 @@ export function LiveMatchView({
   const [liveQuarter, setLiveQuarter] = useState(1)
   const [stoppageState, setStoppageState] = useState<StoppageState>(null)
   const [activeTab, setActiveTab] = useState<'field' | 'events' | 'stats'>('field')
+  // Speech system state
+  const [breakSubStage, setBreakSubStage] = useState<'speech' | 'strategy'>('speech')
+  const [toneHistory, setToneHistory] = useState<Partial<Record<SpeechTone, number>>>({})
 
   const homeAbbr = homeClub?.abbreviation ?? 'HOM'
   const awayAbbr = awayClub?.abbreviation ?? 'AWY'
@@ -294,7 +299,13 @@ export function LiveMatchView({
     const suggestions = generateCoachSuggestions(ctx, userClubId)
     const qInjuries = currentQInjuriesRef.current
 
+    // Capture active player IDs for speech system
+    const isHomeUser = userClubId === ctx.input.homeClubId
+    const userStats = isHomeUser ? ctx.homeStats : ctx.awayStats
+    quarterBreakPlayerIdsRef.current = userStats.map((s: MatchPlayerStats) => s.playerId)
+
     setBreakDisplay(buildBreakDisplay(ctx, events, decisions, qInjuries, allAdjustmentsRef.current, userClubId, suggestions))
+    setBreakSubStage('speech')
     setPhase('quarter-break')
   }, [userClubId])
 
@@ -317,9 +328,8 @@ export function LiveMatchView({
     setLiveMinute(tick.minute)
 
     if (tick.isStoppage && !spectatorMode) {
-      if (tick.stoppageType === 'goal') {
-        setStoppageState({ type: 'goal', tick })
-      } else if (tick.stoppageType === 'injury' && tick.injuryPlayerId) {
+      // Goal stoppages no longer trigger a decision panel — just let play continue.
+      if (tick.stoppageType === 'injury' && tick.injuryPlayerId) {
         const inj = currentQInjuriesRef.current.find((i) => i.playerId === tick.injuryPlayerId)
         if (inj && inj.clubId === userClubId) {
           setStoppageState({ type: 'injury', injury: inj })
@@ -494,16 +504,23 @@ export function LiveMatchView({
   }, [userClubId])
 
   // ---------------------------------------------------------------------------
-  // Goal stoppage decision (mid-play)
+  // Speech system handlers
   // ---------------------------------------------------------------------------
 
-  const handleGoalDecision = useCallback((decision: MidMatchDecision) => {
-    const ctx = ctxRef.current
-    if (!ctx) return
-    applyMidMatchDecision(ctx, decision, userClubId)
-    allAdjustmentsRef.current = [...ctx.midMatchAdjustments]
-    setStoppageState(null)
-  }, [userClubId])
+  const handleSpeechDeliver = useCallback((effects: SpeechEffect[], delivery: SpeechDelivery) => {
+    void effects // effects shown by SpeechSystem itself; parent just tracks tone history
+    setToneHistory((prev) => {
+      const updated = { ...prev }
+      for (const speech of delivery.speeches) {
+        updated[speech.tone] = (updated[speech.tone] ?? 0) + 1
+      }
+      return updated
+    })
+  }, [])
+
+  const handleSpeechContinue = useCallback(() => {
+    setBreakSubStage('strategy')
+  }, [])
 
   // ---------------------------------------------------------------------------
   // Injury stoppage actions
@@ -529,41 +546,6 @@ export function LiveMatchView({
   const handleStoppageContinue = useCallback(() => {
     setStoppageState(null)
   }, [])
-
-  // ---------------------------------------------------------------------------
-  // Derived values for goal stoppage panel
-  // ---------------------------------------------------------------------------
-
-  const goalStoppageInfo = useMemo(() => {
-    if (!stoppageState || stoppageState.type !== 'goal') return null
-    const tick = stoppageState.tick
-    const ctx = ctxRef.current
-    const isHome = userClubId === (ctx?.input.homeClubId ?? '')
-    const userScore = isHome ? tick.homeScore : tick.awayScore
-    const oppScore = isHome ? tick.awayScore : tick.homeScore
-    const margin = userScore - oppScore
-    const isHomeGoal = tick.clubId === (ctx?.input.homeClubId ?? simInput.homeClubId)
-    const scoringName = isHomeGoal ? (homeClub?.name ?? homeAbbr) : (awayClub?.name ?? awayAbbr)
-    const scoringColor = isHomeGoal ? homeColor : awayColor
-    const leading = userScore > oppScore
-
-    const decisions: MidMatchDecision[] = [
-      { id: 'stay-course', type: 'stay-course', label: 'Stay the Course', description: 'Keep current tactics.' },
-    ]
-    if (leading && margin >= 10) {
-      decisions.push({ id: 'protect-lead', type: 'protect-lead', label: 'Protect Lead', description: 'Defensive, slow, low aggression.' })
-    }
-    if (!leading) {
-      decisions.push({ id: 'chase-game', type: 'chase-game', label: 'Chase the Game', description: 'Attacking, fast, high aggression.' })
-    }
-    decisions.push(
-      { id: 'tempo-fast', type: 'change-tempo', label: 'Fast Tempo', description: 'Increase pace.', params: { tempo: 'fast' } },
-      { id: 'tempo-slow', type: 'change-tempo', label: 'Slow Tempo', description: 'Slow it down.', params: { tempo: 'slow' } },
-    )
-
-    return { scoringName, scoringColor, margin, userIsAhead: leading, decisions }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stoppageState, userClubId, homeAbbr, awayAbbr, homeColor, awayColor])
 
   // Sub name for injury panel
   const subName = useMemo(() => {
@@ -736,18 +718,6 @@ export function LiveMatchView({
               onSkip={skipToQuarterEnd}
             />
 
-            {!spectatorMode && stoppageState?.type === 'goal' && goalStoppageInfo && (
-              <GoalStoppagePanel
-                scoringTeamName={goalStoppageInfo.scoringName}
-                scoringColor={goalStoppageInfo.scoringColor}
-                margin={goalStoppageInfo.margin}
-                userIsAhead={goalStoppageInfo.userIsAhead}
-                decisions={goalStoppageInfo.decisions}
-                onDecision={handleGoalDecision}
-                onContinue={handleStoppageContinue}
-              />
-            )}
-
             {!spectatorMode && stoppageState?.type === 'injury' && (
               <InjuryStoppagePanel
                 injury={stoppageState.injury}
@@ -865,6 +835,20 @@ export function LiveMatchView({
                   {breakDisplay.quartersCompleted >= 4 ? 'Full Time' : 'Continue'}
                 </Button>
               </div>
+            ) : breakSubStage === 'speech' ? (
+              <SpeechSystem
+                quarter={breakDisplay.quartersCompleted}
+                homeScore={breakDisplay.homeTotalScore}
+                awayScore={breakDisplay.awayTotalScore}
+                userIsHome={userIsHome}
+                userClubId={userClubId}
+                players={simInput.players}
+                userActivePlayerIds={quarterBreakPlayerIdsRef.current}
+                seed={simInput.seed}
+                toneHistory={toneHistory}
+                onDeliver={handleSpeechDeliver}
+                onContinue={handleSpeechContinue}
+              />
             ) : (
               <TacticalTimeoutPanel
                 quarter={breakDisplay.quartersCompleted}

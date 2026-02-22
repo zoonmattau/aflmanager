@@ -30,6 +30,8 @@ const FOCUS_OPTIONS: { value: TrainingFocus; label: string }[] = [
   { value: 'set-pieces', label: 'Set Pieces' },
   { value: 'match-fitness', label: 'Match Fitness' },
   { value: 'recovery', label: 'Recovery' },
+  { value: 'video-review', label: 'Video Review' },
+  { value: 'rest', label: 'Rest' },
 ]
 
 const INTENSITY_OPTIONS: { value: TrainingIntensity; label: string; color: string }[] = [
@@ -123,45 +125,57 @@ export function TrainingGroupEditor({
         </Select>
       </div>
 
-      {/* Intensity selector (3 buttons) */}
-      <div className="space-y-1">
-        <label className="text-xs text-muted-foreground font-medium">Intensity</label>
-        <div className="flex gap-1">
-          {INTENSITY_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              className={cn(
-                'flex-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors',
-                group.intensity === opt.value
-                  ? opt.color
-                  : 'border-border text-muted-foreground hover:bg-muted',
-              )}
-              onClick={() => handleIntensityChange(opt.value)}
-            >
-              {opt.label}
-            </button>
-          ))}
+      {/* Intensity selector (3 buttons) — hidden for rest */}
+      {group.focus !== 'rest' && (
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground font-medium">Intensity</label>
+          <div className="flex gap-1">
+            {INTENSITY_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                className={cn(
+                  'flex-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors',
+                  group.intensity === opt.value
+                    ? opt.color
+                    : 'border-border text-muted-foreground hover:bg-muted',
+                )}
+                onClick={() => handleIntensityChange(opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Coach auto-display */}
-      <div className="space-y-1">
-        <label className="text-xs text-muted-foreground font-medium">Coach</label>
-        {coach ? (
-          <div className="flex items-center gap-2 text-xs">
-            <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary">
-              {coach.firstName.charAt(0)}{coach.lastName.charAt(0)}
+      {/* Coach auto-display — hidden for rest */}
+      {group.focus !== 'rest' && (
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground font-medium">Coach</label>
+          {coach ? (
+            <div className="flex items-center gap-2 text-xs">
+              <div className="h-5 w-5 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary">
+                {coach.firstName.charAt(0)}{coach.lastName.charAt(0)}
+              </div>
+              <span className="truncate">{coach.firstName} {coach.lastName}</span>
+              <span className="text-muted-foreground capitalize">({coach.role.replace(/-/g, ' ')})</span>
             </div>
-            <span className="truncate">{coach.firstName} {coach.lastName}</span>
-            <span className="text-muted-foreground capitalize">({coach.role.replace(/-/g, ' ')})</span>
-          </div>
-        ) : (
-          <div className="flex items-center gap-1 text-xs text-yellow-600 dark:text-yellow-400">
-            <AlertTriangle className="h-3 w-3" />
-            <span>No specialist</span>
-          </div>
-        )}
-      </div>
+          ) : (
+            <div className="flex items-center gap-1 text-xs text-yellow-600 dark:text-yellow-400">
+              <AlertTriangle className="h-3 w-3" />
+              <span>No specialist</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Rest info */}
+      {group.focus === 'rest' && (
+        <div className="rounded-md bg-sky-500/10 border border-sky-500/20 px-2.5 py-2 text-xs text-sky-700 dark:text-sky-300 space-y-0.5">
+          <p className="font-medium">Players rest this session</p>
+          <p className="text-[10px] text-muted-foreground">Fatigue −8 · Fitness +3 · No attribute work</p>
+        </div>
+      )}
 
       {/* Player assignment */}
       <div className="space-y-1.5">

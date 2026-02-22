@@ -43,12 +43,24 @@ import {
   Minus,
   Bell,
   Clock,
+  MessageSquare,
+  ChevronDown,
+  ChevronUp,
+  Loader2,
 } from 'lucide-react'
+import type { NegotiationThread } from '@/types/negotiation'
+import {
+  getTradeIntelLevel,
+  fuzzSignalBar,
+  getStanceLabel,
+  getSignalColor,
+  generateTextDossier,
+} from '@/engine/trades/leverageEngine'
 import { diffDays } from '@/engine/calendar/calendarEngine'
 import { gradeTradeRetrospective } from '@/engine/history/summaryEngine'
 import type { TradeGradeLetter } from '@/engine/history/summaryEngine'
 import { getPackageTradeValue } from '@/engine/trades/tradeValuation'
-import type { TradeInboxItem } from '@/types/trade'
+import type { TradeInboxItem, TradeDramaState, TradeInboxEvent, BiddingWarCluster } from '@/types/trade'
 import { getDemandAdjustedValue } from '@/engine/trades/tradeNegotiationEngine'
 import { useTableViewManager, type TableViewColumnConfig } from '@/components/table-view/useTableViewManager'
 import { TableViewManagerControl } from '@/components/table-view/TableViewManagerControl'
@@ -56,6 +68,7 @@ import { ShortlistAssignMenu, ShortlistManager } from '@/components/shortlists/S
 import type { BoardApprovalResult } from '@/types/boardApproval'
 import { BoardApprovalPanel } from '@/components/board/BoardApprovalPanel'
 import { getDurabilityRating, durabilityRatingColor, getInjuryRiskLevel, injuryRiskDisplay } from '@/lib/injuryRisk'
+import { PlayerHoverCard } from '@/components/player/PlayerHoverCard'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -251,7 +264,9 @@ function PlayerSelectionList({
                         </div>
                       </TableCell>}
                       {visibleColumnIds.includes('player') && <TableCell className="px-2 py-1.5 font-medium whitespace-nowrap">
-                        {player.firstName} {player.lastName}
+                        <PlayerHoverCard player={player} side="right">
+                          <span>{player.firstName} {player.lastName}</span>
+                        </PlayerHoverCard>
                       </TableCell>}
                       {visibleColumnIds.includes('pos') && <TableCell className="px-2 py-1.5">
                         <Badge variant="outline" className="text-xs">
@@ -580,7 +595,7 @@ function MakeTradeTab() {
   const players = useGameStore((s) => s.players)
   const clubs = useGameStore((s) => s.clubs)
   const tradeBlock = useGameStore((s) => s.tradeBlock)
-  const proposeTradeOffer = useGameStore((s) => s.proposeTradeOffer)
+  const startNegotiationThread = useGameStore((s) => s.startNegotiationThread)
 
   const [partnerId, setPartnerId] = useState<string>('')
   const [capError, setCapError] = useState<string | null>(null)
@@ -589,7 +604,7 @@ function MakeTradeTab() {
   const [sendSearch, setSendSearch] = useState('')
   const [receiveSearch, setReceiveSearch] = useState('')
   const [tradeResult, setTradeResult] = useState<
-    'accepted' | 'rejected' | null
+    'submitted' | 'rejected' | null
   >(null)
   const [rejectionMessage, setRejectionMessage] = useState('')
   const [showCompletedDialog, setShowCompletedDialog] = useState(false)
@@ -713,9 +728,7 @@ function MakeTradeTab() {
 
     setCapError(null)
 
-    const sentSnapshot = sendPlayers.map((p) => ({ ...p }))
-    const receivedSnapshot = receivePlayers.map((p) => ({ ...p }))
-    const result = proposeTradeOffer(
+    const result = startNegotiationThread(
       partnerId,
       sendPlayers.map((p) => p.id),
       receivePlayers.map((p) => p.id),
@@ -728,24 +741,15 @@ function MakeTradeTab() {
       return
     }
 
-    if (result.accepted) {
-      setTradeResult('accepted')
-      setCompletedTradeSent(sentSnapshot)
-      setCompletedTradeReceived(receivedSnapshot)
-      setShowCompletedDialog(true)
-      setSendIds(new Set())
-      setReceiveIds(new Set())
-      return
-    }
-
-    setTradeResult('rejected')
-    setRejectionMessage('Counteroffer received. Check the Trade Inbox tab to continue negotiations.')
+    setTradeResult('submitted')
+    setSendIds(new Set())
+    setReceiveIds(new Set())
   }, [
     sendPlayers,
     receivePlayers,
     partnerClub,
     partnerId,
-    proposeTradeOffer,
+    startNegotiationThread,
   ])
 
   const handleResetTrade = useCallback(() => {
@@ -761,7 +765,7 @@ function MakeTradeTab() {
     sendPlayers.length > 0 &&
     receivePlayers.length > 0 &&
     partnerId !== '' &&
-    tradeResult !== 'accepted'
+    tradeResult !== 'submitted'
 
   return (
     <div className="space-y-4">
@@ -976,16 +980,15 @@ function MakeTradeTab() {
               </div>
             )}
 
-            {tradeResult === 'accepted' && (
-              <div className="rounded-md border border-green-500/50 bg-green-500/10 p-3 flex items-start gap-2">
-                <CheckCircle2 className="h-5 w-5 text-green-500 shrink-0 mt-0.5" />
+            {tradeResult === 'submitted' && (
+              <div className="rounded-md border border-blue-500/50 bg-blue-500/10 p-3 flex items-start gap-2">
+                <MessageSquare className="h-5 w-5 text-blue-500 shrink-0 mt-0.5" />
                 <div>
-                  <p className="font-semibold text-green-600 dark:text-green-400">
-                    Trade Accepted
+                  <p className="font-semibold text-blue-600 dark:text-blue-400">
+                    Offer Submitted
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    The trade has been completed successfully. Check the Trade
-                    History tab for details.
+                    Your offer has been sent. Open the <strong>Negotiate</strong> tab to track the response and counter if needed.
                   </p>
                 </div>
               </div>
@@ -1040,6 +1043,369 @@ function MakeTradeTab() {
 }
 
 // ---------------------------------------------------------------------------
+// Negotiate Tab
+// ---------------------------------------------------------------------------
+
+function SignalBar({ score, level, seed }: { score: number; level: 1 | 2 | 3; seed: number }) {
+  const bars = level >= 3 ? Math.round((score / 100) * 5) : fuzzSignalBar(score, seed)
+  const color = getSignalColor(bars)
+  return (
+    <span className="flex gap-0.5">
+      {[1,2,3,4,5].map((i) => (
+        <span
+          key={i}
+          className={`inline-block w-2 h-3 rounded-sm ${i <= bars ? color.replace('text-', 'bg-') : 'bg-muted'}`}
+        />
+      ))}
+    </span>
+  )
+}
+
+function DotIndicator({ score }: { score: number }) {
+  const color = score >= 60 ? 'bg-red-500' : score >= 30 ? 'bg-amber-500' : 'bg-green-500'
+  return <span className={`inline-block w-2.5 h-2.5 rounded-full ${color}`} />
+}
+
+function LeveragePanel({ thread, clubs, tradeHistory }: {
+  thread: NegotiationThread
+  clubs: Record<string, import('@/types/club').Club>
+  tradeHistory: import('@/types/game').CompletedTrade[]
+}) {
+  const [open, setOpen] = useState(false)
+  const lev = thread.leverageSnapshot
+  const partnerClub = clubs[thread.partnerClubId]
+  const level = getTradeIntelLevel(tradeHistory)
+  const seed = lev.urgencyScore + lev.capPressureScore
+  const playerNames: string[] = []
+
+  const rows = [
+    { label: 'Urgency', score: lev.urgencyScore },
+    { label: 'Cap Pressure', score: lev.capPressureScore },
+    { label: 'List Need', score: lev.listNeedScore },
+    { label: 'Alt. Suitors', score: Math.min(lev.alternativeCount * 25, 100) },
+  ]
+
+  return (
+    <div className="rounded-md border">
+      <button
+        className="flex w-full items-center justify-between px-3 py-2 text-sm font-medium hover:bg-muted/40 transition-colors"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="flex items-center gap-2">
+          <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          Trade Intelligence · {partnerClub?.name ?? thread.partnerClubId}
+        </span>
+        {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+      </button>
+
+      {open && (
+        <div className="px-3 pb-3 space-y-2 border-t">
+          {level === 1 && (
+            <div className="space-y-1.5 pt-2">
+              {rows.map((r) => (
+                <div key={r.label} className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">—</span>
+                  <DotIndicator score={r.score} />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {level >= 2 && (
+            <div className="space-y-1.5 pt-2">
+              {rows.map((r) => (
+                <div key={r.label} className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">{r.label}</span>
+                  <SignalBar score={r.score} level={level} seed={seed + r.score} />
+                </div>
+              ))}
+              {level >= 2 && (
+                <div className="flex items-center justify-between text-xs pt-0.5">
+                  <span className="text-muted-foreground">Public Stance</span>
+                  <span className="text-xs font-medium">{getStanceLabel(lev.publicStance)}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {level >= 3 && (
+            <p className="text-xs text-muted-foreground bg-muted/40 rounded p-2 mt-2 leading-relaxed">
+              {generateTextDossier(lev, partnerClub?.name ?? thread.partnerClubId, playerNames)}
+            </p>
+          )}
+
+          <p className="text-[10px] text-muted-foreground/60 pt-1">
+            Trade intel based on {tradeHistory.length} completed trade{tradeHistory.length !== 1 ? 's' : ''}
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function NegotiateTab() {
+  const negotiationThreads = useGameStore((s) => s.negotiationThreads)
+  const players = useGameStore((s) => s.players)
+  const clubs = useGameStore((s) => s.clubs)
+  const tradeHistory = useGameStore((s) => s.tradeHistory)
+  const acceptNegotiationThread = useGameStore((s) => s.acceptNegotiationThread)
+  const rejectNegotiationThread = useGameStore((s) => s.rejectNegotiationThread)
+  const counterNegotiationRound = useGameStore((s) => s.counterNegotiationRound)
+  const currentDate = useGameStore((s) => s.currentDate)
+  const playerClubId = useGameStore((s) => s.playerClubId)
+
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [showCounter, setShowCounter] = useState(false)
+  const [counterSendIds, setCounterSendIds] = useState<Set<string>>(new Set())
+  const [counterReceiveIds, setCounterReceiveIds] = useState<Set<string>>(new Set())
+
+  const sorted = useMemo(() =>
+    [...negotiationThreads].sort((a, b) => b.initiatedAt.localeCompare(a.initiatedAt)),
+    [negotiationThreads],
+  )
+
+  const selected = sorted.find((t) => t.id === selectedId) ?? sorted[0] ?? null
+
+  // Auto-select first thread
+  const effectiveId = selected?.id ?? null
+
+  const statusBadge = (thread: NegotiationThread) => {
+    const last = thread.rounds[thread.rounds.length - 1]
+    if (thread.status === 'completed') return <Badge className="bg-green-600 text-white text-[10px]">Completed</Badge>
+    if (thread.status === 'collapsed') return <Badge variant="destructive" className="text-[10px]">Lapsed</Badge>
+    if (last?.status === 'pending-user') return <Badge className="bg-blue-600 text-white text-[10px]">Action Required</Badge>
+    if (last?.status === 'pending-ai' || last?.status === 'stalling') {
+      const daysLeft = diffDays(currentDate, last.respondBy)
+      return <Badge variant="secondary" className="text-[10px]">Awaiting ~{Math.max(0, daysLeft)}d</Badge>
+    }
+    return <Badge variant="outline" className="text-[10px]">{last?.status}</Badge>
+  }
+
+  if (sorted.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <MessageSquare className="h-10 w-10 mx-auto text-muted-foreground/30 mb-3" />
+          <p className="text-muted-foreground font-medium">No active negotiations</p>
+          <p className="text-sm text-muted-foreground/70 mt-1">Submit an offer from the Make a Trade tab to start a negotiation thread.</p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  const activeThread = effectiveId ? (sorted.find((t) => t.id === effectiveId) ?? null) : null
+  const lastRound = activeThread?.rounds[activeThread.rounds.length - 1]
+
+  const myPlayers = Object.values(players).filter((p) => p.clubId === playerClubId)
+  const partnerPlayers = activeThread
+    ? Object.values(players).filter((p) => p.clubId === activeThread.partnerClubId)
+    : []
+
+  const handleCounter = () => {
+    if (!activeThread) return
+    counterNegotiationRound(
+      activeThread.id,
+      [...counterSendIds],
+      [...counterReceiveIds],
+    )
+    setShowCounter(false)
+    setCounterSendIds(new Set())
+    setCounterReceiveIds(new Set())
+  }
+
+  return (
+    <div className="flex gap-4 min-h-[480px]">
+      {/* Thread List */}
+      <div className="w-[260px] shrink-0 space-y-2">
+        {sorted.map((thread) => {
+          const partner = clubs[thread.partnerClubId]
+          const lastR = thread.rounds[thread.rounds.length - 1]
+          const playerNames = lastR?.offer.playerMoves.slice(0,3).map((m) => {
+            const p = players[m.playerId]
+            return p ? `${p.firstName[0]}. ${p.lastName}` : m.playerId
+          }).join(', ')
+
+          return (
+            <button
+              key={thread.id}
+              onClick={() => { setSelectedId(thread.id); setShowCounter(false) }}
+              className={`w-full text-left rounded-md border p-2.5 hover:bg-muted/40 transition-colors space-y-1 ${effectiveId === thread.id ? 'border-primary bg-muted/30' : ''}`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">{partner?.abbreviation ?? thread.partnerClubId}</span>
+                {statusBadge(thread)}
+              </div>
+              <p className="text-[11px] text-muted-foreground truncate">{playerNames || 'No players'}</p>
+              <p className="text-[10px] text-muted-foreground/60">Round {lastR?.roundNumber ?? 1} of {thread.maxRounds}</p>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Thread Detail */}
+      <div className="flex-1 space-y-3">
+        {activeThread ? (
+          <>
+            <LeveragePanel thread={activeThread} clubs={clubs} tradeHistory={tradeHistory} />
+
+            {/* Round History */}
+            <div className="rounded-md border">
+              <div className="px-3 py-2 text-sm font-medium border-b">Round History</div>
+              <ScrollArea className="max-h-[240px]">
+                <div className="p-3 space-y-2">
+                  {activeThread.rounds.map((round) => {
+                    const isByUser = round.offererId === playerClubId
+                    const sends = round.offer.playerMoves.filter((m) => m.fromClubId === playerClubId)
+                    const receives = round.offer.playerMoves.filter((m) => m.toClubId === playerClubId)
+                    return (
+                      <div key={round.roundNumber} className="rounded border p-2.5 space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-medium">Round {round.roundNumber} — {round.offeredAt}</span>
+                          <Badge variant="outline" className="text-[10px]">{round.status}</Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          <span className="text-red-500">↑ Sent: </span>
+                          {sends.map((m) => {
+                            const p = players[m.playerId]
+                            return p ? `${p.firstName} ${p.lastName}` : m.playerId
+                          }).join(', ') || '—'}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          <span className="text-green-500">↓ Receive: </span>
+                          {receives.map((m) => {
+                            const p = players[m.playerId]
+                            return p ? `${p.firstName} ${p.lastName}` : m.playerId
+                          }).join(', ') || '—'}
+                        </div>
+                        {round.aiMessage && !isByUser && (
+                          <p className="text-xs italic text-muted-foreground bg-muted/40 rounded px-2 py-1 mt-1">
+                            "{round.aiMessage}"
+                          </p>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </ScrollArea>
+            </div>
+
+            {/* Action Panel */}
+            <div className="rounded-md border p-3 space-y-3">
+              {activeThread.status === 'completed' && (
+                <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span className="text-sm font-medium">Trade completed</span>
+                </div>
+              )}
+              {activeThread.status === 'collapsed' && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <XCircle className="h-4 w-4" />
+                  <span className="text-sm">This negotiation lapsed. Start a new offer from Make a Trade.</span>
+                </div>
+              )}
+              {activeThread.status === 'active' && lastRound?.status === 'pending-user' && (
+                <div className="space-y-3">
+                  <p className="text-sm font-medium">
+                    {clubs[activeThread.partnerClubId]?.name ?? activeThread.partnerClubId} has responded
+                  </p>
+                  <div className="flex gap-2">
+                    <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={() => acceptNegotiationThread(activeThread.id)}>
+                      <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" /> Accept
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setShowCounter((v) => !v)}>
+                      <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Counter
+                    </Button>
+                    <Button size="sm" variant="destructive" onClick={() => rejectNegotiationThread(activeThread.id)}>
+                      <X className="h-3.5 w-3.5 mr-1.5" /> Walk Away
+                    </Button>
+                  </div>
+
+                  {showCounter && (
+                    <div className="rounded border p-3 space-y-3 bg-muted/20">
+                      <p className="text-xs font-medium text-muted-foreground">Counter Offer — modify your proposal</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <p className="text-xs font-medium mb-1">You Send</p>
+                          <ScrollArea className="h-[120px] border rounded">
+                            <div className="p-1 space-y-0.5">
+                              {myPlayers.map((p) => (
+                                <label key={p.id} className="flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-muted/40 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    className="h-3 w-3"
+                                    checked={counterSendIds.has(p.id)}
+                                    onChange={(e) => {
+                                      setCounterSendIds((prev) => {
+                                        const next = new Set(prev)
+                                        if (e.target.checked) next.add(p.id)
+                                        else next.delete(p.id)
+                                        return next
+                                      })
+                                    }}
+                                  />
+                                  <span className="text-xs">{p.firstName} {p.lastName}</span>
+                                </label>
+                              ))}
+                            </div>
+                          </ScrollArea>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium mb-1">You Receive</p>
+                          <ScrollArea className="h-[120px] border rounded">
+                            <div className="p-1 space-y-0.5">
+                              {partnerPlayers.map((p) => (
+                                <label key={p.id} className="flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-muted/40 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    className="h-3 w-3"
+                                    checked={counterReceiveIds.has(p.id)}
+                                    onChange={(e) => {
+                                      setCounterReceiveIds((prev) => {
+                                        const next = new Set(prev)
+                                        if (e.target.checked) next.add(p.id)
+                                        else next.delete(p.id)
+                                        return next
+                                      })
+                                    }}
+                                  />
+                                  <span className="text-xs">{p.firstName} {p.lastName}</span>
+                                </label>
+                              ))}
+                            </div>
+                          </ScrollArea>
+                        </div>
+                      </div>
+                      <Button size="sm" disabled={counterSendIds.size === 0 || counterReceiveIds.size === 0} onClick={handleCounter}>
+                        Send Counter
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {activeThread.status === 'active' && (lastRound?.status === 'pending-ai' || lastRound?.status === 'stalling') && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span className="text-sm">
+                    Waiting for response
+                    {lastRound.respondBy > currentDate
+                      ? ` — due ${lastRound.respondBy}`
+                      : ' — due soon'}
+                  </span>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+            Select a negotiation thread
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Trade Inbox Tab
 // ---------------------------------------------------------------------------
 
@@ -1049,11 +1415,70 @@ function formatOfferTitle(item: TradeInboxItem, clubs: Record<string, import('@/
     .join(' / ')
 }
 
+// ---------------------------------------------------------------------------
+// Trade Drama Timeline
+// ---------------------------------------------------------------------------
+
+const DRAMA_EVENT_STYLE: Record<TradeInboxEvent['type'], { label: string; dot: string; text: string }> = {
+  'new-offer':         { label: 'New Offer',        dot: 'bg-blue-500',   text: 'text-blue-400' },
+  'rival-bid':         { label: 'Rival Bid',         dot: 'bg-amber-500',  text: 'text-amber-400' },
+  'offer-improved':    { label: 'Offer Sweetened',   dot: 'bg-emerald-500',text: 'text-emerald-400' },
+  'offer-withdrawn':   { label: 'Offer Withdrawn',   dot: 'bg-red-500',    text: 'text-red-400' },
+  'deadline-pressure': { label: 'Deadline',          dot: 'bg-orange-500', text: 'text-orange-400' },
+  'player-push':       { label: 'Player Push',       dot: 'bg-purple-500', text: 'text-purple-400' },
+  'rival-withdrew':    { label: 'Rival Pulled Out',  dot: 'bg-slate-500',  text: 'text-slate-400' },
+}
+
+function TradeDramaTimeline({ drama }: { drama: TradeDramaState }) {
+  const recentEvents = [...drama.events].reverse().slice(0, 15)
+  if (recentEvents.length === 0) return null
+
+  return (
+    <Card>
+      <CardHeader className="pb-2 pt-3 px-4">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Bell className="h-4 w-4 text-amber-400" />
+          Trade Period Activity
+          {drama.biddingWars.length > 0 && (
+            <Badge className="ml-auto bg-amber-500/20 text-amber-400 border-amber-500/40 text-[10px]">
+              {drama.biddingWars.length} bidding war{drama.biddingWars.length !== 1 ? 's' : ''}
+            </Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="px-4 pb-3">
+        <div className="space-y-2">
+          {recentEvents.map((ev) => {
+            const style = DRAMA_EVENT_STYLE[ev.type]
+            const leverage = ev.leverageShift === 'seller'
+              ? <TrendingUp className="h-3 w-3 text-emerald-400" />
+              : ev.leverageShift === 'buyer'
+                ? <TrendingDown className="h-3 w-3 text-red-400" />
+                : <Minus className="h-3 w-3 text-muted-foreground" />
+            return (
+              <div key={ev.id} className="flex items-start gap-2.5 text-xs">
+                <div className={`mt-1.5 h-1.5 w-1.5 rounded-full shrink-0 ${style.dot}`} />
+                <div className="flex-1 min-w-0">
+                  <span className={`font-medium ${style.text}`}>{style.label}</span>
+                  <span className="text-muted-foreground"> · {ev.date}</span>
+                  <p className="text-muted-foreground mt-0.5 leading-snug">{ev.message}</p>
+                </div>
+                <div className="shrink-0 mt-0.5" title={`Leverage: ${ev.leverageShift}`}>{leverage}</div>
+              </div>
+            )
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function TradeInboxTab() {
   const playerClubId = useGameStore((s) => s.playerClubId)
   const clubs = useGameStore((s) => s.clubs)
   const players = useGameStore((s) => s.players)
   const tradeInbox = useGameStore((s) => s.tradeInbox)
+  const tradeDrama = useGameStore((s) => s.tradeDrama)
   const respondToTradeOffer = useGameStore((s) => s.respondToTradeOffer)
   const markTradeOfferRead = useGameStore((s) => s.markTradeOfferRead)
   const generateTradeInboxOffersAction = useGameStore((s) => s.generateTradeInboxOffersAction)
@@ -1067,6 +1492,15 @@ function TradeInboxTab() {
   )
 
   const pending = sorted.filter((item) => item.offer.status === 'pending-user')
+
+  // Map playerId → bidding war intensity for badge rendering
+  const biddingWarMap = useMemo(() => {
+    const map = new Map<string, BiddingWarCluster['intensity']>()
+    for (const bw of (tradeDrama?.biddingWars ?? [])) {
+      map.set(bw.playerId, bw.intensity)
+    }
+    return map
+  }, [tradeDrama])
 
   const handleRespond = (offerId: string, decision: 'accept' | 'reject' | 'counter') => {
     setError(null)
@@ -1117,6 +1551,10 @@ function TradeInboxTab() {
         </Button>
       </div>
 
+      {tradeDrama && tradeDrama.events.length > 0 && (
+        <TradeDramaTimeline drama={tradeDrama} />
+      )}
+
       {error && (
         <div className="rounded-md border border-red-500/50 bg-red-500/10 p-3 text-sm text-red-300">
           {error}
@@ -1140,6 +1578,12 @@ function TradeInboxTab() {
               .filter((x) => x.move.fromClubId === playerClubId && x.player)
             const isPending = item.offer.status === 'pending-user'
 
+            // Find the highest bidding-war intensity among outgoing players
+            const biddingWarIntensity = outgoing
+              .map((x) => biddingWarMap.get(x.move.playerId))
+              .filter((v): v is BiddingWarCluster['intensity'] => v !== undefined)
+              .sort((a, b) => ({ hot: 2, moderate: 1, mild: 0 }[b] - ({ hot: 2, moderate: 1, mild: 0 }[a])))[0]
+
             return (
               <Card
                 key={item.id}
@@ -1149,7 +1593,18 @@ function TradeInboxTab() {
                 <CardContent className="py-4 space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="space-y-1">
-                      <p className="font-semibold text-sm">{formatOfferTitle(item, clubs)}</p>
+                      <p className="font-semibold text-sm flex items-center gap-2 flex-wrap">
+                        {formatOfferTitle(item, clubs)}
+                        {biddingWarIntensity === 'hot' && (
+                          <Badge className="text-[10px] bg-red-500/20 text-red-400 border-red-500/40">🔥 Bidding War</Badge>
+                        )}
+                        {biddingWarIntensity === 'moderate' && (
+                          <Badge className="text-[10px] bg-amber-500/20 text-amber-400 border-amber-500/40">⚡ Multiple Suitors</Badge>
+                        )}
+                        {biddingWarIntensity === 'mild' && (
+                          <Badge className="text-[10px] bg-blue-500/20 text-blue-400 border-blue-500/40">Rival Interest</Badge>
+                        )}
+                      </p>
                       <p className="text-xs text-muted-foreground">
                         {item.offer.clubsInvolved.length > 2 ? 'Multi-club trade' : 'Two-club trade'} · {item.offer.createdAt}
                         {item.offer.expiresAt ? ` · expires ${item.offer.expiresAt}` : ''}
@@ -1848,7 +2303,7 @@ export function TradePage() {
         <div>
           <h1 className="text-2xl font-bold">Trade Centre</h1>
           <p className="text-sm text-muted-foreground">
-            {club?.fullName} &middot; {phaseLabel}
+            {club?.fullName} &middot; {phaseLabel} &middot; Respond to offers, propose deals, and manage the trade block
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -1902,12 +2357,14 @@ export function TradePage() {
           <TabsTrigger value="inbox">Trade Inbox</TabsTrigger>
           <TabsTrigger value="trade-block">Trade Block</TabsTrigger>
           <TabsTrigger value="make-trade">Make a Trade</TabsTrigger>
+          <TabsTrigger value="negotiate">Negotiate</TabsTrigger>
           <TabsTrigger value="shortlists">Shortlists</TabsTrigger>
           <TabsTrigger value="history">Trade History</TabsTrigger>
           <TabsTrigger value="rumours">Rumours</TabsTrigger>
         </TabsList>
 
         <TabsContent value="inbox">
+          <p className="text-sm text-muted-foreground pt-3 pb-2">Incoming and outgoing trade offers — accept, counter, or decline. Offers can arrive outside the trade period too.</p>
           {tradePeriodOpen ? (
             <TradeInboxTab />
           ) : (
@@ -1922,10 +2379,12 @@ export function TradePage() {
         </TabsContent>
 
         <TabsContent value="trade-block">
+          <p className="text-sm text-muted-foreground pt-3 pb-2">Players you've made available for trade, and players from other clubs listed on their trade block.</p>
           <TradeBlockTab />
         </TabsContent>
 
         <TabsContent value="make-trade">
+          <p className="text-sm text-muted-foreground pt-3 pb-2">Build a trade proposal — exchange players, draft picks, or a combination — and send it to another club.</p>
           {tradePeriodOpen ? (
             <MakeTradeTab />
           ) : (
@@ -1943,15 +2402,23 @@ export function TradePage() {
           )}
         </TabsContent>
 
+        <TabsContent value="negotiate">
+          <p className="text-sm text-muted-foreground pt-3 pb-2">Active trade negotiations — track AI responses, counter offers, and leverage intel.</p>
+          <NegotiateTab />
+        </TabsContent>
+
         <TabsContent value="shortlists">
+          <p className="text-sm text-muted-foreground pt-3 pb-2">Your saved lists of players you're targeting via trade. Organise targets into named lists to track interest.</p>
           <ShortlistManager targetTypeFilter="player" title="Trade Targets Shortlists" />
         </TabsContent>
 
         <TabsContent value="history">
+          <p className="text-sm text-muted-foreground pt-3 pb-2">Completed trades and their exchange grades — see what your club gave and received in every deal.</p>
           <TradeHistoryTab />
         </TabsContent>
 
         <TabsContent value="rumours">
+          <p className="text-sm text-muted-foreground pt-3 pb-2">League-wide trade gossip and player movement reports. Rumours aren't always accurate but signal where clubs are looking.</p>
           <RumoursTab />
         </TabsContent>
       </Tabs>

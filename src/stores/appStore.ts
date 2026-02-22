@@ -33,11 +33,14 @@ interface AppState {
   leaguePresets: LeaguePreset[]
   customLeagueTemplates: CustomLeagueTemplate[]
   initialized: boolean
+  /** Club being viewed in the Team subnav. null = player's own club. */
+  viewedTeamClubId: string | null
 }
 
 interface AppActions {
   initialize: () => Promise<void>
   setScreen: (screen: AppScreen) => void
+  setViewedTeamClubId: (id: string | null) => void
   saveCurrentGame: (gameState: GameState) => Promise<void>
   loadGame: (saveId: string) => Promise<GameState | null>
   deleteSave: (saveId: string) => Promise<void>
@@ -60,6 +63,7 @@ export const useAppStore = create<AppStore>()((set, get) => ({
   leaguePresets: [],
   customLeagueTemplates: [],
   initialized: false,
+  viewedTeamClubId: null,
 
   initialize: async () => {
     if (get().initialized) return
@@ -110,6 +114,7 @@ export const useAppStore = create<AppStore>()((set, get) => ({
   },
 
   setScreen: (screen) => set({ currentScreen: screen }),
+  setViewedTeamClubId: (id) => set({ viewedTeamClubId: id }),
 
   saveCurrentGame: async (gameState) => {
     await saveGameToSlot(gameState)

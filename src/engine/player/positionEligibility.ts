@@ -33,7 +33,7 @@ export function getPlayerEligiblePositionTypes(
   const ordered = new Set<PlayerPositionType>([player.position.primary])
 
   if (resolved.includeSecondary) {
-    for (const secondary of player.position.secondary) {
+    for (const secondary of (player.position.secondary ?? [])) {
       ordered.add(secondary)
     }
   }

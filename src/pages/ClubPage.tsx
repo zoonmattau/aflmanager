@@ -56,7 +56,9 @@ import {
   Swords,
   Heart,
   Megaphone,
+  Shield,
 } from 'lucide-react'
+import { LeadershipPanel } from '@/components/club/LeadershipPanel'
 import { getDynastyStats } from '@/engine/history/historyEngine'
 import { getClubIdentity, getClubIdentityLabel, getFanExpectationLabel } from '@/engine/clubs/identity'
 import { formatInflationRate, formatInflationIndex } from '@/engine/inflation/inflationEngine'
@@ -718,6 +720,10 @@ export function ClubPage() {
           <TabsTrigger value="finances">Finances</TabsTrigger>
           <TabsTrigger value="boardroom">Board Room</TabsTrigger>
           <TabsTrigger value="budget">Budget</TabsTrigger>
+          <TabsTrigger value="leadership">
+            <Shield className="mr-1 h-3 w-3" />
+            Leadership
+          </TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
           <TabsTrigger value="rivalries">Rivalries</TabsTrigger>
         </TabsList>
@@ -842,6 +848,7 @@ export function ClubPage() {
         {/* Finances Tab                                                    */}
         {/* ============================================================== */}
         <TabsContent value="finances" className="space-y-4">
+          <p className="text-sm text-muted-foreground pt-3 pb-1">Revenue streams, operating expenses, and current cash position. Full detail is on the Finances page.</p>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Revenue Card */}
             <Card>
@@ -1028,6 +1035,7 @@ export function ClubPage() {
         {/* Board Room Tab                                                  */}
         {/* ============================================================== */}
         <TabsContent value="boardroom" className="space-y-4">
+          <p className="text-sm text-muted-foreground pt-3 pb-1">Board expectations, confidence levels, and approval requirements. Meet directives to avoid losing your job.</p>
           {!settings.realism.boardPressure && (
             <Badge variant="secondary" className="text-sm">
               Board pressure is disabled
@@ -1349,9 +1357,23 @@ export function ClubPage() {
         </TabsContent>
 
         {/* ============================================================== */}
+        {/* Leadership Tab                                                  */}
+        {/* ============================================================== */}
+        <TabsContent value="leadership" className="space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold">Club Leadership</h2>
+            <p className="text-sm text-muted-foreground">
+              Manage the captain, vice-captain, and leadership group. Mid-season changes trigger morale and cohesion effects.
+            </p>
+          </div>
+          <LeadershipPanel clubId={clubId} readOnly={!isOwnClub} />
+        </TabsContent>
+
+        {/* ============================================================== */}
         {/* History Tab                                                     */}
         {/* ============================================================== */}
         <TabsContent value="history" className="space-y-4">
+          <p className="text-sm text-muted-foreground pt-3 pb-1">Club premierships, records, and season-by-season results. Hall of Fame players are inducted here too.</p>
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">

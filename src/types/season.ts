@@ -1,4 +1,6 @@
 export type MatchDay =
+  | 'Tuesday'
+  | 'Wednesday'
   | 'Thursday'
   | 'Friday'
   | 'Saturday-Early'

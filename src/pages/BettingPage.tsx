@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -34,7 +34,7 @@ function OddsBadge({ odds, highlight }: { odds: number; highlight?: boolean }) {
         highlight ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"
       }`}
     >
-      {odds.toFixed(2)}
+      ${odds.toFixed(2)}
     </span>
   )
 }
@@ -483,6 +483,12 @@ function HistoryTab() {
 export function BettingPage() {
   const settings = useGameStore((s) => s.settings)
   const bettingMarkets = useGameStore((s) => s.bettingMarkets)
+  const refreshBettingMarkets = useGameStore((s) => s.refreshBettingMarkets)
+
+  useEffect(() => {
+    if (settings.betting?.enabled) refreshBettingMarkets()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   if (!settings.betting?.enabled) {
     return (

@@ -4,6 +4,8 @@ import type {
   SpecialEventsState,
   SpecialEventInstance,
   OriginConfig,
+  SpecialEventManualTiming,
+  SpecialEventSchedule,
 } from '@/types/specialEvents'
 import type { SeededRNG } from '@/engine/core/rng'
 import { SPECIAL_EVENT_DEFINITIONS } from './eventDefinitions'
@@ -69,29 +71,38 @@ export function scheduleSpecialEvents(
     for (let m = 0; m < def.matchCount; m++) {
       let scheduledDate: string
 
-      switch (def.timing) {
-        case 'preseason': {
-          const daysBefore = 14 + preseasonOffset * 7
-          scheduledDate = addDays(seasonStartDate, -daysBefore)
-          preseasonOffset++
-          break
-        }
-        case 'mid-season': {
-          const byeIdx = midSeasonSlot % availableByes.length
-          const roundNum = availableByes[byeIdx]!
-          scheduledDate = addDays(seasonStartDate, roundNum * 7 + 3)
-          midSeasonSlot++
-          break
-        }
-        case 'post-season': {
-          const finalsEndOffset = totalRounds * 7 + 35
-          scheduledDate = addDays(seasonStartDate, finalsEndOffset + postSeasonOffset * 7)
-          postSeasonOffset++
-          break
+      const manualSchedule = !settings.autoSchedule
+        ? (settings.eventSchedules?.[def.id] ?? null)
+        : null
+
+      if (manualSchedule) {
+        scheduledDate = getManualEventDate(manualSchedule, m, seasonStartDate, totalRounds, availableByes)
+      } else {
+        switch (def.timing) {
+          case 'preseason': {
+            const daysBefore = 14 + preseasonOffset * 7
+            scheduledDate = addDays(seasonStartDate, -daysBefore)
+            preseasonOffset++
+            break
+          }
+          case 'mid-season': {
+            const byeIdx = midSeasonSlot % availableByes.length
+            const roundNum = availableByes[byeIdx]!
+            scheduledDate = addDays(seasonStartDate, roundNum * 7 + 3)
+            midSeasonSlot++
+            break
+          }
+          case 'post-season': {
+            const finalsEndOffset = totalRounds * 7 + 35
+            scheduledDate = addDays(seasonStartDate, finalsEndOffset + postSeasonOffset * 7)
+            postSeasonOffset++
+            break
+          }
         }
       }
 
-      const venue = def.defaultVenues[m % def.defaultVenues.length]!
+      const defaultVenue = def.defaultVenues[m % def.defaultVenues.length]!
+      const venue = (manualSchedule?.venueOverride?.trim() || defaultVenue)
       const { teamA, teamB } = selectEventTeams(def, players, rng, m, settings.originEligibility)
 
       events.push({
@@ -114,6 +125,47 @@ export function scheduleSpecialEvents(
   events.sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate))
 
   return { events, seriesResults: {}, originStandings: [] }
+}
+
+// ---------------------------------------------------------------------------
+// Manual (user-defined) scheduling
+// ---------------------------------------------------------------------------
+
+function getManualEventDate(
+  schedule: SpecialEventSchedule,
+  matchIndex: number,
+  seasonStartDate: string,
+  totalRounds: number,
+  availableByes: number[],
+): string {
+  // Space multiple matches of the same event 7 days apart
+  const matchOffset = matchIndex * 7
+  switch (schedule.timing as SpecialEventManualTiming) {
+    case 'preseason':
+      return addDays(seasonStartDate, -14 + matchOffset)
+    case 'early-season': {
+      const round = Math.max(1, Math.round(totalRounds * 0.2))
+      return addDays(seasonStartDate, round * 7 + 3 + matchOffset)
+    }
+    case 'mid-season': {
+      const byeRound = availableByes.length > 0
+        ? availableByes[matchIndex % availableByes.length]!
+        : Math.round(totalRounds / 2)
+      return addDays(seasonStartDate, byeRound * 7 + 3 + matchOffset)
+    }
+    case 'late-season': {
+      const round = Math.max(1, Math.round(totalRounds * 0.8))
+      return addDays(seasonStartDate, round * 7 + 3 + matchOffset)
+    }
+    case 'pre-finals':
+      return addDays(seasonStartDate, totalRounds * 7 - 4 + matchOffset)
+    case 'post-season':
+      return addDays(seasonStartDate, totalRounds * 7 + 35 + matchOffset)
+    case 'custom-round': {
+      const round = Math.max(1, Math.min(schedule.customRound, totalRounds))
+      return addDays(seasonStartDate, (round - 1) * 7 + 3 + matchOffset)
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

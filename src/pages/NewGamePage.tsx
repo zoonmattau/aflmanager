@@ -24,13 +24,18 @@ import {
   RotateCcw,
   Play,
   Trophy,
+  Sun,
+  Moon,
+  Briefcase,
+  MapPin,
+  Settings2,
 } from 'lucide-react'
+import { useTheme } from '@/components/layout/ThemeProvider'
 import clubsData from '@/data/clubs.json'
 import { FINALS_FORMATS } from '@/engine/season/finalsFormats'
 import { DIFFICULTY_PRESETS } from '@/engine/core/difficultyPresets'
 import { createDefaultSettings, GF_VENUES, DEFAULT_ORIGIN_CONFIG } from '@/engine/core/defaultSettings'
 import { addDays, computeDefaultGameStartDate, diffDays, formatDate } from '@/engine/calendar/calendarEngine'
-import { generateFictionalLeague } from '@/engine/league/leagueGenerator'
 import { buildClubsFromTemplate, buildLeagueConfigFromTemplate, buildSettingsFromTemplate } from '@/engine/league/customLeagueBuilder'
 import type { Club } from '@/types/club'
 import type { CustomLeagueTemplate } from '@/types/customLeague'
@@ -38,6 +43,8 @@ import type { LeagueConfig } from '@/types/expansion'
 import type { OffseasonPhase } from '@/engine/season/offseasonFlow'
 import type { StateLeague, StateLeagueId } from '@/types/stateLeague'
 import { AdvancedSection } from '@/pages/wizard/AdvancedSection'
+import { FictionalWorldWizard } from '@/pages/wizard/FictionalWorldWizard'
+import type { WizardResult } from '@/pages/wizard/FictionalWorldWizard'
 import { MatchSlotGrid } from '@/pages/wizard/MatchSlotGrid'
 import { BlockbusterEditor } from '@/pages/wizard/BlockbusterEditor'
 import { FinalsFormatEditor } from '@/pages/wizard/FinalsFormatEditor'
@@ -179,15 +186,15 @@ function OriginConfigPanel({
   ]
 
   return (
-    <div className="space-y-4 border-t border-zinc-800 pt-3">
+    <div className="space-y-4 border-t border-border pt-3">
       <div>
         <Label className="text-sm font-medium text-amber-400">State of Origin Configuration</Label>
-        <p className="text-[10px] text-zinc-500 mt-1">{summaryParts.join(' — ')}</p>
+        <p className="mt-1 text-[10px] text-muted-foreground/70">{summaryParts.join(' — ')}</p>
       </div>
 
       {/* Competition Format */}
       <div className="space-y-1.5">
-        <Label className="text-zinc-200">Competition Format</Label>
+        <Label className="text-foreground">Competition Format</Label>
         <Select
           value={config.format}
           onValueChange={(val) => {
@@ -196,7 +203,7 @@ function OriginConfigPanel({
             update({ format: fmt, matchCount: newCount })
           }}
         >
-          <SelectTrigger className="w-full border-zinc-700 bg-zinc-800 text-zinc-200">
+          <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -209,26 +216,26 @@ function OriginConfigPanel({
 
       {/* Number of Matches */}
       <div className="space-y-1.5">
-        <Label className="text-zinc-200">Number of Matches</Label>
-        <p className="text-[10px] text-zinc-500">Default: {defaultMatchCount} for {ORIGIN_FORMAT_LABELS[config.format].toLowerCase()} with {teamCount} teams</p>
+        <Label className="text-foreground">Number of Matches</Label>
+        <p className="text-[10px] text-muted-foreground/70">Default: {defaultMatchCount} for {ORIGIN_FORMAT_LABELS[config.format].toLowerCase()} with {teamCount} teams</p>
         <Input
           type="number"
           min={1}
           max={20}
           value={config.matchCount}
           onChange={(e) => update({ matchCount: Math.max(1, Math.min(20, parseInt(e.target.value, 10) || 1)) })}
-          className="w-24 border-zinc-700 bg-zinc-800 text-zinc-200"
+          className="w-24"
         />
       </div>
 
       {/* Participating States */}
       <div className="space-y-1.5">
-        <Label className="text-zinc-200">Participating States</Label>
+        <Label className="text-foreground">Participating States</Label>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {ALL_ORIGIN_STATES.map((state) => {
             const checked = config.participatingStates.includes(state)
             return (
-              <label key={state} className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+              <label key={state} className="flex cursor-pointer items-center gap-2 text-sm text-foreground/80">
                 <input
                   type="checkbox"
                   checked={checked}
@@ -253,8 +260,8 @@ function OriginConfigPanel({
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <div>
-            <Label className="text-zinc-200">Allies Team</Label>
-            <p className="text-xs text-zinc-500">Merge smaller states into a combined team</p>
+            <Label className="text-foreground">Allies Team</Label>
+            <p className="text-xs text-muted-foreground/70">Merge smaller states into a combined team</p>
           </div>
           <Switch
             checked={config.alliesEnabled}
@@ -267,23 +274,23 @@ function OriginConfigPanel({
           />
         </div>
         {config.alliesEnabled && (
-          <div className="space-y-2 pl-4 border-l-2 border-zinc-700">
+          <div className="space-y-2 border-l-2 border-border pl-4">
             <div className="space-y-1">
-              <Label className="text-zinc-400 text-xs">Team Name</Label>
+              <Label className="text-xs text-muted-foreground">Team Name</Label>
               <Input
                 value={config.alliesName}
                 onChange={(e) => update({ alliesName: e.target.value || 'Allies' })}
-                className="w-48 border-zinc-700 bg-zinc-800 text-zinc-200"
+                className="w-48"
                 placeholder="Allies"
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-zinc-400 text-xs">States in Allies</Label>
+              <Label className="text-xs text-muted-foreground">States in Allies</Label>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {ALL_ORIGIN_STATES.map((state) => {
                   const checked = config.alliesStates.includes(state)
                   return (
-                    <label key={state} className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                    <label key={state} className="flex cursor-pointer items-center gap-2 text-sm text-foreground/80">
                       <input
                         type="checkbox"
                         checked={checked}
@@ -310,12 +317,12 @@ function OriginConfigPanel({
 
       {/* Scheduling Mode */}
       <div className="space-y-1.5">
-        <Label className="text-zinc-200">Scheduling</Label>
+        <Label className="text-foreground">Scheduling</Label>
         <Select
           value={config.scheduleMode}
           onValueChange={(val) => update({ scheduleMode: val as OriginScheduleMode })}
         >
-          <SelectTrigger className="w-full border-zinc-700 bg-zinc-800 text-zinc-200">
+          <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -328,12 +335,12 @@ function OriginConfigPanel({
 
       {/* Match Day */}
       <div className="space-y-1.5">
-        <Label className="text-zinc-200">Match Day</Label>
+        <Label className="text-foreground">Match Day</Label>
         <Select
           value={config.matchDay}
           onValueChange={(val) => update({ matchDay: val as 'tuesday' | 'wednesday' | 'thursday' })}
         >
-          <SelectTrigger className="w-full border-zinc-700 bg-zinc-800 text-zinc-200">
+          <SelectTrigger className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -348,8 +355,8 @@ function OriginConfigPanel({
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <div>
-            <Label className="text-zinc-200">Showdown Final</Label>
-            <p className="text-xs text-zinc-500">Grand-final-adjacent showcase match between top 2 Origin teams</p>
+            <Label className="text-foreground">Showdown Final</Label>
+            <p className="text-xs text-muted-foreground/70">Grand-final-adjacent showcase match between top 2 Origin teams</p>
           </div>
           <Switch
             checked={config.includeShowdownFinal}
@@ -357,14 +364,14 @@ function OriginConfigPanel({
           />
         </div>
         {config.includeShowdownFinal && (
-          <div className="space-y-2 pl-4 border-l-2 border-zinc-700">
+          <div className="space-y-2 border-l-2 border-border pl-4">
             <div className="space-y-1">
-              <Label className="text-zinc-400 text-xs">Timing</Label>
+              <Label className="text-xs text-muted-foreground">Timing</Label>
               <Select
                 value={config.showdownFinalTiming}
                 onValueChange={(val) => update({ showdownFinalTiming: val as 'before-gf' | 'after-gf' })}
               >
-                <SelectTrigger className="w-48 border-zinc-700 bg-zinc-800 text-zinc-200">
+                <SelectTrigger className="w-48">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -374,12 +381,12 @@ function OriginConfigPanel({
               </Select>
             </div>
             <div className="space-y-1">
-              <Label className="text-zinc-400 text-xs">Venue</Label>
+              <Label className="text-xs text-muted-foreground">Venue</Label>
               <Select
                 value={config.showdownFinalVenue}
                 onValueChange={(val) => update({ showdownFinalVenue: val })}
               >
-                <SelectTrigger className="w-48 border-zinc-700 bg-zinc-800 text-zinc-200">
+                <SelectTrigger className="w-48">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -404,6 +411,7 @@ export function NewGamePage() {
   const [clubSearch, setClubSearch] = useState('')
   const [settings, setSettings] = useState<GameSettings>(createDefaultSettings())
 
+  const { resolvedTheme, setTheme } = useTheme()
   const initializeGame = useGameStore((s) => s.initializeGame)
   const setScreen = useAppStore((s) => s.setScreen)
   const saveCurrentGame = useAppStore((s) => s.saveCurrentGame)
@@ -415,6 +423,7 @@ export function NewGamePage() {
   )
 
   const [fictionalClubs, setFictionalClubs] = useState<Club[]>([])
+  const [showFictionalWizard, setShowFictionalWizard] = useState(false)
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('')
 
   const selectedTemplate: CustomLeagueTemplate | null = useMemo(
@@ -544,8 +553,34 @@ export function NewGamePage() {
     }).format(amount)
   }
 
-  const handleGenerateFictional = () => {
-    setFictionalClubs(generateFictionalLeague(settings.teamCount, Date.now()))
+  const handleFictionalConfirm = (result: WizardResult) => {
+    setFictionalClubs(result.clubs)
+    setSettings((prev) => ({
+      ...prev,
+      teamCount: result.teamCount,
+      leagueNamingTemplate: result.leagueNamingTemplate,
+      includePathwayLeagues: result.includePathwayLeagues,
+      salaryCap: result.salaryCap,
+      salaryCapAmount: result.salaryCapAmount,
+      injuryFrequency: result.injuryFrequency,
+      developmentSpeed: result.developmentSpeed,
+      seasonStructure: {
+        ...prev.seasonStructure,
+        regularSeasonRounds: result.regularSeasonRounds,
+        byeRounds: result.byeRounds,
+        byeRoundCount: result.byeRoundCount,
+      },
+      realism: {
+        ...prev.realism,
+        softCapSpending: result.realism.softCapSpending,
+        salaryDumpTrades: result.realism.salaryDumpTrades,
+        mediaLeaks: result.realism.mediaLeaks,
+        negotiationDelays: result.realism.negotiationDelays,
+        draftVariance: result.realism.draftVariance,
+        ngaAcademy: result.realism.ngaAcademy,
+      },
+    }))
+    setShowFictionalWizard(false)
     setSelectedClub(null)
     setStartUnemployed(false)
   }
@@ -553,39 +588,48 @@ export function NewGamePage() {
   const canStart = (selectedClub !== null || startUnemployed) && saveName.trim().length > 0
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-zinc-950">
+    <div className="flex h-screen flex-col overflow-hidden bg-background">
       {/* Slim header */}
-      <div className="flex shrink-0 items-center justify-between border-b border-zinc-800 px-5 py-3">
+      <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-3">
         <Button
           variant="ghost"
           size="sm"
-          className="text-zinc-400 hover:text-white"
+          className="text-muted-foreground hover:text-foreground"
           onClick={() => setScreen('home')}
         >
           <ChevronLeft className="mr-1 h-4 w-4" />
           Menu
         </Button>
-        <p className="text-sm font-semibold text-zinc-300">
-          AFL Manager <span className="text-zinc-600">·</span>{' '}
-          <span className="font-normal text-zinc-500">New Career</span>
+        <p className="text-sm font-semibold text-foreground/80">
+          AFL Manager <span className="text-muted-foreground/50">·</span>{' '}
+          <span className="font-normal text-muted-foreground/70">New Career</span>
         </p>
-        <div className="w-16" />
+        <div className="flex w-16 justify-end">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+            onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+          >
+            {resolvedTheme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </Button>
+        </div>
       </div>
 
       {/* Main content: two-column split */}
       <div className="flex flex-1 overflow-hidden">
 
         {/* ── Left: Club Selection ────────────────────────── */}
-        <div className="flex w-[58%] flex-col overflow-hidden border-r border-zinc-800">
+        <div className="flex w-[58%] flex-col overflow-hidden border-r border-border">
           {/* Search bar */}
-          <div className="shrink-0 border-b border-zinc-800 px-4 py-3">
+          <div className="shrink-0 border-b border-border px-4 py-3">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/70" />
               <input
                 value={clubSearch}
                 onChange={(e) => setClubSearch(e.target.value)}
                 placeholder="Search clubs..."
-                className="h-9 w-full rounded-md border border-zinc-700 bg-zinc-800/50 pl-9 pr-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-zinc-500"
+                className="h-9 w-full rounded-md border border-border bg-muted/50 pl-9 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground/50 focus:border-ring"
               />
             </div>
           </div>
@@ -595,27 +639,34 @@ export function NewGamePage() {
             {/* Start unemployed */}
             <button
               className={cn(
-                'w-full rounded-lg border-2 p-3 text-left transition-all duration-200',
+                'w-full overflow-hidden rounded-xl border-2 text-left transition-all duration-200',
                 startUnemployed
-                  ? 'border-amber-500 bg-amber-500/10 shadow-[0_0_16px_rgba(245,158,11,0.15)]'
-                  : 'border-zinc-800 bg-zinc-900/50 hover:border-zinc-600',
+                  ? 'border-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.12)]'
+                  : 'border-border bg-card/50 hover:border-muted-foreground/30 hover:shadow-md',
               )}
               onClick={() => { setStartUnemployed(true); setSelectedClub(null) }}
             >
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <p className="font-semibold text-zinc-100">Start Unemployed</p>
-                  <p className="text-xs text-zinc-400">Enter the coaching market without a club</p>
+              <div className={cn('h-1 w-full transition-colors', startUnemployed ? 'bg-amber-500' : 'bg-border')} />
+              <div className={cn('flex items-center gap-3 p-3', startUnemployed && 'bg-amber-500/8')}>
+                <div className={cn(
+                  'flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors',
+                  startUnemployed ? 'bg-amber-500/20' : 'bg-muted',
+                )}>
+                  <Briefcase className={cn('h-4 w-4', startUnemployed ? 'text-amber-400' : 'text-muted-foreground/50')} />
                 </div>
-                {startUnemployed && <CheckCircle2 className="h-5 w-5 shrink-0 text-amber-400" />}
+                <div className="min-w-0 flex-1">
+                  <p className={cn('text-sm font-semibold', startUnemployed ? 'text-amber-200' : 'text-foreground')}>Start Unemployed</p>
+                  <p className="text-[11px] text-muted-foreground">Enter the coaching market without a club</p>
+                </div>
+                {startUnemployed && <CheckCircle2 className="h-4 w-4 shrink-0 text-amber-400" />}
               </div>
             </button>
 
             {/* Fictional: prompt to generate */}
             {settings.leagueMode === 'fictional' && fictionalClubs.length === 0 && (
-              <div className="rounded-lg border border-dashed border-zinc-700 bg-zinc-900/30 py-10 text-center">
-                <Shield className="mx-auto mb-3 h-8 w-8 text-zinc-600" />
-                <p className="text-sm text-zinc-400">Click &quot;Generate Clubs&quot; in the settings panel</p>
+              <div className="rounded-lg border border-dashed border-border bg-muted/20 py-10 text-center">
+                <Shield className="mx-auto mb-3 h-8 w-8 text-muted-foreground/50" />
+                <p className="text-sm text-muted-foreground">Click &quot;Generate Clubs&quot; in the settings panel</p>
               </div>
             )}
 
@@ -628,43 +679,54 @@ export function NewGamePage() {
                     <button
                       key={club.id}
                       className={cn(
-                        'rounded-lg border-2 p-3 text-left transition-all duration-200 hover:scale-[1.01]',
+                        'overflow-hidden rounded-xl border-2 text-left transition-all duration-200',
                         isSelected
                           ? 'shadow-lg'
-                          : 'border-zinc-800 bg-zinc-900/50 hover:border-zinc-600 hover:bg-zinc-800/50',
+                          : 'border-border bg-card/50 hover:border-muted-foreground/30 hover:shadow-md',
                       )}
                       style={isSelected ? {
                         borderColor: club.colors.primary,
-                        backgroundColor: ,
-                        boxShadow: ,
+                        boxShadow: `0 0 16px ${club.colors.primary}35`,
                       } : undefined}
                       onClick={() => { setSelectedClub(club.id); setStartUnemployed(false) }}
                     >
-                      <div className="flex items-center gap-2.5">
-                        <div
-                          className="h-8 w-8 shrink-0 rounded-full shadow-inner"
-                          style={{ background:  }}
-                        />
-                        <div className="min-w-0 flex-1">
-                          <p className={cn('truncate text-sm font-semibold', isSelected ? 'text-white' : 'text-zinc-200')}>
-                            {club.fullName}
-                          </p>
-                          <div className="mt-0.5 flex items-center gap-2 text-[10px] text-zinc-500">
-                            {club.premierships != null && (
-                              <span className="flex items-center gap-0.5">
-                                <Trophy className="h-2.5 w-2.5" />
-                                {club.premierships}
-                              </span>
-                            )}
-                            {club.established && <span>Est. {club.established}</span>}
-                          </div>
-                        </div>
-                        {isSelected && (
-                          <CheckCircle2
-                            className="h-4 w-4 shrink-0"
-                            style={{ color: club.colors.primary }}
+                      {/* Color stripe */}
+                      <div
+                        className="h-1 w-full"
+                        style={{ background: `linear-gradient(to right, ${club.colors.primary}, ${club.colors.secondary})` }}
+                      />
+                      {/* Card body */}
+                      <div
+                        className="p-3"
+                        style={isSelected ? { background: `linear-gradient(135deg, ${club.colors.primary}18, ${club.colors.secondary}10)` } : undefined}
+                      >
+                        <div className="flex items-start gap-2.5">
+                          <div
+                            className="mt-0.5 h-10 w-10 shrink-0 rounded-full shadow-md"
+                            style={{ background: `linear-gradient(135deg, ${club.colors.primary}, ${club.colors.secondary})` }}
                           />
-                        )}
+                          <div className="min-w-0 flex-1">
+                            <p className={cn('truncate text-sm font-bold leading-tight', isSelected ? 'text-white' : 'text-foreground')}>
+                              {club.fullName}
+                            </p>
+                            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{club.homeGround}</p>
+                            <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground/60">
+                              {club.premierships != null && (
+                                <span className="flex items-center gap-0.5">
+                                  <Trophy className="h-2.5 w-2.5" />
+                                  {club.premierships}
+                                </span>
+                              )}
+                              {club.established && <span>Est. {club.established}</span>}
+                            </div>
+                          </div>
+                          {isSelected && (
+                            <CheckCircle2
+                              className="mt-0.5 h-4 w-4 shrink-0"
+                              style={{ color: club.colors.primary }}
+                            />
+                          )}
+                        </div>
                       </div>
                     </button>
                   )
@@ -672,139 +734,182 @@ export function NewGamePage() {
               </div>
             )}
             {filteredClubs.length === 0 && clubs.length > 0 && (
-              <p className="py-8 text-center text-sm text-zinc-500">No clubs match your search.</p>
+              <p className="py-8 text-center text-sm text-muted-foreground/70">No clubs match your search.</p>
             )}
           </div>
         </div>
 
         {/* -- Right: Setup & Start -- */}
-        <div className="flex w-[42%] flex-col overflow-hidden bg-zinc-950/50">
+        <div className="flex w-[42%] flex-col overflow-hidden bg-muted/5">
           <div className="flex-1 space-y-4 overflow-y-auto p-5">
 
             {/* Selected club / state preview */}
             {startUnemployed ? (
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
-                <p className="font-semibold text-amber-300">Starting Unemployed</p>
-                <p className="mt-0.5 text-xs text-zinc-400">Apply for vacant coaching roles to begin</p>
+              <div className="overflow-hidden rounded-xl border-2 border-amber-500/60">
+                <div className="h-1.5 bg-amber-500" />
+                <div className="flex items-center gap-4 bg-amber-500/8 p-4">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-amber-500/20">
+                    <Briefcase className="h-5 w-5 text-amber-400" />
+                  </div>
+                  <div>
+                    <p className="font-bold text-amber-200">Starting Unemployed</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">Apply for vacant coaching roles to begin your career</p>
+                  </div>
+                </div>
               </div>
             ) : selectedClubData ? (
               <div
-                className="rounded-lg border-2 p-4"
-                style={{
-                  borderColor: selectedClubData.colors.primary,
-                  background: ,
-                }}
+                className="relative overflow-hidden rounded-xl border-2"
+                style={{ borderColor: selectedClubData.colors.primary }}
               >
-                <div className="flex items-center gap-3">
+                <div
+                  className="absolute inset-0"
+                  style={{ background: `linear-gradient(135deg, ${selectedClubData.colors.primary}28, ${selectedClubData.colors.secondary}18)` }}
+                />
+                <div className="relative flex items-center gap-4 p-5">
                   <div
-                    className="h-12 w-12 shrink-0 rounded-full shadow-md"
-                    style={{ background:  }}
+                    className="h-14 w-14 shrink-0 rounded-full shadow-xl ring-2 ring-white/10"
+                    style={{ background: `linear-gradient(135deg, ${selectedClubData.colors.primary}, ${selectedClubData.colors.secondary})` }}
                   />
                   <div className="min-w-0">
-                    <p className="truncate text-lg font-bold text-white">{selectedClubData.fullName}</p>
-                    <p className="truncate text-xs text-zinc-400">{selectedClubData.homeGround}</p>
-                    {selectedClubData.premierships != null && (
-                      <p className="mt-0.5 flex items-center gap-1 text-[10px] text-zinc-500">
-                        <Trophy className="h-3 w-3" />
-                        {selectedClubData.premierships} premiership{selectedClubData.premierships !== 1 ? 's' : ''}
-                      </p>
+                    <p className="truncate text-xl font-black leading-tight text-white">{selectedClubData.fullName}</p>
+                    <div className="mt-1 flex items-center gap-1 text-xs text-white/60">
+                      <MapPin className="h-3 w-3 shrink-0" />
+                      <span className="truncate">{selectedClubData.homeGround}</span>
+                    </div>
+                    {(selectedClubData.premierships != null || selectedClubData.established) && (
+                      <div className="mt-1 flex items-center gap-2 text-[11px] text-white/40">
+                        {selectedClubData.premierships != null && (
+                          <span className="flex items-center gap-1">
+                            <Trophy className="h-3 w-3" />
+                            {selectedClubData.premierships} premiership{selectedClubData.premierships !== 1 ? 's' : ''}
+                          </span>
+                        )}
+                        {selectedClubData.established && <span>Est. {selectedClubData.established}</span>}
+                      </div>
                     )}
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="rounded-lg border border-dashed border-zinc-700 p-4 text-center">
-                <Shield className="mx-auto mb-2 h-7 w-7 text-zinc-600" />
-                <p className="text-sm text-zinc-500">Select a club on the left to begin</p>
+              <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border py-6 text-center">
+                <Shield className="h-8 w-8 text-muted-foreground/30" />
+                <p className="text-sm font-medium text-muted-foreground/60">Choose your club</p>
+                <p className="text-xs text-muted-foreground/40">Select from the list on the left</p>
               </div>
             )}
 
-            {/* Manager details */}
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-                  Manager Name <span className="normal-case text-zinc-600">(optional)</span>
-                </Label>
-                <Input
-                  value={managerName}
-                  onChange={(e) => setManagerName(e.target.value)}
-                  placeholder="Your name"
-                  className="h-9 border-zinc-700 bg-zinc-800/50 text-white placeholder:text-zinc-600"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-                  Save Name <span className="text-red-500">*</span>
-                </Label>
-                <Input
-                  value={saveName}
-                  onChange={(e) => setSaveName(e.target.value)}
-                  placeholder="My Career"
-                  className="h-9 border-zinc-700 bg-zinc-800/50 text-white placeholder:text-zinc-600"
-                />
-                {saveName.trim().length === 0 && (
-                  <p className="text-[10px] text-red-400">Save name is required</p>
-                )}
+            {/* Career details */}
+            <div className="rounded-xl border border-border bg-card/40 p-4">
+              <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50">Career Details</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">
+                    Manager Name <span className="text-muted-foreground/40">(optional)</span>
+                  </Label>
+                  <Input
+                    value={managerName}
+                    onChange={(e) => setManagerName(e.target.value)}
+                    placeholder="Your name"
+                    className="h-9"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">
+                    Save Name <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    value={saveName}
+                    onChange={(e) => setSaveName(e.target.value)}
+                    placeholder="My Career"
+                    className={cn('h-9', !saveName.trim() && 'border-destructive/50 focus-visible:ring-destructive/30')}
+                  />
+                  {!saveName.trim() && (
+                    <p className="text-[10px] text-destructive/80">Required to save your game</p>
+                  )}
+                </div>
               </div>
             </div>
 
             {/* League Mode */}
             <div className="space-y-2">
-              <Label className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">League</Label>
-              <div className="grid grid-cols-3 gap-1.5">
+              <Label className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">League Mode</Label>
+              <div className="grid grid-cols-3 gap-2">
                 {([
-                  { id: 'real' as const, label: 'Real AFL' },
-                  { id: 'fictional' as const, label: 'Fictional' },
-                  { id: 'custom' as const, label: 'Custom' },
-                ]).map((mode) => (
-                  <button
-                    key={mode.id}
-                    className={cn(
-                      'rounded-md border px-2 py-1.5 text-xs font-medium transition-colors',
-                      settings.leagueMode === mode.id
-                        ? 'border-blue-500 bg-blue-500/20 text-blue-300'
-                        : 'border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200',
-                    )}
-                    onClick={() => {
-                      setSettings((prev) => ({ ...prev, leagueMode: mode.id }))
-                      setSelectedClub(null)
-                      setStartUnemployed(false)
-                    }}
-                  >
-                    {mode.label}
-                  </button>
-                ))}
+                  { id: 'real' as const, label: 'Real AFL', desc: '18 real clubs & venues' },
+                  { id: 'fictional' as const, label: 'Fictional', desc: 'Generate custom clubs' },
+                  { id: 'custom' as const, label: 'Custom', desc: 'Use a saved template' },
+                ]).map((mode) => {
+                  const active = settings.leagueMode === mode.id
+                  return (
+                    <button
+                      key={mode.id}
+                      className={cn(
+                        'rounded-lg border-2 p-2.5 text-left transition-all duration-150',
+                        active
+                          ? 'border-blue-500 bg-blue-500/15'
+                          : 'border-border bg-card/50 hover:border-muted-foreground/30 hover:bg-muted/30',
+                      )}
+                      onClick={() => {
+                        setSettings((prev) => ({ ...prev, leagueMode: mode.id }))
+                        setSelectedClub(null)
+                        setStartUnemployed(false)
+                        if (mode.id === 'fictional') setShowFictionalWizard(true)
+                      }}
+                    >
+                      <p className={cn('text-xs font-bold', active ? 'text-blue-300' : 'text-foreground')}>{mode.label}</p>
+                      <p className="mt-0.5 text-[10px] leading-tight text-muted-foreground">{mode.desc}</p>
+                    </button>
+                  )
+                })}
               </div>
               {settings.leagueMode === 'fictional' && (
-                <div className="space-y-2.5 rounded-md border border-zinc-800 bg-zinc-900/30 p-3">
-                  <div className="flex items-center gap-3">
-                    <span className="shrink-0 text-xs text-zinc-400">
-                      Teams: <span className="font-bold text-zinc-200">{settings.teamCount}</span>
-                    </span>
-                    <Slider
-                      value={[settings.teamCount]}
-                      onValueChange={([val]) => setSettings((prev) => ({ ...prev, teamCount: val }))}
-                      min={8}
-                      max={24}
-                      step={2}
-                      className="flex-1"
-                    />
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 w-full border-zinc-700 text-xs text-zinc-300 hover:bg-zinc-800"
-                    onClick={handleGenerateFictional}
-                  >
-                    <RotateCcw className="mr-1.5 h-3 w-3" />
-                    {fictionalClubs.length > 0 ? 'Regenerate Clubs' : }
-                  </Button>
+                <div className="rounded-md border border-border bg-muted/30 p-3">
+                  {fictionalClubs.length > 0 ? (
+                    <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap gap-1.5">
+                        {fictionalClubs.slice(0, 6).map((c) => (
+                          <span
+                            key={c.id}
+                            className="inline-flex items-center gap-1 rounded-full border border-border px-1.5 py-0.5 text-[10px] text-foreground/80"
+                          >
+                            <span
+                              className="inline-block h-2 w-2 rounded-full"
+                              style={{ background: c.colors.primary }}
+                            />
+                            {c.abbreviation}
+                          </span>
+                        ))}
+                        {fictionalClubs.length > 6 && (
+                          <span className="text-[10px] text-muted-foreground/70">+{fictionalClubs.length - 6} more</span>
+                        )}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="ml-2 h-7 shrink-0 text-xs"
+                        onClick={() => setShowFictionalWizard(true)}
+                      >
+                        Edit League
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 w-full text-xs"
+                      onClick={() => setShowFictionalWizard(true)}
+                    >
+                      <RotateCcw className="mr-1.5 h-3 w-3" />
+                      Setup Fictional League
+                    </Button>
+                  )}
                 </div>
               )}
               {settings.leagueMode === 'custom' && (
                 <div className="space-y-1.5">
                   {customLeagueTemplates.length === 0 ? (
-                    <p className="text-xs text-zinc-500">No custom templates yet. Create one in the League Builder.</p>
+                    <p className="text-xs text-muted-foreground/70">No custom templates yet. Create one in the League Builder.</p>
                   ) : (
                     <Select
                       value={selectedTemplateId}
@@ -823,7 +928,7 @@ export function NewGamePage() {
                         }
                       }}
                     >
-                      <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-white">
+                      <SelectTrigger>
                         <SelectValue placeholder="Select a template..." />
                       </SelectTrigger>
                       <SelectContent>
@@ -839,57 +944,72 @@ export function NewGamePage() {
 
             {/* Difficulty */}
             <div className="space-y-2">
-              <Label className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Difficulty</Label>
-              <div className="grid grid-cols-3 gap-1.5">
-                {DIFFICULTY_PRESETS.map((preset) => (
-                  <button
-                    key={preset.id}
-                    className={cn(
-                      'rounded-md border px-2 py-1.5 text-xs font-medium transition-colors',
-                      settings.difficulty === preset.id
-                        ? 'border-blue-500 bg-blue-500/20 text-blue-300'
-                        : 'border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200',
-                    )}
-                    onClick={() => handleSelectPreset(preset.id)}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
+              <Label className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">Difficulty</Label>
+              <div className="grid grid-cols-3 gap-2">
+                {DIFFICULTY_PRESETS.map((preset) => {
+                  const active = settings.difficulty === preset.id
+                  const accent =
+                    preset.id === 'easy' ? { border: 'border-emerald-500', bg: 'bg-emerald-500/12', text: 'text-emerald-300' }
+                    : preset.id === 'hard' ? { border: 'border-red-500', bg: 'bg-red-500/12', text: 'text-red-300' }
+                    : { border: 'border-blue-500', bg: 'bg-blue-500/12', text: 'text-blue-300' }
+                  return (
+                    <button
+                      key={preset.id}
+                      className={cn(
+                        'rounded-lg border-2 p-2.5 text-left transition-all duration-150',
+                        active
+                          ? cn(accent.border, accent.bg)
+                          : 'border-border bg-card/50 hover:border-muted-foreground/30 hover:bg-muted/30',
+                      )}
+                      onClick={() => handleSelectPreset(preset.id)}
+                    >
+                      <p className={cn('text-xs font-bold', active ? accent.text : 'text-foreground')}>{preset.label}</p>
+                      <p className="mt-0.5 line-clamp-2 text-[10px] leading-tight text-muted-foreground">
+                        {preset.description.split('.')[0]}.
+                      </p>
+                    </button>
+                  )
+                })}
               </div>
               {settings.difficulty === 'custom' && (
-                <p className="text-[10px] text-zinc-500">
+                <p className="text-[10px] text-muted-foreground/60">
                   Custom — you&apos;ve modified a preset value in Advanced Settings.
                 </p>
               )}
             </div>
 
-            {/* -- Advanced Settings -- */}
-            <AdvancedSection label="Advanced Settings">
-              <div className="flex justify-end">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleResetSettings}
-                  className="h-7 border-zinc-700 text-xs text-zinc-300 hover:bg-zinc-800"
-                >
-                  <RotateCcw className="mr-1.5 h-3 w-3" />
-                  Reset Defaults
-                </Button>
+            {/* Advanced settings divider */}
+            <div className="relative flex items-center gap-3 pt-1">
+              <div className="h-px flex-1 bg-border" />
+              <div className="flex items-center gap-1.5">
+                <Settings2 className="h-3 w-3 text-muted-foreground/35" />
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/35">Advanced Settings</span>
               </div>
+              <div className="h-px flex-1 bg-border" />
+            </div>
 
-              {/* Season & Fixture */}
+            <div className="flex items-center justify-between">
+              <p className="px-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40">Season</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleResetSettings}
+                className="h-6 text-[10px] text-muted-foreground/50 hover:text-muted-foreground"
+              >
+                <RotateCcw className="mr-1 h-2.5 w-2.5" />
+                Reset defaults
+              </Button>
+            </div>
+
+            <AdvancedSection label="Season Length">
               <div className="space-y-4">
-                <p className="border-b border-zinc-800 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                  Season &amp; Fixture
-                </p>
-
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <div>
-                      <Label className="text-zinc-200">Regular Season Rounds</Label>
-                      <p className="text-xs text-zinc-500">Home &amp; away season length</p>
+                      <Label className="text-foreground">Regular Season Rounds</Label>
+                      <p className="text-xs text-muted-foreground/70">Home &amp; away season length</p>
                     </div>
-                    <span className="w-8 text-right text-sm font-bold tabular-nums text-zinc-200">
+                    <span className="w-8 text-right text-sm font-bold tabular-nums text-foreground">
                       {settings.seasonStructure.regularSeasonRounds}
                     </span>
                   </div>
@@ -903,15 +1023,15 @@ export function NewGamePage() {
                     }
                     min={0} max={40} step={1}
                   />
-                  <div className="flex justify-between text-[10px] text-zinc-500">
+                  <div className="flex justify-between text-[10px] text-muted-foreground/70">
                     <span>0 (finals only)</span><span>23 (standard)</span><span>40</span>
                   </div>
                 </div>
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label className="text-zinc-200">Bye Rounds</Label>
-                    <p className="text-xs text-zinc-500">Mid-season rest weeks</p>
+                    <Label className="text-foreground">Bye Rounds</Label>
+                    <p className="text-xs text-muted-foreground/70">Mid-season rest weeks</p>
                   </div>
                   <Switch
                     checked={settings.seasonStructure.byeRounds}
@@ -924,10 +1044,10 @@ export function NewGamePage() {
                   />
                 </div>
                 {settings.seasonStructure.byeRounds && (
-                  <div className="space-y-2 rounded-md border border-zinc-700 bg-zinc-800/50 p-3">
+                  <div className="space-y-2 rounded-md border border-border bg-muted/50 p-3">
                     <div className="flex items-center justify-between">
-                      <Label className="text-xs text-zinc-400">Bye Round Count</Label>
-                      <span className="text-sm font-bold tabular-nums text-zinc-200">
+                      <Label className="text-xs text-muted-foreground">Bye Round Count</Label>
+                      <span className="text-sm font-bold tabular-nums text-foreground">
                         {settings.seasonStructure.byeRoundCount}
                       </span>
                     </div>
@@ -943,9 +1063,13 @@ export function NewGamePage() {
                     />
                   </div>
                 )}
+              </div>
+            </AdvancedSection>
 
+            <AdvancedSection label="Season Timing">
+              <div className="space-y-4">
                 <div className="space-y-1.5">
-                  <Label className="text-zinc-200">Game Start Stage</Label>
+                  <Label className="text-foreground">Game Start Stage</Label>
                   <Select
                     value={gameStartStage}
                     onValueChange={(val) => {
@@ -957,7 +1081,7 @@ export function NewGamePage() {
                       }))
                     }}
                   >
-                    <SelectTrigger className="w-full border-zinc-700 bg-zinc-800/50 text-white">
+                    <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -971,13 +1095,13 @@ export function NewGamePage() {
                       </SelectItem>
                     </SelectContent>
                   </Select>
-                  <p className="rounded-md border border-zinc-700 bg-zinc-800/30 px-3 py-1.5 text-sm text-zinc-200">
+                  <p className="rounded-md border border-border bg-muted/30 px-3 py-1.5 text-sm text-foreground">
                     {formatDate(settings.gameStartDate)}
                   </p>
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-zinc-200">Season Start Date</Label>
+                  <Label className="text-foreground">Season Start Date</Label>
                   <Select
                     value={
                       settings.seasonStartDate === '2026-03-06' ? 'early-march' :
@@ -1000,7 +1124,7 @@ export function NewGamePage() {
                       }
                     }}
                   >
-                    <SelectTrigger className="w-full border-zinc-700 bg-zinc-800/50 text-white">
+                    <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1023,108 +1147,161 @@ export function NewGamePage() {
                           return updated
                         })
                       }
-                      className="border-zinc-700 bg-zinc-800/50 text-white"
                     />
                   )}
                 </div>
+              </div>
+            </AdvancedSection>
 
+            <AdvancedSection label="Finals">
+              <div className="space-y-4">
                 <FinalsFormatEditor
                   finals={settings.finals}
                   onChange={(finals) => setSettings((prev) => ({ ...prev, finals }))}
                 />
-
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label className="text-zinc-200">Special Events</Label>
-                      <p className="text-xs text-zinc-500">Exhibition matches throughout the season</p>
-                    </div>
-                    <Switch
-                      checked={settings.specialEvents.enabled}
-                      onCheckedChange={(val) =>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-foreground">Grand Final Venue Mode</Label>
+                    <Select
+                      value={settings.finals.grandFinalVenueMode}
+                      onValueChange={(val) =>
                         setSettings((prev) => ({
                           ...prev,
-                          specialEvents: { ...prev.specialEvents, enabled: val },
+                          finals: { ...prev.finals, grandFinalVenueMode: val as 'fixed' | 'random' | 'top-club' },
                         }))
                       }
-                    />
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="fixed">Fixed</SelectItem>
+                        <SelectItem value="random">Random</SelectItem>
+                        <SelectItem value="top-club">Top Club Home</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
-                  {settings.specialEvents.enabled && (
-                    <div className="space-y-3 border-t border-zinc-800 pt-3">
-                      {SPECIAL_EVENT_DEFINITIONS.map((def) => (
-                        <div key={def.id} className="flex items-center justify-between">
-                          <div>
-                            <Label className="text-zinc-200">{def.name}</Label>
-                            <p className="text-xs text-zinc-500">{def.description}</p>
-                          </div>
-                          <Switch
-                            checked={settings.specialEvents.events[def.id as SpecialEventId]}
-                            onCheckedChange={(val) =>
-                              setSettings((prev) => ({
-                                ...prev,
-                                specialEvents: {
-                                  ...prev.specialEvents,
-                                  events: { ...prev.specialEvents.events, [def.id]: val },
-                                },
-                              }))
-                            }
-                          />
-                        </div>
-                      ))}
-                      <div className="flex items-center justify-between border-t border-zinc-800 pt-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-foreground">Grand Final Venue</Label>
+                    <Select
+                      value={settings.finals.grandFinalVenue}
+                      onValueChange={(val) =>
+                        setSettings((prev) => ({
+                          ...prev,
+                          finals: { ...prev.finals, grandFinalVenue: val },
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {GF_VENUES.map((venue) => (
+                          <SelectItem key={venue} value={venue}>{venue}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+            </AdvancedSection>
+
+            <AdvancedSection label="Special Events">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-foreground">Special Events</Label>
+                    <p className="text-xs text-muted-foreground/70">Exhibition matches throughout the season</p>
+                  </div>
+                  <Switch
+                    checked={settings.specialEvents.enabled}
+                    onCheckedChange={(val) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        specialEvents: { ...prev.specialEvents, enabled: val },
+                      }))
+                    }
+                  />
+                </div>
+                {settings.specialEvents.enabled && (
+                  <div className="space-y-3 border-t border-border pt-3">
+                    {SPECIAL_EVENT_DEFINITIONS.map((def) => (
+                      <div key={def.id} className="flex items-center justify-between">
                         <div>
-                          <Label className="text-zinc-200">Auto-Schedule</Label>
-                          <p className="text-xs text-zinc-500">Automatically place events at realistic dates</p>
+                          <Label className="text-foreground">{def.name}</Label>
+                          <p className="text-xs text-muted-foreground/70">{def.description}</p>
                         </div>
                         <Switch
-                          checked={settings.specialEvents.autoSchedule}
+                          checked={settings.specialEvents.events[def.id as SpecialEventId]}
                           onCheckedChange={(val) =>
-                            setSettings((prev) => ({
-                              ...prev,
-                              specialEvents: { ...prev.specialEvents, autoSchedule: val },
-                            }))
-                          }
-                        />
-                      </div>
-                      <div className="space-y-1.5 border-t border-zinc-800 pt-3">
-                        <Label className="text-zinc-200">Origin Eligibility</Label>
-                        <Select
-                          value={settings.specialEvents.originEligibility}
-                          onValueChange={(val) =>
                             setSettings((prev) => ({
                               ...prev,
                               specialEvents: {
                                 ...prev.specialEvents,
-                                originEligibility: val as OriginEligibility,
+                                events: { ...prev.specialEvents.events, [def.id]: val },
                               },
                             }))
                           }
-                        >
-                          <SelectTrigger className="w-full border-zinc-700 bg-zinc-800 text-zinc-200">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="birthplace">Birthplace / Pathway</SelectItem>
-                            <SelectItem value="current-club">Current Club State</SelectItem>
-                            <SelectItem value="state-league">State League Affiliation</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      {settings.specialEvents.events['state-of-origin'] && (
-                        <OriginConfigPanel
-                          config={settings.specialEvents.originConfig ?? DEFAULT_ORIGIN_CONFIG}
-                          onChange={(newConfig) =>
-                            setSettings((prev) => ({
-                              ...prev,
-                              specialEvents: { ...prev.specialEvents, originConfig: newConfig },
-                            }))
-                          }
                         />
-                      )}
+                      </div>
+                    ))}
+                    <div className="flex items-center justify-between border-t border-border pt-3">
+                      <div>
+                        <Label className="text-foreground">Auto-Schedule</Label>
+                        <p className="text-xs text-muted-foreground/70">Automatically place events at realistic dates</p>
+                      </div>
+                      <Switch
+                        checked={settings.specialEvents.autoSchedule}
+                        onCheckedChange={(val) =>
+                          setSettings((prev) => ({
+                            ...prev,
+                            specialEvents: { ...prev.specialEvents, autoSchedule: val },
+                          }))
+                        }
+                      />
                     </div>
-                  )}
-                </div>
+                    <div className="space-y-1.5 border-t border-border pt-3">
+                      <Label className="text-foreground">Origin Eligibility</Label>
+                      <Select
+                        value={settings.specialEvents.originEligibility}
+                        onValueChange={(val) =>
+                          setSettings((prev) => ({
+                            ...prev,
+                            specialEvents: {
+                              ...prev.specialEvents,
+                              originEligibility: val as OriginEligibility,
+                            },
+                          }))
+                        }
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="birthplace">Birthplace / Pathway</SelectItem>
+                          <SelectItem value="current-club">Current Club State</SelectItem>
+                          <SelectItem value="state-league">State League Affiliation</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {settings.specialEvents.events['state-of-origin'] && (
+                      <OriginConfigPanel
+                        config={settings.specialEvents.originConfig ?? DEFAULT_ORIGIN_CONFIG}
+                        onChange={(newConfig) =>
+                          setSettings((prev) => ({
+                            ...prev,
+                            specialEvents: { ...prev.specialEvents, originConfig: newConfig },
+                          }))
+                        }
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+            </AdvancedSection>
 
+            <AdvancedSection label="Match Schedule">
+              <div className="space-y-4">
                 <MatchSlotGrid
                   slots={settings.fixtureSchedule.matchSlots}
                   onChange={(matchSlots) =>
@@ -1141,61 +1318,62 @@ export function NewGamePage() {
                   />
                 )}
               </div>
+            </AdvancedSection>
 
-              {/* Match & List Rules */}
-              <div className="space-y-4 border-t border-zinc-800 pt-4">
-                <p className="border-b border-zinc-800 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                  Match &amp; List Rules
-                </p>
+            <p className="px-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40">Match Rules</p>
 
-                <div className="flex gap-4">
-                  <div className="flex-1 space-y-1.5">
-                    <Label className="text-zinc-200">Points per Goal</Label>
-                    <p className="text-xs text-zinc-500">Standard: 6</p>
-                    <Input
-                      type="number"
-                      value={settings.matchRules.pointsPerGoal}
-                      onChange={(e) =>
-                        setSettings((prev) => ({
-                          ...prev,
-                          matchRules: {
-                            ...prev.matchRules,
-                            pointsPerGoal: Math.max(1, parseInt(e.target.value, 10) || 1),
-                          },
-                        }))
-                      }
-                      className="w-20 border-zinc-700 bg-zinc-800/50 text-center text-white"
-                    />
-                  </div>
-                  <div className="flex-1 space-y-1.5">
-                    <Label className="text-zinc-200">Points per Behind</Label>
-                    <p className="text-xs text-zinc-500">Standard: 1</p>
-                    <Input
-                      type="number"
-                      value={settings.matchRules.pointsPerBehind}
-                      onChange={(e) =>
-                        setSettings((prev) => ({
-                          ...prev,
-                          matchRules: {
-                            ...prev.matchRules,
-                            pointsPerBehind: Math.max(0, parseInt(e.target.value, 10) || 0),
-                          },
-                        }))
-                      }
-                      className="w-20 border-zinc-700 bg-zinc-800/50 text-center text-white"
-                    />
-                  </div>
+            <AdvancedSection label="Scoring">
+              <div className="flex gap-4">
+                <div className="flex-1 space-y-1.5">
+                  <Label className="text-foreground">Points per Goal</Label>
+                  <p className="text-xs text-muted-foreground/70">Standard: 6</p>
+                  <Input
+                    type="number"
+                    value={settings.matchRules.pointsPerGoal}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        matchRules: {
+                          ...prev.matchRules,
+                          pointsPerGoal: Math.max(1, parseInt(e.target.value, 10) || 1),
+                        },
+                      }))
+                    }
+                    className="w-20 text-center"
+                  />
                 </div>
+                <div className="flex-1 space-y-1.5">
+                  <Label className="text-foreground">Points per Behind</Label>
+                  <p className="text-xs text-muted-foreground/70">Standard: 1</p>
+                  <Input
+                    type="number"
+                    value={settings.matchRules.pointsPerBehind}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        matchRules: {
+                          ...prev.matchRules,
+                          pointsPerBehind: Math.max(0, parseInt(e.target.value, 10) || 0),
+                        },
+                      }))
+                    }
+                    className="w-20 text-center"
+                  />
+                </div>
+              </div>
+            </AdvancedSection>
 
+            <AdvancedSection label="Match Format">
+              <div className="space-y-4">
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <div>
-                      <Label className="text-zinc-200">Interchange Players</Label>
-                      <p className="text-xs text-zinc-500">
+                      <Label className="text-foreground">Interchange Players</Label>
+                      <p className="text-xs text-muted-foreground/70">
                         Squad: {18 + settings.matchRules.interchangePlayers + (settings.matchRules.enableSubstitutes ? 1 : 0)}
                       </p>
                     </div>
-                    <span className="w-6 text-right text-sm font-bold tabular-nums text-zinc-200">
+                    <span className="w-6 text-right text-sm font-bold tabular-nums text-foreground">
                       {settings.matchRules.interchangePlayers}
                     </span>
                   </div>
@@ -1213,8 +1391,8 @@ export function NewGamePage() {
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label className="text-zinc-200">Match-Day Substitute</Label>
-                    <p className="text-xs text-zinc-500">Tactical sub that can be activated in-game</p>
+                    <Label className="text-foreground">Match-Day Substitute</Label>
+                    <p className="text-xs text-muted-foreground/70">Tactical sub that can be activated in-game</p>
                   </div>
                   <Switch
                     checked={settings.matchRules.enableSubstitutes}
@@ -1228,7 +1406,7 @@ export function NewGamePage() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-zinc-200">Quarters per Match</Label>
+                  <Label className="text-foreground">Quarters per Match</Label>
                   <Select
                     value={String(settings.matchRules.quartersPerMatch)}
                     onValueChange={(val) =>
@@ -1238,7 +1416,7 @@ export function NewGamePage() {
                       }))
                     }
                   >
-                    <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-white">
+                    <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1252,12 +1430,12 @@ export function NewGamePage() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <div>
-                      <Label className="text-zinc-200">Match Length</Label>
-                      <p className="text-xs text-zinc-500">
+                      <Label className="text-foreground">Match Length</Label>
+                      <p className="text-xs text-muted-foreground/70">
                         ~{Math.round(140 * settings.matchRules.possessionsMultiplier)} possessions/quarter
                       </p>
                     </div>
-                    <span className="w-10 text-right text-sm font-bold tabular-nums text-zinc-200">
+                    <span className="w-10 text-right text-sm font-bold tabular-nums text-foreground">
                       {settings.matchRules.possessionsMultiplier.toFixed(1)}x
                     </span>
                   </div>
@@ -1272,351 +1450,364 @@ export function NewGamePage() {
                     min={5} max={20} step={1}
                   />
                 </div>
+              </div>
+            </AdvancedSection>
 
-                <div className="space-y-2">
-                  <Label className="text-zinc-200">Ladder Points</Label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[
-                      { label: 'Win', key: 'pointsForWin' as const },
-                      { label: 'Draw', key: 'pointsForDraw' as const },
-                      { label: 'Loss', key: 'pointsForLoss' as const },
-                    ].map(({ label, key }) => (
-                      <div key={key}>
-                        <Label className="text-xs text-zinc-500">{label}</Label>
-                        <Input
-                          type="number"
-                          value={settings.ladderPoints[key]}
-                          onChange={(e) =>
-                            setSettings((prev) => ({
-                              ...prev,
-                              ladderPoints: { ...prev.ladderPoints, [key]: parseInt(e.target.value, 10) || 0 },
-                            }))
-                          }
-                          className="border-zinc-600 bg-zinc-700/50 text-center text-white"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-zinc-200">Senior List</Label>
-                      <span className="text-sm font-bold tabular-nums text-zinc-200">{settings.listRules.seniorListSize}</span>
-                    </div>
-                    <Slider
-                      value={[settings.listRules.seniorListSize]}
-                      onValueChange={([val]) =>
-                        setSettings((prev) => ({ ...prev, listRules: { ...prev.listRules, seniorListSize: val } }))
-                      }
-                      min={30} max={46} step={1}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-zinc-200">Rookie List</Label>
-                      <span className="text-sm font-bold tabular-nums text-zinc-200">{settings.listRules.rookieListSize}</span>
-                    </div>
-                    <Slider
-                      value={[settings.listRules.rookieListSize]}
-                      onValueChange={([val]) =>
-                        setSettings((prev) => ({ ...prev, listRules: { ...prev.listRules, rookieListSize: val } }))
-                      }
-                      min={2} max={10} step={1}
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-zinc-200">Grand Final Venue</Label>
-                  <div className="space-y-1.5">
-                    {([
-                      { value: 'fixed' as const, label: 'Fixed Venue', desc: 'Same venue every year' },
-                      { value: 'random' as const, label: 'Random Rotation', desc: 'Random major venue each season' },
-                      { value: 'top-club' as const, label: 'Home of Top Club', desc: 'Highest-finishing team hosts' },
-                    ]).map((opt) => (
-                      <label
-                        key={opt.value}
-                        className={cn(
-                          'flex cursor-pointer items-start gap-3 rounded-md border p-2.5 transition-colors',
-                          settings.finals.grandFinalVenueMode === opt.value
-                            ? 'border-blue-500 bg-blue-500/10'
-                            : 'border-zinc-700 bg-zinc-800/30 hover:border-zinc-600',
-                        )}
-                      >
-                        <input
-                          type="radio"
-                          name="gfVenueMode"
-                          checked={settings.finals.grandFinalVenueMode === opt.value}
-                          onChange={() =>
-                            setSettings((prev) => ({
-                              ...prev,
-                              finals: { ...prev.finals, grandFinalVenueMode: opt.value },
-                            }))
-                          }
-                          className="mt-0.5"
-                        />
-                        <div>
-                          <p className="text-sm font-medium text-zinc-200">{opt.label}</p>
-                          <p className="text-xs text-zinc-500">{opt.desc}</p>
-                        </div>
-                      </label>
-                    ))}
-                  </div>
-                  {settings.finals.grandFinalVenueMode === 'fixed' && (
-                    <Select
-                      value={settings.finals.grandFinalVenue}
-                      onValueChange={(val) =>
+            <AdvancedSection label="Ladder Points">
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: 'Win', key: 'pointsForWin' as const },
+                  { label: 'Draw', key: 'pointsForDraw' as const },
+                  { label: 'Loss', key: 'pointsForLoss' as const },
+                ].map(({ label, key }) => (
+                  <div key={key}>
+                    <Label className="text-xs text-muted-foreground/70">{label}</Label>
+                    <Input
+                      type="number"
+                      value={settings.ladderPoints[key]}
+                      onChange={(e) =>
                         setSettings((prev) => ({
                           ...prev,
-                          finals: { ...prev.finals, grandFinalVenue: val },
+                          ladderPoints: { ...prev.ladderPoints, [key]: parseInt(e.target.value, 10) || 0 },
                         }))
                       }
-                    >
-                      <SelectTrigger className="mt-2 w-full border-zinc-700 bg-zinc-800/50 text-white">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {GF_VENUES.map((venue) => (
-                          <SelectItem key={venue} value={venue}>{venue}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                </div>
-              </div>
-
-              {/* Rules & Realism */}
-              <div className="space-y-4 border-t border-zinc-800 pt-4">
-                <p className="border-b border-zinc-800 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                  Rules &amp; Realism
-                </p>
-
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label className="text-zinc-200">Salary Cap</Label>
-                      <p className="text-xs text-zinc-500">AFL 2026: $18.3M</p>
-                    </div>
-                    <Switch
-                      checked={settings.salaryCap}
-                      onCheckedChange={(val) =>
-                        setSettings((prev) => ({ ...prev, salaryCap: val, difficulty: 'custom' }))
-                      }
+                      className="text-center"
                     />
-                  </div>
-                  {settings.salaryCap && (
-                    <div className="space-y-1.5 rounded-md border border-zinc-700 bg-zinc-800/50 p-3">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs text-zinc-400">Cap Amount</Label>
-                        <span className="text-sm font-bold text-zinc-200">{formatCurrency(settings.salaryCapAmount)}</span>
-                      </div>
-                      <Slider
-                        value={[settings.salaryCapAmount]}
-                        onValueChange={([val]) =>
-                          setSettings((prev) => ({ ...prev, salaryCapAmount: val, difficulty: 'custom' }))
-                        }
-                        min={10_000_000} max={25_000_000} step={100_000}
-                      />
-                    </div>
-                  )}
-                </div>
-
-                <AffiliateManagementEditor
-                  clubs={clubs.map((club) => ({
-                    id: club.id,
-                    name: club.name,
-                    abbreviation: club.abbreviation,
-                  }))}
-                  stateLeagues={previewStateLeagues}
-                  value={settings.stateLeagueAffiliations}
-                  onChange={(next) =>
-                    setSettings((prev) => ({ ...prev, stateLeagueAffiliations: next }))
-                  }
-                  title="State League Affiliate Management"
-                  description="Swap AFL club affiliate leagues before starting your save."
-                />
-
-                {[
-                  { group: 'Player Behavior', items: [
-                    { key: 'playerLoyalty' as const, label: 'Player Loyalty', desc: 'Loyalty affects contract discounts & trade reluctance' },
-                    { key: 'tradeRequests' as const, label: 'Trade Requests', desc: 'Unhappy players nominate preferred clubs' },
-                    { key: 'nominatedTradeDestinations' as const, label: 'Nominated Destinations', desc: 'Trade-requesting players nominate destination clubs' },
-                    { key: 'reducedNominatedLeverage' as const, label: 'Reduced Nominated Leverage', desc: 'Nominated player trade return can be discounted' },
-                    { key: 'playersRefuseTrades' as const, label: 'Players Refuse Trades', desc: 'Players can refuse moves to unwanted clubs' },
-                    { key: 'playerRoleDisputes' as const, label: 'Role Disputes', desc: 'Players lose morale when played out of position' },
-                  ]},
-                  { group: 'Trading & Contracts', items: [
-                    { key: 'salaryDumpTrades' as const, label: 'Salary Dump Trades', desc: 'Clubs offload big contracts with dead cap penalties' },
-                    { key: 'softCapSpending' as const, label: 'Soft Cap Spending', desc: 'Clubs can exceed salary cap with luxury tax' },
-                    { key: 'mediaLeaks' as const, label: 'Media Leaks', desc: 'Player managers leak negotiations to the media' },
-                    { key: 'negotiationDelays' as const, label: 'Negotiation Delays', desc: 'Multi-round delays (off = instant resolution)' },
-                  ]},
-                  { group: 'Draft & Development', items: [
-                    { key: 'draftVariance' as const, label: 'Draft Variance', desc: 'Top picks can bust, late picks can bloom' },
-                    { key: 'ngaAcademy' as const, label: 'NGA / Academy', desc: 'Father-Son and Academy matching bid system' },
-                    { key: 'ngaAcademyZoneMatching' as const, label: 'Zone Matching Rules', desc: 'Apply academy/NGA zone eligibility to matching bids' },
-                  ]},
-                  { group: 'League Operations', items: [
-                    { key: 'fixtureBlockbusterBias' as const, label: 'Fixture Blockbuster Bias', desc: 'Named matches get prime scheduling priority' },
-                    { key: 'fixtureRivalryScheduling' as const, label: 'Rivalry Scheduling', desc: 'Traditional rivals guaranteed to play twice per season' },
-                    { key: 'venueScheduling' as const, label: 'Venue Scheduling', desc: 'Shared venue allocation, sold games, dynamic home advantage' },
-                    { key: 'coachingCarousel' as const, label: 'Coaching Carousel', desc: 'Poor-performing AI coaches get sacked' },
-                    { key: 'boardPressure' as const, label: 'Board Pressure', desc: 'Board expectations affect your job security' },
-                    { key: 'boardPolitics' as const, label: 'Board Politics', desc: 'Internal factions can sway sackings and hiring outcomes' },
-                    { key: 'listSizeEnforcement' as const, label: 'List Size Enforcement', desc: 'Enforce senior (38) and rookie (6) list limits' },
-                    { key: 'aflHouseInterference' as const, label: 'AFL House Interference', desc: 'AFL mandates priority picks & scheduling for struggling clubs' },
-                    { key: 'aflHouseExpansionEvolution' as const, label: 'Expansion Evolution', desc: 'AFL House may add new clubs over time' },
-                    { key: 'aflHouseCompetitionEvolution' as const, label: 'Competition Evolution', desc: 'AFL House may switch competition models' },
-                    { key: 'aflHouseFinalsEvolution' as const, label: 'Finals Evolution', desc: 'AFL House may change finals format between seasons' },
-                    { key: 'aflHouseListRulesEvolution' as const, label: 'List Rules Evolution', desc: 'AFL House may adjust list limits' },
-                    { key: 'aflHouseSalaryCapEvolution' as const, label: 'Salary Cap Evolution', desc: 'AFL House may revise salary cap year-to-year' },
-                    { key: 'aflHouseFixtureEvolution' as const, label: 'Fixture Evolution', desc: 'AFL House may tweak fixture and season structure' },
-                  ]},
-                  { group: 'Awards & Events', items: [
-                    { key: 'brownlowNight' as const, label: 'Brownlow Night', desc: 'Votes hidden until the ceremony before the Grand Final' },
-                    { key: 'specialEventPlayerImpact' as const, label: 'Exhibition Match Impact', desc: 'Special events affect fatigue, injury risk, and form' },
-                  ]},
-                ].map(({ group, items }) => (
-                  <div key={group} className="space-y-3 border-t border-zinc-800 pt-3">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">{group}</p>
-                    {items.map(({ key, label, desc }) => (
-                      <div key={key} className="flex items-center justify-between">
-                        <div>
-                          <Label className="text-zinc-200">{label}</Label>
-                          <p className="text-xs text-zinc-500">{desc}</p>
-                        </div>
-                        <Switch checked={settings.realism[key]} onCheckedChange={(val) => updateRealism(key, val)} />
-                      </div>
-                    ))}
                   </div>
                 ))}
+              </div>
+            </AdvancedSection>
 
-                <div className="grid grid-cols-3 gap-3 border-t border-zinc-800 pt-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-zinc-200">Injuries</Label>
-                    <Select
-                      value={settings.injuryFrequency}
-                      onValueChange={(val) =>
-                        setSettings((prev) => ({
-                          ...prev,
-                          injuryFrequency: val as GameSettings['injuryFrequency'],
-                          difficulty: 'custom',
-                        }))
-                      }
-                    >
-                      <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-white">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="low">Low</SelectItem>
-                        <SelectItem value="medium">Medium</SelectItem>
-                        <SelectItem value="high">High</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-zinc-200">Development</Label>
-                    <Select
-                      value={settings.developmentSpeed}
-                      onValueChange={(val) =>
-                        setSettings((prev) => ({
-                          ...prev,
-                          developmentSpeed: val as GameSettings['developmentSpeed'],
-                          difficulty: 'custom',
-                        }))
-                      }
-                    >
-                      <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-white">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="slow">Slow</SelectItem>
-                        <SelectItem value="normal">Normal</SelectItem>
-                        <SelectItem value="fast">Fast</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-zinc-200">Sim Speed</Label>
-                    <Select
-                      value={settings.simSpeed}
-                      onValueChange={(val) =>
-                        setSettings((prev) => ({ ...prev, simSpeed: val as GameSettings['simSpeed'] }))
-                      }
-                    >
-                      <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-white">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="instant">Instant</SelectItem>
-                        <SelectItem value="fast">Fast</SelectItem>
-                        <SelectItem value="normal">Normal</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="space-y-3 border-t border-zinc-800 pt-3">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">League Universe</p>
-                  <div className="space-y-1.5">
-                    <Label className="text-zinc-200">Naming Template</Label>
-                    <Select
-                      value={settings.leagueNamingTemplate}
-                      onValueChange={(val) =>
-                        setSettings((prev) => ({
-                          ...prev,
-                          leagueNamingTemplate: val as GameSettings['leagueNamingTemplate'],
-                        }))
-                      }
-                    >
-                      <SelectTrigger className="border-zinc-700 bg-zinc-800/50 text-white">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="real-life">Real-life-style</SelectItem>
-                        <SelectItem value="fictional">Fictional naming</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+            <AdvancedSection label="Squad Lists">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <div>
-                      <Label className="text-zinc-200">U16/U18 Pathways</Label>
-                      <p className="text-xs text-zinc-500">Enable underage competitions in the world simulation</p>
+                    <Label className="text-foreground">Senior List</Label>
+                    <span className="text-sm font-bold tabular-nums text-foreground">{settings.listRules.seniorListSize}</span>
+                  </div>
+                  <Slider
+                    value={[settings.listRules.seniorListSize]}
+                    onValueChange={([val]) =>
+                      setSettings((prev) => ({ ...prev, listRules: { ...prev.listRules, seniorListSize: val } }))
+                    }
+                    min={30} max={46} step={1}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-foreground">Rookie List</Label>
+                    <span className="text-sm font-bold tabular-nums text-foreground">{settings.listRules.rookieListSize}</span>
+                  </div>
+                  <Slider
+                    value={[settings.listRules.rookieListSize]}
+                    onValueChange={([val]) =>
+                      setSettings((prev) => ({ ...prev, listRules: { ...prev.listRules, rookieListSize: val } }))
+                    }
+                    min={2} max={10} step={1}
+                  />
+                </div>
+              </div>
+            </AdvancedSection>
+
+
+            <p className="px-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/40">Realism</p>
+
+            <AdvancedSection label="Salary Cap">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-foreground">Salary Cap</Label>
+                    <p className="text-xs text-muted-foreground/70">AFL 2026: $18.3M</p>
+                  </div>
+                  <Switch
+                    checked={settings.salaryCap}
+                    onCheckedChange={(val) =>
+                      setSettings((prev) => ({ ...prev, salaryCap: val, difficulty: 'custom' }))
+                    }
+                  />
+                </div>
+                {settings.salaryCap && (
+                  <div className="space-y-1.5 rounded-md border border-border bg-muted/50 p-3">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs text-muted-foreground">Cap Amount</Label>
+                      <span className="text-sm font-bold text-foreground">{formatCurrency(settings.salaryCapAmount)}</span>
                     </div>
-                    <Switch
-                      checked={settings.includePathwayLeagues}
-                      onCheckedChange={(checked) =>
-                        setSettings((prev) => ({ ...prev, includePathwayLeagues: checked }))
+                    <Slider
+                      value={[settings.salaryCapAmount]}
+                      onValueChange={([val]) =>
+                        setSettings((prev) => ({ ...prev, salaryCapAmount: val, difficulty: 'custom' }))
                       }
+                      min={10_000_000} max={25_000_000} step={100_000}
                     />
                   </div>
+                )}
+              </div>
+            </AdvancedSection>
+
+            <AdvancedSection label="State League Affiliates">
+              <AffiliateManagementEditor
+                clubs={clubs.map((club) => ({
+                  id: club.id,
+                  name: club.name,
+                  abbreviation: club.abbreviation,
+                }))}
+                stateLeagues={previewStateLeagues}
+                value={settings.stateLeagueAffiliations}
+                onChange={(next) =>
+                  setSettings((prev) => ({ ...prev, stateLeagueAffiliations: next }))
+                }
+                title="State League Affiliate Management"
+                description="Swap AFL club affiliate leagues before starting your save."
+              />
+            </AdvancedSection>
+
+            <AdvancedSection label="Player Behavior">
+              <div className="space-y-3">
+                {[
+                  { key: 'playerLoyalty' as const, label: 'Player Loyalty', desc: 'Loyalty affects contract discounts & trade reluctance' },
+                  { key: 'tradeRequests' as const, label: 'Trade Requests', desc: 'Unhappy players nominate preferred clubs' },
+                  { key: 'nominatedTradeDestinations' as const, label: 'Nominated Destinations', desc: 'Trade-requesting players nominate destination clubs' },
+                  { key: 'reducedNominatedLeverage' as const, label: 'Reduced Nominated Leverage', desc: 'Nominated player trade return can be discounted' },
+                  { key: 'playersRefuseTrades' as const, label: 'Players Refuse Trades', desc: 'Players can refuse moves to unwanted clubs' },
+                  { key: 'playerRoleDisputes' as const, label: 'Role Disputes', desc: 'Players lose morale when played out of position' },
+                ].map(({ key, label, desc }) => (
+                  <div key={key} className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-foreground">{label}</Label>
+                      <p className="text-xs text-muted-foreground/70">{desc}</p>
+                    </div>
+                    <Switch checked={settings.realism[key]} onCheckedChange={(val) => updateRealism(key, val)} />
+                  </div>
+                ))}
+              </div>
+            </AdvancedSection>
+
+            <AdvancedSection label="Trading & Contracts">
+              <div className="space-y-3">
+                {[
+                  { key: 'salaryDumpTrades' as const, label: 'Salary Dump Trades', desc: 'Clubs offload big contracts with dead cap penalties' },
+                  { key: 'softCapSpending' as const, label: 'Soft Cap Spending', desc: 'Clubs can exceed salary cap with luxury tax' },
+                  { key: 'mediaLeaks' as const, label: 'Media Leaks', desc: 'Player managers leak negotiations to the media' },
+                  { key: 'negotiationDelays' as const, label: 'Negotiation Delays', desc: 'Multi-round delays (off = instant resolution)' },
+                ].map(({ key, label, desc }) => (
+                  <div key={key} className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-foreground">{label}</Label>
+                      <p className="text-xs text-muted-foreground/70">{desc}</p>
+                    </div>
+                    <Switch checked={settings.realism[key]} onCheckedChange={(val) => updateRealism(key, val)} />
+                  </div>
+                ))}
+              </div>
+            </AdvancedSection>
+
+            <AdvancedSection label="Draft & Development">
+              <div className="space-y-3">
+                {[
+                  { key: 'draftVariance' as const, label: 'Draft Variance', desc: 'Top picks can bust, late picks can bloom' },
+                  { key: 'ngaAcademy' as const, label: 'NGA / Academy', desc: 'Father-Son and Academy matching bid system' },
+                  { key: 'ngaAcademyZoneMatching' as const, label: 'Zone Matching Rules', desc: 'Apply academy/NGA zone eligibility to matching bids' },
+                ].map(({ key, label, desc }) => (
+                  <div key={key} className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-foreground">{label}</Label>
+                      <p className="text-xs text-muted-foreground/70">{desc}</p>
+                    </div>
+                    <Switch checked={settings.realism[key]} onCheckedChange={(val) => updateRealism(key, val)} />
+                  </div>
+                ))}
+              </div>
+            </AdvancedSection>
+
+            <AdvancedSection label="League Operations">
+              <div className="space-y-3">
+                {[
+                  { key: 'fixtureBlockbusterBias' as const, label: 'Fixture Blockbuster Bias', desc: 'Named matches get prime scheduling priority' },
+                  { key: 'fixtureRivalryScheduling' as const, label: 'Rivalry Scheduling', desc: 'Traditional rivals guaranteed to play twice per season' },
+                  { key: 'venueScheduling' as const, label: 'Venue Scheduling', desc: 'Shared venue allocation, sold games, dynamic home advantage' },
+                  { key: 'coachingCarousel' as const, label: 'Coaching Carousel', desc: 'Poor-performing AI coaches get sacked' },
+                  { key: 'boardPressure' as const, label: 'Board Pressure', desc: 'Board expectations affect your job security' },
+                  { key: 'boardPolitics' as const, label: 'Board Politics', desc: 'Internal factions can sway sackings and hiring outcomes' },
+                  { key: 'listSizeEnforcement' as const, label: 'List Size Enforcement', desc: 'Enforce senior (38) and rookie (6) list limits' },
+                  { key: 'aflHouseInterference' as const, label: 'AFL House Interference', desc: 'AFL mandates priority picks & scheduling for struggling clubs' },
+                  { key: 'aflHouseExpansionEvolution' as const, label: 'Expansion Evolution', desc: 'AFL House may add new clubs over time' },
+                  { key: 'aflHouseCompetitionEvolution' as const, label: 'Competition Evolution', desc: 'AFL House may switch competition models' },
+                  { key: 'aflHouseFinalsEvolution' as const, label: 'Finals Evolution', desc: 'AFL House may change finals format between seasons' },
+                  { key: 'aflHouseListRulesEvolution' as const, label: 'List Rules Evolution', desc: 'AFL House may adjust list limits' },
+                  { key: 'aflHouseSalaryCapEvolution' as const, label: 'Salary Cap Evolution', desc: 'AFL House may revise salary cap year-to-year' },
+                  { key: 'aflHouseFixtureEvolution' as const, label: 'Fixture Evolution', desc: 'AFL House may tweak fixture and season structure' },
+                ].map(({ key, label, desc }) => (
+                  <div key={key} className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-foreground">{label}</Label>
+                      <p className="text-xs text-muted-foreground/70">{desc}</p>
+                    </div>
+                    <Switch checked={settings.realism[key]} onCheckedChange={(val) => updateRealism(key, val)} />
+                  </div>
+                ))}
+              </div>
+            </AdvancedSection>
+
+            <AdvancedSection label="Awards & Events">
+              <div className="space-y-3">
+                {[
+                  { key: 'brownlowNight' as const, label: 'Brownlow Night', desc: 'Votes hidden until the ceremony before the Grand Final' },
+                  { key: 'specialEventPlayerImpact' as const, label: 'Exhibition Match Impact', desc: 'Special events affect fatigue, injury risk, and form' },
+                ].map(({ key, label, desc }) => (
+                  <div key={key} className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-foreground">{label}</Label>
+                      <p className="text-xs text-muted-foreground/70">{desc}</p>
+                    </div>
+                    <Switch checked={settings.realism[key]} onCheckedChange={(val) => updateRealism(key, val)} />
+                  </div>
+                ))}
+              </div>
+            </AdvancedSection>
+
+            <AdvancedSection label="Simulation">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-foreground">Injuries</Label>
+                  <Select
+                    value={settings.injuryFrequency}
+                    onValueChange={(val) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        injuryFrequency: val as GameSettings['injuryFrequency'],
+                        difficulty: 'custom',
+                      }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="low">Low</SelectItem>
+                      <SelectItem value="medium">Medium</SelectItem>
+                      <SelectItem value="high">High</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-foreground">Development</Label>
+                  <Select
+                    value={settings.developmentSpeed}
+                    onValueChange={(val) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        developmentSpeed: val as GameSettings['developmentSpeed'],
+                        difficulty: 'custom',
+                      }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="slow">Slow</SelectItem>
+                      <SelectItem value="normal">Normal</SelectItem>
+                      <SelectItem value="fast">Fast</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-foreground">Sim Speed</Label>
+                  <Select
+                    value={settings.simSpeed}
+                    onValueChange={(val) =>
+                      setSettings((prev) => ({ ...prev, simSpeed: val as GameSettings['simSpeed'] }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="instant">Instant</SelectItem>
+                      <SelectItem value="fast">Fast</SelectItem>
+                      <SelectItem value="normal">Normal</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </AdvancedSection>
+
+            <AdvancedSection label="League Universe">
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label className="text-foreground">Naming Template</Label>
+                  <Select
+                    value={settings.leagueNamingTemplate}
+                    onValueChange={(val) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        leagueNamingTemplate: val as GameSettings['leagueNamingTemplate'],
+                      }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="real-life">Real-life-style</SelectItem>
+                      <SelectItem value="fictional">Fictional naming</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-foreground">U16/U18 Pathways</Label>
+                    <p className="text-xs text-muted-foreground/70">Enable underage competitions in the world simulation</p>
+                  </div>
+                  <Switch
+                    checked={settings.includePathwayLeagues}
+                    onCheckedChange={(checked) =>
+                      setSettings((prev) => ({ ...prev, includePathwayLeagues: checked }))
+                    }
+                  />
                 </div>
               </div>
             </AdvancedSection>
           </div>
 
           {/* Sticky footer: Start Game */}
-          <div className="shrink-0 border-t border-zinc-800 bg-zinc-950 p-4">
+          <div className="shrink-0 border-t border-border bg-background/95 p-4 backdrop-blur-sm">
             <Button
-              className="w-full bg-emerald-600 py-5 text-base font-bold text-white hover:bg-emerald-500 disabled:opacity-30"
+              className={cn(
+                'w-full py-5 text-base font-bold text-white transition-all duration-200',
+                canStart
+                  ? 'bg-emerald-600 shadow-lg shadow-emerald-900/20 hover:bg-emerald-500'
+                  : 'cursor-not-allowed bg-muted text-muted-foreground opacity-60',
+              )}
               disabled={!canStart}
               onClick={handleStartGame}
             >
-              <Play className="mr-2 h-5 w-5" />
-              Start Game
+              <Play className="mr-2 h-5 w-5" fill={canStart ? 'currentColor' : 'none'} />
+              {canStart && selectedClubData
+                ? `Begin as ${selectedClubData.name}`
+                : canStart && startUnemployed
+                  ? 'Begin Career Search'
+                  : 'Start Game'}
             </Button>
             {!canStart && (
-              <p className="mt-1.5 text-center text-[10px] text-zinc-600">
-                {saveName.trim() === ''
+              <p className="mt-2 text-center text-xs text-muted-foreground/40">
+                {!saveName.trim()
                   ? 'Enter a save name above'
-                  : 'Select a club on the left to begin'}
+                  : 'Select a club or start unemployed'}
               </p>
             )}
           </div>
         </div>
       </div>
+
+      {showFictionalWizard && (
+        <FictionalWorldWizard
+          initialClubs={fictionalClubs}
+          initialTeamCount={settings.teamCount}
+          onConfirm={handleFictionalConfirm}
+          onCancel={() => setShowFictionalWizard(false)}
+        />
+      )}
     </div>
   )
 }

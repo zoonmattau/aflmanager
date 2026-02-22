@@ -7,7 +7,7 @@ import { getLineupSlots } from '@/engine/core/constants'
 import { selectBestLineup } from '@/engine/ai/lineupSelection'
 import { getOverallRating } from '@/engine/player/playerRating'
 import { getPositionBadgeStrongClass } from '@/lib/positionColor'
-import { FIELD_SLOTS } from './fieldConstants'
+import { FIELD_SLOTS_LANDSCAPE } from './fieldConstants'
 import type { SlotPosition } from './fieldConstants'
 import { FieldSvg } from './FieldSvg'
 
@@ -116,6 +116,22 @@ export function FootballField({
     ? (clubs[oppositionClubId]?.colors.primary ?? '#ef4444')
     : '#ef4444'
 
+  const OPP_OVERRIDES: Record<string, { top?: number; left?: number }> = {
+    FB:  { top: 56 },
+    CHB: { top: 56, left: 24 },
+    CHF: { top: 56, left: 76 },
+    FF:  { top: 56 },
+    LHB: { top: 20 }, LHF: { top: 20 },
+    RHB: { top: 80 }, RHF: { top: 80 },
+  }
+  const effectiveSlotPositions = useMemo(
+    () =>
+      FIELD_SLOTS_LANDSCAPE.map((pos) =>
+        showOpposition && pos.slot in OPP_OVERRIDES ? { ...pos, ...OPP_OVERRIDES[pos.slot] } : pos,
+      ),
+    [showOpposition],
+  )
+
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
@@ -215,170 +231,176 @@ export function FootballField({
   }
 
   return (
-    <div className="w-full space-y-2">
+    <div>
       {showOpposition && oppositionClubId ? (
-        <div className="mx-auto grid w-full max-w-[1040px] grid-cols-[minmax(74px,120px)_1fr_minmax(74px,120px)] items-center gap-2">
-          <div className="flex flex-col items-center gap-1.5 self-center">
-              {oppositionBenchPlayers.map((player, idx) => {
-                if (!player) {
-                  return (
-                    <div
-                      key={`opp-bench-empty-${idx}`}
-                      className="flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] items-center justify-center rounded-md border border-dashed border-zinc-300/80 bg-zinc-900/70 text-[clamp(8px,0.95vw,10px)] font-semibold text-zinc-100"
-                    >
-                      I{idx + 1}
-                    </div>
-                  )
-                }
-                const surname =
-                  player.lastName.length > 12 ? player.lastName.slice(0, 11) + '.' : player.lastName
-                const displayName = `${player.firstName.charAt(0)}. ${surname}`
+        <div className="flex items-center justify-center gap-3">
+          {/* Opposition bench — left side */}
+          <div className="flex flex-col items-center gap-1.5">
+            {oppositionBenchPlayers.map((player, idx) => {
+              if (!player) {
                 return (
                   <div
-                    key={`opp-bench-${player.id}`}
-                    className="flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] items-center gap-[clamp(3px,0.45vw,7px)] rounded-md border px-[clamp(3px,0.55vw,7px)] shadow-sm"
+                    key={`opp-bench-empty-${idx}`}
+                    className="flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] items-center justify-center rounded-md border border-dashed border-zinc-300/80 bg-zinc-900/70 text-[clamp(8px,0.95vw,10px)] font-semibold text-zinc-100"
+                  >
+                    I{idx + 1}
+                  </div>
+                )
+              }
+              const surname =
+                player.lastName.length > 12 ? player.lastName.slice(0, 11) + '.' : player.lastName
+              const displayName = `${player.firstName.charAt(0)}. ${surname}`
+              return (
+                <div
+                  key={`opp-bench-${player.id}`}
+                  className="flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] items-center gap-[clamp(3px,0.45vw,7px)] rounded-md border px-[clamp(3px,0.55vw,7px)] shadow-sm"
+                  style={{
+                    borderColor: oppositionBenchColor,
+                    backgroundColor: `${oppositionBenchColor}cc`,
+                  }}
+                  title={`${player.firstName} ${player.lastName} (${player.position.primary})`}
+                >
+                  <span className="hidden min-[1150px]:block w-[clamp(18px,1.8vw,28px)] text-center text-[clamp(8px,1vw,12px)] font-bold leading-none text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.9)]">
+                    #{player.jerseyNumber}
+                  </span>
+                  <div className="min-w-0 leading-tight">
+                    <span className="block truncate text-[clamp(7px,0.82vw,10px)] text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.9)]">{displayName}</span>
+                    <span className="block truncate text-[clamp(6px,0.72vw,9px)] text-white/90 [text-shadow:0_1px_2px_rgba(0,0,0,0.9)]">
+                      <span className={`rounded border px-1 py-0 ${getPositionBadgeStrongClass(player.position.primary)}`}>{player.position.primary}</span> OVR {getOverallRating(player)}
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
+            {substitutesEnabled && (
+              <div className="mt-1">
+                {oppositionSubstitute ? (
+                  <div
+                    className="mx-auto flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] items-center gap-[clamp(3px,0.45vw,7px)] rounded-md border px-[clamp(3px,0.55vw,7px)] shadow-sm"
                     style={{
-                      borderColor: `${oppositionBenchColor}d9`,
-                      backgroundColor: `${oppositionBenchColor}7a`,
+                      borderColor: oppositionBenchColor,
+                      backgroundColor: `${oppositionBenchColor}cc`,
                     }}
-                    title={`${player.firstName} ${player.lastName} (${player.position.primary})`}
+                    title={`${oppositionSubstitute.firstName} ${oppositionSubstitute.lastName} (${oppositionSubstitute.position.primary})`}
                   >
                     <span className="hidden min-[1150px]:block w-[clamp(18px,1.8vw,28px)] text-center text-[clamp(8px,1vw,12px)] font-bold leading-none text-white">
-                      #{player.jerseyNumber}
+                      #{oppositionSubstitute.jerseyNumber}
                     </span>
                     <div className="min-w-0 leading-tight">
-                      <span className="block truncate text-[clamp(7px,0.82vw,10px)] text-white">{displayName}</span>
+                      <span className="block truncate text-[clamp(7px,0.82vw,10px)] text-white">
+                        {oppositionSubstitute.firstName.charAt(0)}. {oppositionSubstitute.lastName}
+                      </span>
                       <span className="block truncate text-[clamp(6px,0.72vw,9px)] text-zinc-100">
-                        <span className={`rounded border px-1 py-0 ${getPositionBadgeStrongClass(player.position.primary)}`}>{player.position.primary}</span> OVR {getOverallRating(player)}
+                        {oppositionSubstitute.position.primary}
                       </span>
                     </div>
                   </div>
-                )
-              })}
-              {substitutesEnabled && (
-                <div className="mt-1">
-                  {oppositionSubstitute ? (
-                    <div
-                      className="mx-auto flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] items-center gap-[clamp(3px,0.45vw,7px)] rounded-md border px-[clamp(3px,0.55vw,7px)] shadow-sm"
-                      style={{
-                        borderColor: `${oppositionBenchColor}d9`,
-                        backgroundColor: `${oppositionBenchColor}7a`,
-                      }}
-                      title={`${oppositionSubstitute.firstName} ${oppositionSubstitute.lastName} (${oppositionSubstitute.position.primary})`}
-                    >
-                      <span className="hidden min-[1150px]:block w-[clamp(18px,1.8vw,28px)] text-center text-[clamp(8px,1vw,12px)] font-bold leading-none text-white">
-                        #{oppositionSubstitute.jerseyNumber}
-                      </span>
-                      <div className="min-w-0 leading-tight">
-                        <span className="block truncate text-[clamp(7px,0.82vw,10px)] text-white">
-                          {oppositionSubstitute.firstName.charAt(0)}. {oppositionSubstitute.lastName}
-                        </span>
-                        <span className="block truncate text-[clamp(6px,0.72vw,9px)] text-zinc-100">
-                          {oppositionSubstitute.position.primary}
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mx-auto flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] items-center justify-center rounded-md border border-dashed border-zinc-300/80 bg-zinc-900/70 text-[clamp(8px,0.95vw,10px)] font-semibold text-zinc-100">
-                      SUB
-                    </div>
-                  )}
-                </div>
-              )}
+                ) : (
+                  <div className="mx-auto flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] items-center justify-center rounded-md border border-dashed border-zinc-300/80 bg-zinc-900/70 text-[clamp(8px,0.95vw,10px)] font-semibold text-zinc-100">
+                    SUB
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
-          <div className="relative mx-auto w-full max-w-[760px]" style={{ aspectRatio: '27 / 35' }}>
-            <FieldSvg idPrefix="lineup" />
-
-            <div className="pointer-events-none absolute right-3 top-3 z-30 flex items-center gap-1 rounded-md border border-white/25 bg-black/40 px-2 py-1 text-[10px] font-semibold text-white/90">
-              <span className="text-xs leading-none">v</span>
-              <span>{userBenchLabel} kick</span>
+          {/* Field — centre */}
+          <div className="flex flex-col flex-1 min-w-0 max-w-[780px] gap-1">
+            {/* Direction labels — sit above the field */}
+            <div className="flex items-center justify-between px-[25%]">
+              <div className="flex items-center gap-1.5 rounded-md border border-white/20 bg-black/35 px-3 py-1.5 text-sm font-semibold text-white/80">
+                <span>← {oppositionBenchLabel}</span>
+              </div>
+              <div className="flex items-center gap-1.5 rounded-md border border-white/25 bg-black/40 px-3 py-1.5 text-sm font-semibold text-white/90">
+                <span>{userBenchLabel} →</span>
+              </div>
             </div>
-            <div className="pointer-events-none absolute left-3 top-3 z-30 flex items-center gap-1 rounded-md border border-white/20 bg-black/35 px-2 py-1 text-[10px] font-semibold text-white/80">
-              <span className="text-xs leading-none">^</span>
-              <span>{oppositionBenchLabel} kick</span>
-            </div>
 
-            {FIELD_SLOTS.map((pos) => renderSlot(pos, false))}
+            <div className="relative flex-1" style={{ aspectRatio: '35 / 27' }}>
+            <FieldSvg idPrefix="lineup" landscape />
+
+            {effectiveSlotPositions.map((pos) => renderSlot(pos, false))}
 
             <OppositionOverlay
               oppositionClubId={oppositionClubId}
               players={players}
               clubs={clubs}
-              slotPositions={FIELD_SLOTS}
+              slotPositions={effectiveSlotPositions}
               interchangeCount={interchangeCount}
               onPlayerClick={onOppositionPlayerClick}
             />
-          </div>
+            </div>{/* end inner relative field */}
+          </div>{/* end field + labels column */}
 
-          <div className="flex flex-col items-center gap-1.5 self-center">
-              {interchangeSlotIds.map((slot) => {
-                const playerId = lineup[slot]
-                const player = playerId ? players[playerId] : null
-                const isOver = dragOverSlot === slot
+          {/* User bench — right side */}
+          <div className="flex flex-col items-center gap-1.5">
+            {interchangeSlotIds.map((slot) => {
+              const playerId = lineup[slot]
+              const player = playerId ? players[playerId] : null
+              const isOver = dragOverSlot === slot
 
-                return (
-                  <div
-                    key={slot}
-                    onClick={() => onSelectSlot?.(slot)}
-                    onDragOver={(e) => {
-                      handleDragOver(e)
-                      setDragOverSlot(slot)
-                    }}
-                    onDragLeave={() => setDragOverSlot(null)}
-                    onDrop={(e) => handleDrop(slot, e)}
-                    onDoubleClick={() => handleSlotDoubleClick(slot)}
-                  >
-                    {player ? (
-                      <div className={selectedSlot === slot ? 'ring-2 ring-sky-400 rounded-md' : ''}>
-                        <PlayerMagnet
-                          player={player}
-                          slot={slot}
-                          suitability={getPositionSuitability(player, slot)}
-                          onProfileClick={onPlayerClick ? () => onPlayerClick(player.id) : undefined}
-                        />
-                      </div>
-                    ) : (
-                      <div
-                        className={`flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] items-center justify-center rounded-md border border-dashed text-[clamp(8px,0.95vw,10px)] font-semibold transition-colors ${
-                          isOver
-                            ? 'border-white bg-white/20 text-white'
-                            : selectedSlot === slot
-                              ? 'border-sky-300 bg-sky-500/20 text-sky-100'
-                              : 'border-zinc-300/80 bg-zinc-900/70 text-zinc-100'
-                        }`}
-                      >
-                        {slot}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-              {substitutesEnabled && (
-                <div className="mt-1">
-                  {userSubstitute ? (
-                    <PlayerMagnet
-                      player={userSubstitute}
-                      slot="I1"
-                      suitability={getPositionSuitability(userSubstitute, 'I1')}
-                    />
+              return (
+                <div
+                  key={slot}
+                  onClick={() => onSelectSlot?.(slot)}
+                  onDragOver={(e) => {
+                    handleDragOver(e)
+                    setDragOverSlot(slot)
+                  }}
+                  onDragLeave={() => setDragOverSlot(null)}
+                  onDrop={(e) => handleDrop(slot, e)}
+                  onDoubleClick={() => handleSlotDoubleClick(slot)}
+                >
+                  {player ? (
+                    <div className={selectedSlot === slot ? 'ring-2 ring-sky-400 rounded-md' : ''}>
+                      <PlayerMagnet
+                        player={player}
+                        slot={slot}
+                        suitability={getPositionSuitability(player, slot)}
+                        onProfileClick={onPlayerClick ? () => onPlayerClick(player.id) : undefined}
+                      />
+                    </div>
                   ) : (
-                    <div className="mx-auto flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] items-center justify-center rounded-md border border-dashed border-zinc-300/80 bg-zinc-900/70 text-[clamp(8px,0.95vw,10px)] font-semibold text-zinc-100">
-                      SUB
+                    <div
+                      className={`flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] items-center justify-center rounded-md border border-dashed text-[clamp(8px,0.95vw,10px)] font-semibold transition-colors ${
+                        isOver
+                          ? 'border-white bg-white/20 text-white'
+                          : selectedSlot === slot
+                            ? 'border-sky-300 bg-sky-500/20 text-sky-100'
+                            : 'border-zinc-300/80 bg-zinc-900/70 text-zinc-100'
+                      }`}
+                    >
+                      {slot}
                     </div>
                   )}
                 </div>
-              )}
+              )
+            })}
+            {substitutesEnabled && (
+              <div className="mt-1">
+                {userSubstitute ? (
+                  <PlayerMagnet
+                    player={userSubstitute}
+                    slot="I1"
+                    suitability={getPositionSuitability(userSubstitute, 'I1')}
+                  />
+                ) : (
+                  <div className="mx-auto flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] items-center justify-center rounded-md border border-dashed border-zinc-300/80 bg-zinc-900/70 text-[clamp(8px,0.95vw,10px)] font-semibold text-zinc-100">
+                    SUB
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       ) : (
-        <div className="mx-auto grid w-full max-w-[940px] grid-cols-[1fr_minmax(74px,120px)] gap-2">
-          <div className="relative mx-auto w-full max-w-[760px]" style={{ aspectRatio: '27 / 35' }}>
-            <FieldSvg idPrefix="lineup" />
-            {FIELD_SLOTS.map((pos) => renderSlot(pos, false))}
+        <div className="flex items-center justify-center gap-3">
+          <div className="relative flex-1 min-w-0 max-w-[780px]" style={{ aspectRatio: '35 / 27' }}>
+            <FieldSvg idPrefix="lineup" landscape />
+            {FIELD_SLOTS_LANDSCAPE.map((pos) => renderSlot(pos, false))}
           </div>
 
-          <div className="flex flex-col items-center gap-1.5 self-center">
+          <div className="flex flex-col items-center gap-1.5">
               {interchangeSlotIds.map((slot) => {
                 const playerId = lineup[slot]
                 const player = playerId ? players[playerId] : null

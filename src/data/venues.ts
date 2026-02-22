@@ -4,6 +4,17 @@ import type { Venue, VenueState } from '@/types/venue'
 // Static venue registry
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Ground characteristics reference
+//   scoringCoefficient  : goal accuracy multiplier (0.7–1.3, 1.0 = neutral)
+//   kickToHandballRatio : >1.0 = open/kick-dominant, <1.0 = compact/handball-heavy
+//   disposalCoefficient : multiplier on total possessions — big grounds generate more
+//   markCoefficient     : multiplier on marking chance — open space = more marks
+//   contestedCoefficient: multiplier on contested / tackle rate — compact = more congestion
+//   weatherBias         : additive to base weather weights (wind/wet/hot/humid)
+//   dimensions          : oval length × width in metres
+// ---------------------------------------------------------------------------
+
 export const VENUES: Record<string, Venue> = {
   mcg: {
     id: 'mcg',
@@ -14,6 +25,14 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 1.3,
     hgaBonus: 4,
     isNeutral: false,
+    // Vast open arena — high disposal count, great marking ground, spread play
+    scoringCoefficient: 0.97,
+    kickToHandballRatio: 1.18,
+    disposalCoefficient: 1.08,
+    markCoefficient: 1.14,
+    contestedCoefficient: 0.88,
+    weatherBias: { wind: 0.02, wet: 0.04, hot: 0.01, humid: 0.00 },
+    dimensions: { length: 171, width: 146 },
   },
   'marvel-stadium': {
     id: 'marvel-stadium',
@@ -24,6 +43,15 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 1.0,
     hgaBonus: 3,
     isNeutral: false,
+    // Compact rectangular indoor — handball game, congested, fewer disposals, almost never rains
+    scoringCoefficient: 1.12,
+    kickToHandballRatio: 0.88,
+    disposalCoefficient: 0.90,
+    markCoefficient: 0.82,
+    contestedCoefficient: 1.18,
+    // Indoor: heavily suppress wind/wet, minimal heat/humid
+    weatherBias: { wind: -0.15, wet: -0.12, hot: -0.05, humid: -0.04 },
+    dimensions: { length: 160, width: 128 },
   },
   'adelaide-oval': {
     id: 'adelaide-oval',
@@ -34,6 +62,14 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 1.1,
     hgaBonus: 5,
     isNeutral: false,
+    // Elongated oval, notorious wind exposure from hills — big marking game, spread play
+    scoringCoefficient: 0.94,
+    kickToHandballRatio: 1.12,
+    disposalCoefficient: 1.05,
+    markCoefficient: 1.10,
+    contestedCoefficient: 0.92,
+    weatherBias: { wind: 0.14, wet: 0.03, hot: 0.05, humid: 0.00 },
+    dimensions: { length: 167, width: 124 },
   },
   'optus-stadium': {
     id: 'optus-stadium',
@@ -44,6 +80,14 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 1.15,
     hgaBonus: 5,
     isNeutral: false,
+    // Purpose-built, true oval, great surface, Perth Fremantle Doctor breeze
+    scoringCoefficient: 1.10,
+    kickToHandballRatio: 1.15,
+    disposalCoefficient: 1.07,
+    markCoefficient: 1.12,
+    contestedCoefficient: 0.90,
+    weatherBias: { wind: 0.10, wet: 0.02, hot: 0.05, humid: 0.00 },
+    dimensions: { length: 165, width: 130 },
   },
   'gmhba-stadium': {
     id: 'gmhba-stadium',
@@ -54,6 +98,14 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.85,
     hgaBonus: 5,
     isNeutral: false,
+    // Geelong exposed to Corio Bay winds — notoriously windy, affects mark counts
+    scoringCoefficient: 1.05,
+    kickToHandballRatio: 1.05,
+    disposalCoefficient: 1.00,
+    markCoefficient: 1.03,
+    contestedCoefficient: 1.00,
+    weatherBias: { wind: 0.12, wet: 0.04, hot: 0.00, humid: 0.00 },
+    dimensions: { length: 155, width: 128 },
   },
   gabba: {
     id: 'gabba',
@@ -64,6 +116,14 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.9,
     hgaBonus: 5,
     isNeutral: false,
+    // Compact QLD ground, notorious congestion and humidity, lowest marking rate in the comp
+    scoringCoefficient: 0.92,
+    kickToHandballRatio: 0.88,
+    disposalCoefficient: 0.90,
+    markCoefficient: 0.84,
+    contestedCoefficient: 1.20,
+    weatherBias: { wind: -0.02, wet: 0.04, hot: 0.08, humid: 0.12 },
+    dimensions: { length: 154, width: 126 },
   },
   scg: {
     id: 'scg',
@@ -74,6 +134,14 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 1.05,
     hgaBonus: 5,
     isNeutral: false,
+    // Traditional oval, balanced conditions, moderate Sydney humidity
+    scoringCoefficient: 1.00,
+    kickToHandballRatio: 1.08,
+    disposalCoefficient: 1.00,
+    markCoefficient: 1.02,
+    contestedCoefficient: 1.00,
+    weatherBias: { wind: 0.02, wet: 0.02, hot: 0.04, humid: 0.03 },
+    dimensions: { length: 155, width: 136 },
   },
   'engie-stadium': {
     id: 'engie-stadium',
@@ -84,6 +152,14 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.65,
     hgaBonus: 4,
     isNeutral: false,
+    // Rectangular, compact — handball game, very congested, limited marking space
+    scoringCoefficient: 1.08,
+    kickToHandballRatio: 0.85,
+    disposalCoefficient: 0.92,
+    markCoefficient: 0.85,
+    contestedCoefficient: 1.15,
+    weatherBias: { wind: 0.04, wet: 0.03, hot: 0.03, humid: 0.02 },
+    dimensions: { length: 158, width: 122 },
   },
   'people-first-stadium': {
     id: 'people-first-stadium',
@@ -94,6 +170,14 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.6,
     hgaBonus: 4,
     isNeutral: false,
+    // Compact, hot and sticky — saps energy, fewer disposals, most humid ground in comp
+    scoringCoefficient: 0.95,
+    kickToHandballRatio: 0.90,
+    disposalCoefficient: 0.92,
+    markCoefficient: 0.88,
+    contestedCoefficient: 1.12,
+    weatherBias: { wind: -0.02, wet: 0.04, hot: 0.10, humid: 0.14 },
+    dimensions: { length: 152, width: 122 },
   },
   'utas-stadium': {
     id: 'utas-stadium',
@@ -104,6 +188,14 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.5,
     hgaBonus: 2,
     isNeutral: true,
+    // Windy Launceston ground, open ends — blustery, affects marks and accuracy
+    scoringCoefficient: 0.96,
+    kickToHandballRatio: 1.10,
+    disposalCoefficient: 1.00,
+    markCoefficient: 1.00,
+    contestedCoefficient: 1.00,
+    weatherBias: { wind: 0.12, wet: 0.10, hot: -0.05, humid: 0.00 },
+    dimensions: { length: 158, width: 130 },
   },
   'blundstone-arena': {
     id: 'blundstone-arena',
@@ -114,6 +206,14 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.5,
     hgaBonus: 2,
     isNeutral: true,
+    // Hobart's wet reputation — frequently soft/heavy ground, reduces marking, lowers scores
+    scoringCoefficient: 0.94,
+    kickToHandballRatio: 1.02,
+    disposalCoefficient: 0.95,
+    markCoefficient: 0.90,
+    contestedCoefficient: 1.05,
+    weatherBias: { wind: 0.08, wet: 0.14, hot: -0.05, humid: 0.00 },
+    dimensions: { length: 150, width: 120 },
   },
   'manuka-oval': {
     id: 'manuka-oval',
@@ -124,6 +224,14 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.4,
     hgaBonus: 1,
     isNeutral: true,
+    // Small compact ground, short shots — high conversion, handball-friendly
+    scoringCoefficient: 1.10,
+    kickToHandballRatio: 0.92,
+    disposalCoefficient: 0.95,
+    markCoefficient: 0.95,
+    contestedCoefficient: 1.05,
+    weatherBias: { wind: 0.05, wet: 0.05, hot: 0.01, humid: 0.00 },
+    dimensions: { length: 145, width: 118 },
   },
   'tio-stadium': {
     id: 'tio-stadium',
@@ -134,6 +242,14 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.45,
     hgaBonus: 0,
     isNeutral: true,
+    // Darwin's extreme heat and humidity — hardest conditions in the comp, low disposals
+    scoringCoefficient: 1.06,
+    kickToHandballRatio: 1.05,
+    disposalCoefficient: 0.93,
+    markCoefficient: 0.98,
+    contestedCoefficient: 1.02,
+    weatherBias: { wind: 0.00, wet: 0.06, hot: 0.14, humid: 0.16 },
+    dimensions: { length: 148, width: 120 },
   },
   'mars-stadium': {
     id: 'mars-stadium',
@@ -144,6 +260,14 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.4,
     hgaBonus: 2,
     isNeutral: true,
+    // Cold Ballarat ground, frequently wet/heavy — physical, lower scores and disposals
+    scoringCoefficient: 0.93,
+    kickToHandballRatio: 1.00,
+    disposalCoefficient: 0.95,
+    markCoefficient: 0.92,
+    contestedCoefficient: 1.05,
+    weatherBias: { wind: 0.05, wet: 0.10, hot: -0.05, humid: 0.00 },
+    dimensions: { length: 148, width: 122 },
   },
   'norwood-oval': {
     id: 'norwood-oval',
@@ -154,6 +278,14 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.5,
     hgaBonus: 2,
     isNeutral: true,
+    // Suburban Adelaide oval — windy like Adelaide Oval but smaller, slightly handball-heavy
+    scoringCoefficient: 1.02,
+    kickToHandballRatio: 0.95,
+    disposalCoefficient: 0.97,
+    markCoefficient: 0.96,
+    contestedCoefficient: 1.05,
+    weatherBias: { wind: 0.10, wet: 0.02, hot: 0.05, humid: 0.00 },
+    dimensions: { length: 150, width: 120 },
   },
 }
 

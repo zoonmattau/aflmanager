@@ -147,8 +147,10 @@ export function migrateGameState(state: AnyGameState): void {
       player.position.primary = migratePosition(player.position.primary)
     }
 
-    // Migrate secondary positions
-    if (Array.isArray(player.position.secondary)) {
+    // Migrate secondary positions (initialize if missing from old saves)
+    if (!Array.isArray(player.position.secondary)) {
+      player.position.secondary = []
+    } else {
       player.position.secondary = migratePositions(player.position.secondary)
     }
 

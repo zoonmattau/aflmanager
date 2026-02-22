@@ -1088,7 +1088,7 @@ export function ScoutingPage() {
       <div>
         <h1 className="text-2xl font-bold">Scouting Department</h1>
         <p className="text-sm text-muted-foreground">
-          {club?.fullName ?? 'Your Club'}
+          {club?.fullName ?? 'Your Club'} &middot; Assign scouts, discover prospects, and build your draft pipeline
         </p>
       </div>
 
@@ -1120,6 +1120,7 @@ export function ScoutingPage() {
         </TabsList>
 
         <TabsContent value="scouts">
+          <p className="text-sm text-muted-foreground pt-3 pb-2">Manage your scouts — assign regions, set attribute focus, hire new staff, and review their effectiveness.</p>
           <MyScoutsTab
             myScouts={myScouts}
             availableScouts={availableScouts}
@@ -1131,6 +1132,7 @@ export function ScoutingPage() {
         </TabsContent>
 
         <TabsContent value="prospects">
+          <p className="text-sm text-muted-foreground pt-3 pb-2">Scouted player profiles, ratings, and draft recommendations. Run scouting sessions to improve accuracy.</p>
           <ProspectReportsTab
             prospects={prospects}
             playerClubId={playerClubId}
@@ -1138,11 +1140,13 @@ export function ScoutingPage() {
         </TabsContent>
 
         <TabsContent value="shortlists">
+          <p className="text-sm text-muted-foreground pt-3 pb-2">Saved lists of draft targets and prospects to monitor. Organise by round priority or position need.</p>
           <ShortlistManager targetTypeFilter="prospect" title="Scouting Watchlists" />
         </TabsContent>
 
         {youthPathway && (
           <TabsContent value="youth">
+            <p className="text-sm text-muted-foreground pt-3 pb-2">Prospects emerging through the youth pathway system. Assign scouts to youth competitions to track them earlier.</p>
             <YouthScoutingTab
               youthPathway={youthPathway}
               myScouts={myScouts}

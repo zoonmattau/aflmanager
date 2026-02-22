@@ -12,13 +12,13 @@ export function AdvancedSection({ label = 'Advanced Settings', children, default
   const [open, setOpen] = useState(defaultOpen)
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/30">
+    <div className="rounded-lg border border-border bg-card">
       <button
         type="button"
         onClick={() => setOpen(!open)}
         className={cn(
-          'flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium text-zinc-400 transition-colors hover:text-zinc-200',
-          open && 'border-b border-zinc-800',
+          'flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium text-muted-foreground transition-colors hover:text-foreground',
+          open && 'border-b border-border',
         )}
       >
         {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}

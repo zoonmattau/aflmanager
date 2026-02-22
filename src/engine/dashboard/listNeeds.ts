@@ -80,7 +80,7 @@ function toSeverity(score: number): ClubNeed['severity'] {
 
 function weightForPosition(player: Player, pos: PlayerPositionType): number {
   if (player.position.primary === pos) return 1
-  if (player.position.secondary.includes(pos)) return 0.6
+  if ((player.position.secondary ?? []).includes(pos)) return 0.6
   const rated = getPlayerPositionRating(player, pos)
   if (rated >= 70) return 0.45
   if (rated >= 55) return 0.25

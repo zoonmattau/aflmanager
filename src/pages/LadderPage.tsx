@@ -294,7 +294,10 @@ export function LadderPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold">{currentYear} AFL Ladder</h1>
+      <div>
+        <h1 className="text-2xl font-bold">{currentYear} AFL Ladder</h1>
+        <p className="text-sm text-muted-foreground">Current standings, season analytics, award leaders, and historical records.</p>
+      </div>
 
       <Tabs defaultValue="ladder">
         <TabsList>
@@ -305,6 +308,7 @@ export function LadderPage() {
         </TabsList>
 
         <TabsContent value="ladder">
+          <p className="text-sm text-muted-foreground pt-3 pb-1">Current standings, finals qualification zones, percentage, and power rankings.</p>
           <div className="space-y-4">
             <Card>
               <CardContent className="p-0">
@@ -356,7 +360,7 @@ export function LadderPage() {
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <ClubMark club={club} className="h-4 w-4 flex-shrink-0" />
-                              <span>{club?.name}</span>
+                              <Link to={`/squad/${entry.clubId}`} className="hover:underline">{club?.name}</Link>
                               {isPlayer && (
                                 <Badge variant="secondary" className="text-xs">You</Badge>
                               )}
@@ -507,7 +511,7 @@ export function LadderPage() {
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <ClubMark club={club} className="h-4 w-4 flex-shrink-0" />
-                              <span>{club?.name ?? entry.clubId}</span>
+                              <Link to={`/squad/${entry.clubId}`} className="hover:underline">{club?.name ?? entry.clubId}</Link>
                               {isPlayer && <Badge variant="secondary" className="text-xs">You</Badge>}
                             </div>
                           </TableCell>
@@ -536,6 +540,7 @@ export function LadderPage() {
         </TabsContent>
 
         <TabsContent value="season" className="space-y-4">
+          <p className="text-sm text-muted-foreground pt-3 pb-1">Season progress, form guide, power rankings, scoring profile, and statistical leaders.</p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Card>
               <CardHeader className="py-3">
@@ -647,6 +652,7 @@ export function LadderPage() {
         </TabsContent>
 
         <TabsContent value="awards" className="space-y-4">
+          <p className="text-sm text-muted-foreground pt-3 pb-1">Brownlow Medal votes, Coleman Medal goalkicking, Rising Star candidates, and All-Australian selections.</p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Brownlow Leaderboard */}
             {brownlowNight && !brownlowRevealed ? (
@@ -869,6 +875,7 @@ export function LadderPage() {
         </TabsContent>
 
         <TabsContent value="league-history" className="space-y-4">
+          <p className="text-sm text-muted-foreground pt-3 pb-1">Premiers, runners-up, and grand final results for every completed season.</p>
           <Card>
             <CardHeader className="py-3">
               <CardTitle className="text-sm">League History</CardTitle>

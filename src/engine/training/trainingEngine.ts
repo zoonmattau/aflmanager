@@ -26,6 +26,8 @@ export type TrainingFocus =
   | 'set-pieces'
   | 'match-fitness'
   | 'recovery'
+  | 'video-review'
+  | 'rest'
 
 export type TrainingIntensity = 'light' | 'moderate' | 'intense'
 
@@ -107,6 +109,8 @@ export const FOCUS_ATTRIBUTES: Record<TrainingFocus, (keyof PlayerAttributes)[]>
   'set-pieces': ['centreBounce', 'boundaryThrowIn', 'stoppage'],
   'match-fitness': ['endurance', 'recovery', 'workRate'],
   recovery: ['recovery'],
+  'video-review': ['disposalDecision', 'positioning', 'anticipation', 'composure', 'consistency', 'teamPlayer'],
+  rest: [],
 }
 
 /** Maps training focus to the most appropriate specialist coach role. */
@@ -124,6 +128,8 @@ const FOCUS_TO_COACH_ROLE: Record<TrainingFocus, StaffRole> = {
   'set-pieces': 'midfield-coach',
   'match-fitness': 'strength-conditioning',
   recovery: 'strength-conditioning',
+  'video-review': 'head-coach',
+  rest: 'strength-conditioning',
 }
 
 /** Physical attributes that decline faster post-peak. */
@@ -156,6 +162,26 @@ const INTENSITY_FITNESS: Record<TrainingIntensity, number> = {
   light: 2,
   moderate: 1,
   intense: -3,
+}
+
+/**
+ * Fatigue overrides for non-physical sessions.
+ * Recovery and rest reduce fatigue; video-review barely affects it.
+ */
+const FOCUS_FATIGUE_OVERRIDE: Partial<Record<TrainingFocus, Record<TrainingIntensity, number>>> = {
+  recovery:       { light: -12, moderate: -6, intense: -2 },
+  rest:           { light: -16, moderate: -12, intense: -8 },
+  'video-review': { light: 1,   moderate: 2,  intense: 3  },
+}
+
+/**
+ * Fitness overrides for non-physical sessions.
+ * Recovery sessions actively restore fitness; video-review provides none.
+ */
+const FOCUS_FITNESS_OVERRIDE: Partial<Record<TrainingFocus, Record<TrainingIntensity, number>>> = {
+  recovery:       { light: 4, moderate: 6, intense: 3 },
+  rest:           { light: 2, moderate: 2, intense: 1 },
+  'video-review': { light: 0, moderate: 0, intense: 0 },
 }
 
 const POSITION_UPSKILL_FOCUS: Record<PlayerPositionType, TrainingFocus[]> = {
@@ -346,6 +372,20 @@ export function runTrainingSessions(
         ? session.assignedPlayerIds
         : Object.keys(players)
 
+    // Rest session: recover fatigue, small fitness gain, no attribute work
+    if (session.focus === 'rest') {
+      for (const playerId of participantIds) {
+        const player = players[playerId]
+        if (!player) continue
+        if (player.injury) continue
+        ensureResult(playerId)
+        const result = resultMap[playerId]
+        result.fatigueChange -= 8
+        result.fitnessChange += 3
+      }
+      continue
+    }
+
     const intensityMul = INTENSITY_MULTIPLIER[session.intensity]
     const coachingMul = getCoachingMultiplier(session, staff, session.focus)
     const focusAttrs = FOCUS_ATTRIBUTES[session.focus]
@@ -386,7 +426,9 @@ export function runTrainingSessions(
       }
 
       // Apply physical attribute decline for players past peak
-      if (player.age > player.hiddenAttributes.peakAgeEnd) {
+      // Skip during rest/recovery — not stressing the body
+      const isRestorative = session.focus === 'rest' || session.focus === 'recovery'
+      if (!isRestorative && player.age > player.hiddenAttributes.peakAgeEnd) {
         const declineRate = player.hiddenAttributes.declineRate
         for (const attr of DECLINING_PHYSICAL_ATTRS) {
           const focusMultiplier = getPlayerTrainingFocusAttributeMultiplier(
@@ -401,9 +443,15 @@ export function runTrainingSessions(
         }
       }
 
-      // Fatigue and fitness
-      result.fatigueChange += INTENSITY_FATIGUE[session.intensity]
-      result.fitnessChange += INTENSITY_FITNESS[session.intensity]
+      // Fatigue and fitness — use focus-specific overrides for recovery/rest/video-review
+      const fatigueOverride = FOCUS_FATIGUE_OVERRIDE[session.focus]
+      const fitnessOverride = FOCUS_FITNESS_OVERRIDE[session.focus]
+      result.fatigueChange += fatigueOverride
+        ? fatigueOverride[session.intensity]
+        : INTENSITY_FATIGUE[session.intensity]
+      result.fitnessChange += fitnessOverride
+        ? fitnessOverride[session.intensity]
+        : INTENSITY_FITNESS[session.intensity]
 
       // Injury risk check
       if (session.intensity === 'intense') {
@@ -526,6 +574,9 @@ function applyPositionUpskillCompletion(
   targetPosition: PlayerPositionType,
   rng: SeededRNG,
 ): void {
+  if (!Array.isArray(player.position.secondary)) {
+    player.position.secondary = []
+  }
   if (
     player.position.primary !== targetPosition &&
     !player.position.secondary.includes(targetPosition)
@@ -755,10 +806,10 @@ export function getDefaultTrainingWeekPlan(
         afternoon: { groups: [] },
       }
     } else if (dayAfter) {
-      // Recovery day: light recovery AM, rest PM
+      // Recovery + video review day (typically Monday after a game)
       slots[date] = {
         morning: { groups: [createDefaultGroup('recovery', 'light')] },
-        afternoon: { groups: [] },
+        afternoon: { groups: [createDefaultGroup('video-review', 'light')] },
       }
     } else {
       // Normal training day

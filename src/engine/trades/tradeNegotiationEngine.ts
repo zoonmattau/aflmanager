@@ -11,6 +11,9 @@ import type {
   TradePlayerMove,
   TradePickMove,
   TradeSalaryRetention,
+  TradeInboxEvent,
+  BiddingWarCluster,
+  TradeDramaState,
 } from '@/types/trade'
 import type { SeededRNG } from '@/engine/core/rng'
 import type { TacticalIdentity } from '@/types/club'
@@ -25,7 +28,7 @@ const POSITIONS = ['BP', 'FB', 'HBF', 'CHB', 'W', 'IM', 'OM', 'RK', 'HFF', 'CHF'
 
 type Position = (typeof POSITIONS)[number]
 
-interface OfferEvalContext {
+export interface OfferEvalContext {
   players: Record<string, Player>
   clubs: Record<string, Club>
   settings: GameSettings
@@ -52,7 +55,7 @@ export function getTradeDeadlineDate(currentYear: number): string {
   return `${currentYear}-10-29`
 }
 
-function getDeadlinePressure(currentDate: string, deadlineDate: string): number {
+export function getDeadlinePressure(currentDate: string, deadlineDate: string): number {
   const days = daysUntil(currentDate, deadlineDate)
   if (days <= 1) return 1
   if (days <= 3) return 0.85
@@ -74,7 +77,7 @@ function getClubRoster(players: Record<string, Player>, clubId: string): Player[
   return Object.values(players).filter((p) => p.clubId === clubId)
 }
 
-function getPositionalNeeds(players: Record<string, Player>, clubId: string): Set<Position> {
+export function getPositionalNeeds(players: Record<string, Player>, clubId: string): Set<Position> {
   const counts = new Map<Position, number>()
   for (const pos of POSITIONS) counts.set(pos, 0)
   for (const p of Object.values(players)) {
@@ -90,7 +93,7 @@ function getPositionalNeeds(players: Record<string, Player>, clubId: string): Se
   return needs
 }
 
-function computeMarketDemand(players: Record<string, Player>, clubs: Record<string, Club>): Record<Position, number> {
+export function computeMarketDemand(players: Record<string, Player>, clubs: Record<string, Club>): Record<Position, number> {
   const demand: Record<Position, number> = {
     BP: 0,
     FB: 0,
@@ -211,7 +214,7 @@ function overallOf(player: Player): number {
   return total / vals.length
 }
 
-function evaluateForClub(
+export function evaluateForClub(
   offer: TradeNegotiationOffer,
   clubId: string,
   context: OfferEvalContext,
@@ -595,6 +598,7 @@ function generateTwoClubOffer(
   rng: SeededRNG,
   deadlinePressure: number,
   demandByPlayerId?: Record<string, number>,
+  targetPlayerId?: string,
 ): TradeNegotiationOffer | null {
   const aiClub = clubs[aiClubId]
   if (!aiClub) return null
@@ -613,13 +617,15 @@ function generateTwoClubOffer(
   const salaryDumpMode = settings.realism.salaryDumpTrades && overCap && rng.chance(0.45)
 
   const outgoing = findExpendablePlayer(aiRoster, rng, salaryDumpMode)
-  const incoming = findTargetPlayer(
-    userRoster,
-    aiNeeds,
-    aiClub.aiPersonality.competitiveWindow,
-    rng,
-    aiClub.tacticalIdentity,
-  )
+  const incoming = targetPlayerId
+    ? (players[targetPlayerId] ?? findTargetPlayer(userRoster, aiNeeds, aiClub.aiPersonality.competitiveWindow, rng, aiClub.tacticalIdentity))
+    : findTargetPlayer(
+        userRoster,
+        aiNeeds,
+        aiClub.aiPersonality.competitiveWindow,
+        rng,
+        aiClub.tacticalIdentity,
+      )
 
   if (!outgoing || !incoming) return null
 
@@ -1337,4 +1343,284 @@ export function validateTradeConsent(
   }
 
   return { ok: true }
+}
+
+// ── Trade Drama Engine ────────────────────────────────────────────────────────
+
+export function initTradeDramaState(): TradeDramaState {
+  return { events: [], biddingWars: [] }
+}
+
+/**
+ * Generate an unsolicited offer from an AI club targeting one of the user's
+ * high-value players.  Returns null if nothing interesting can be built.
+ */
+function generateTargetedInboundOffer(
+  userClubId: string,
+  targetPlayerId: string,
+  aiClubId: string,
+  players: Record<string, Player>,
+  clubs: Record<string, Club>,
+  settings: GameSettings,
+  currentDate: string,
+  currentYear: number,
+  rng: SeededRNG,
+  deadlinePressure: number,
+  demandByPlayerId?: Record<string, number>,
+): TradeNegotiationOffer | null {
+  return generateTwoClubOffer(
+    userClubId,
+    aiClubId,
+    players,
+    clubs,
+    settings,
+    currentDate,
+    currentYear,
+    rng,
+    deadlinePressure,
+    demandByPlayerId,
+    targetPlayerId,
+  )
+}
+
+/**
+ * Improve an existing pending offer slightly — better pick or swap a player
+ * for something of higher value.  Returns the mutated copy.
+ */
+function improveOffer(
+  base: TradeNegotiationOffer,
+  players: Record<string, Player>,
+  rng: SeededRNG,
+): TradeNegotiationOffer {
+  const improved = structuredClone(base)
+  improved.id = base.id // keep same id so we can patch-in-place
+  improved.meta = { ...base.meta, deadlinePressure: clamp(base.meta.deadlinePressure + 0.1, 0, 1) }
+
+  // Try to add a future pick as a sweetener
+  const aiClubId = base.proposingClubId
+  const aiHasRoster = Object.values(players).some((p) => p.clubId === aiClubId)
+  if (aiHasRoster && !improved.pickMoves.some((pm) => pm.pick.year > 2025)) {
+    const sweetenerPick: TradePickMove = {
+      pick: { round: 3, year: 2026, originalClubId: aiClubId, isFuturePick: true },
+      fromClubId: aiClubId,
+      toClubId: base.clubsInvolved.find((c) => c !== aiClubId) ?? aiClubId,
+    }
+    improved.pickMoves = [...improved.pickMoves, sweetenerPick]
+    improved.message = improved.message.replace(/\.$/, '') + ', sweetened with a future 3rd.'
+  }
+
+  return improved
+}
+
+interface TickDramaResult {
+  /** The inbox with any offer modifications (improved / withdrawn) applied */
+  updatedInbox: TradeInboxItem[]
+  /** Brand-new items generated by the drama tick (targeted inbound, rival bids) */
+  newInboxItems: TradeInboxItem[]
+  updatedDrama: TradeDramaState
+}
+
+/**
+ * Main drama tick called once per half-day advance during the trade period.
+ * - Detects / updates bidding wars
+ * - Escalates offers that are nearing expiry to pressure the user
+ * - Occasionally generates a targeted rival bid for a user-star player
+ * - Records events in the drama timeline
+ */
+export function tickTradeDrama(
+  drama: TradeDramaState,
+  inbox: TradeInboxItem[],
+  players: Record<string, Player>,
+  clubs: Record<string, Club>,
+  settings: GameSettings,
+  userClubId: string,
+  currentDate: string,
+  currentYear: number,
+  rng: SeededRNG,
+  demandByPlayerId?: Record<string, number>,
+): TickDramaResult {
+  const deadlineDate = getTradeDeadlineDate(currentYear)
+  const deadlinePressure = getDeadlinePressure(currentDate, deadlineDate)
+  const daysLeft = daysUntil(currentDate, deadlineDate)
+
+  const newEvents: TradeInboxEvent[] = []
+  const newInboxItems: TradeInboxItem[] = []
+  let updatedInbox = inbox.map((i) => ({ ...i })) // shallow clone each item
+
+  // ── 1. Bidding-war detection ────────────────────────────────────────────────
+  const userPendingOffers = updatedInbox.filter(
+    (i) => i.offer.status === 'pending-user' && i.offer.clubsInvolved.includes(userClubId),
+  )
+
+  const playerBidderMap = new Map<string, string[]>()
+  for (const item of userPendingOffers) {
+    const userPlayers = item.offer.playerMoves
+      .filter((m) => m.fromClubId === userClubId)
+      .map((m) => m.playerId)
+    for (const pid of userPlayers) {
+      if (!playerBidderMap.has(pid)) playerBidderMap.set(pid, [])
+      playerBidderMap.get(pid)!.push(item.offer.proposingClubId)
+    }
+  }
+
+  const updatedBiddingWars: BiddingWarCluster[] = []
+  for (const [playerId, clubIds] of playerBidderMap) {
+    if (clubIds.length < 2) continue
+    const unique = [...new Set(clubIds)]
+    const existing = drama.biddingWars.find((bw) => bw.playerId === playerId)
+    const intensity: BiddingWarCluster['intensity'] =
+      unique.length >= 4 ? 'hot' : unique.length >= 3 ? 'moderate' : 'mild'
+
+    if (!existing) {
+      const player = players[playerId]
+      const clubNames = unique
+        .slice(0, 3)
+        .map((cid) => clubs[cid]?.abbreviation ?? cid)
+        .join(', ')
+      newEvents.push({
+        id: id('ev', rng),
+        date: currentDate,
+        type: 'rival-bid',
+        playerId,
+        message: `Multiple clubs (${clubNames}) are now competing for ${player?.firstName ?? ''} ${player?.lastName ?? ''}.`,
+        leverageShift: 'seller',
+        demandDelta: unique.length,
+      })
+    }
+
+    updatedBiddingWars.push({
+      playerId,
+      clubIds: unique,
+      startedAt: existing?.startedAt ?? currentDate,
+      intensity,
+    })
+  }
+
+  // Carry forward bidding wars for players not in current batch
+  for (const bw of drama.biddingWars) {
+    if (!updatedBiddingWars.find((u) => u.playerId === bw.playerId)) {
+      const stillActive = userPendingOffers.some((i) =>
+        i.offer.playerMoves.some((m) => m.fromClubId === userClubId && m.playerId === bw.playerId),
+      )
+      if (stillActive) updatedBiddingWars.push(bw)
+    }
+  }
+
+  // ── 2. Deadline pressure events ────────────────────────────────────────────
+  if (daysLeft <= 3 && rng.chance(0.5)) {
+    const pendingCount = userPendingOffers.length
+    if (pendingCount > 0) {
+      newEvents.push({
+        id: id('ev', rng),
+        date: currentDate,
+        type: 'deadline-pressure',
+        message: `Trade deadline is ${daysLeft <= 1 ? 'tomorrow' : `in ${daysLeft} days`}. ${pendingCount} offer${pendingCount !== 1 ? 's' : ''} still pending.`,
+        leverageShift: 'buyer',
+      })
+    }
+  }
+
+  // ── 3. Offer escalation — AI improves a stale offer ────────────────────────
+  const staleOffers = userPendingOffers.filter((i) => {
+    const age = daysUntil(i.offer.createdAt, currentDate)
+    return age >= 3 && deadlinePressure >= 0.45
+  })
+
+  if (staleOffers.length > 0 && rng.chance(0.25 + deadlinePressure * 0.3)) {
+    const target = rng.pick(staleOffers)
+    const improved = improveOffer(target.offer, players, rng)
+    updatedInbox = updatedInbox.map((i) =>
+      i.offer.id === target.offer.id ? { ...i, offer: improved, read: false } : i,
+    )
+    newEvents.push({
+      id: id('ev', rng),
+      date: currentDate,
+      type: 'offer-improved',
+      offerId: target.offer.id,
+      clubId: target.offer.proposingClubId,
+      message: `${clubs[target.offer.proposingClubId]?.name ?? 'An AI club'} has sweetened their offer.`,
+      leverageShift: 'seller',
+    })
+  }
+
+  // ── 4. Targeted inbound — AI eyes a user star ──────────────────────────────
+  const pendingTotal = userPendingOffers.length
+  const inboundCap = deadlinePressure >= 0.7 ? 5 : 3
+  if (pendingTotal < inboundCap && rng.chance(0.15 + deadlinePressure * 0.2)) {
+    const activeTargetIds = new Set(
+      userPendingOffers.flatMap((i) =>
+        i.offer.playerMoves.filter((m) => m.fromClubId === userClubId).map((m) => m.playerId),
+      ),
+    )
+    const roster = getClubRoster(players, userClubId)
+    const starPool = roster
+      .filter((p) => overallOf(p) >= 72 && !activeTargetIds.has(p.id))
+      .sort((a, b) => overallOf(b) - overallOf(a))
+
+    if (starPool.length > 0) {
+      const target = starPool[0]
+      const aiClubs = rng.shuffle(Object.keys(clubs).filter((c) => c !== userClubId))
+      for (const aiClubId of aiClubs.slice(0, 3)) {
+        const offer = generateTargetedInboundOffer(
+          userClubId,
+          target.id,
+          aiClubId,
+          players,
+          clubs,
+          settings,
+          currentDate,
+          currentYear,
+          rng,
+          deadlinePressure,
+          demandByPlayerId,
+        )
+        if (!offer) continue
+        const expiryDays = deadlinePressure >= 0.85 ? 1 : deadlinePressure >= 0.6 ? 2 : 4
+        offer.expiresAt = new Date(Date.parse(`${currentDate}T00:00:00Z`) + expiryDays * 86400000)
+          .toISOString()
+          .slice(0, 10)
+        newInboxItems.push({ id: id('inbox', rng), offer, read: false })
+        newEvents.push({
+          id: id('ev', rng),
+          date: currentDate,
+          type: 'new-offer',
+          offerId: offer.id,
+          playerId: target.id,
+          clubId: aiClubId,
+          message: `${clubs[aiClubId]?.name ?? aiClubId} has submitted an unsolicited offer targeting ${target.firstName} ${target.lastName}.`,
+          leverageShift: 'neutral',
+        })
+        break // one per tick
+      }
+    }
+  }
+
+  // ── 5. Rival-withdrew — a bidding war club pulls out ───────────────────────
+  for (const bw of updatedBiddingWars) {
+    if (bw.intensity === 'hot' && rng.chance(0.1)) {
+      const droppingClub = rng.pick(bw.clubIds)
+      const player = players[bw.playerId]
+      newEvents.push({
+        id: id('ev', rng),
+        date: currentDate,
+        type: 'rival-withdrew',
+        clubId: droppingClub,
+        playerId: bw.playerId,
+        message: `${clubs[droppingClub]?.name ?? droppingClub} has pulled out of negotiations for ${player?.firstName ?? ''} ${player?.lastName ?? ''}.`,
+        leverageShift: 'buyer',
+      })
+    }
+  }
+
+  // Cap events log at 100
+  const mergedEvents = [...drama.events, ...newEvents].slice(-100)
+
+  return {
+    updatedInbox,
+    newInboxItems,
+    updatedDrama: {
+      events: mergedEvents,
+      biddingWars: updatedBiddingWars,
+    },
+  }
 }

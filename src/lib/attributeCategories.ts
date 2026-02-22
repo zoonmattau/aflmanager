@@ -111,17 +111,17 @@ export const ATTR_CATEGORIES: { label: string; attrs: { key: keyof PlayerAttribu
 ]
 
 export function attrColor(val: number): string {
+  if (val >= 90) return 'text-green-700 dark:text-green-400'
   if (val >= 80) return 'text-green-500'
-  if (val >= 65) return 'text-emerald-400'
-  if (val >= 50) return 'text-yellow-500'
-  if (val >= 35) return 'text-orange-500'
+  if (val >= 70) return 'text-yellow-400'
+  if (val >= 60) return 'text-yellow-600 dark:text-yellow-500'
   return 'text-red-500'
 }
 
 export function attrBgColor(val: number): string {
+  if (val >= 90) return 'bg-green-700 dark:bg-green-400'
   if (val >= 80) return 'bg-green-500'
-  if (val >= 65) return 'bg-emerald-400'
-  if (val >= 50) return 'bg-yellow-500'
-  if (val >= 35) return 'bg-orange-500'
+  if (val >= 70) return 'bg-yellow-400'
+  if (val >= 60) return 'bg-yellow-600 dark:bg-yellow-500'
   return 'bg-red-500'
 }

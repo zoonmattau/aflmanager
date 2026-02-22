@@ -3,6 +3,7 @@ import { getPositionSuitabilityForSlot } from '@/engine/player/positionEligibili
 import { getOverallRating, getPlayerPositionRating } from '@/engine/player/playerRating'
 import { SLOT_POSITION_COMPATIBILITY } from '@/engine/core/constants'
 import { getPositionBadgeStrongClass } from '@/lib/positionColor'
+import { getFitDisplay } from '@/engine/lineup/emergencyRoles'
 
 export type PositionSuitability = 'primary' | 'secondary' | 'out-of-position'
 
@@ -21,21 +22,14 @@ export function getPositionSuitability(
   return getPositionSuitabilityForSlot(player, slot as LineupSlot)
 }
 
-const SUITABILITY_BORDER: Record<PositionSuitability, string> = {
-  primary: 'border-zinc-500/70',
-  secondary: 'border-zinc-500/70',
-  'out-of-position': 'border-zinc-500/70',
-}
-
-const SUITABILITY_BG: Record<PositionSuitability, string> = {
-  primary: 'bg-zinc-800/80',
-  secondary: 'bg-zinc-800/80',
-  'out-of-position': 'bg-zinc-800/80',
-}
-
 export function PlayerMagnet({ player, slot, suitability, onProfileClick }: PlayerMagnetProps) {
-  const borderClass = SUITABILITY_BORDER[suitability]
-  const bgClass = SUITABILITY_BG[suitability]
+  // Use the rich fit display from emergencyRoles for accurate colouring
+  const fitDisplay = slot && !/^I\d$/.test(slot)
+    ? getFitDisplay(player, slot as LineupSlot)
+    : null
+
+  const borderClass = fitDisplay ? fitDisplay.borderClass : 'border-zinc-500/70'
+  const bgClass = fitDisplay ? fitDisplay.bgClass : 'bg-zinc-800/80'
 
   const surname =
     player.lastName.length > 12
@@ -44,7 +38,10 @@ export function PlayerMagnet({ player, slot, suitability, onProfileClick }: Play
   const displayName = `${player.firstName.charAt(0)}. ${surname}`
   const overall = getOverallRating(player)
   const slotKey = slot as LineupSlot | undefined
-  const slotPrimaryPos = slotKey ? SLOT_POSITION_COMPATIBILITY[slotKey]?.[0] : undefined
+  // Interchange bench slots (I1–I8) have no fixed positional role — show OVR instead of
+  // evaluating the player against whatever position the slot happens to list first (IM).
+  const isInterchangeSlot = slotKey !== undefined && /^I\d$/.test(slotKey)
+  const slotPrimaryPos = (slotKey && !isInterchangeSlot) ? SLOT_POSITION_COMPATIBILITY[slotKey]?.[0] : undefined
   const slotOverall = slotPrimaryPos
     ? getPlayerPositionRating(player, slotPrimaryPos)
     : overall
@@ -66,8 +63,10 @@ export function PlayerMagnet({ player, slot, suitability, onProfileClick }: Play
       draggable
       onDragStart={handleDragStart}
       onClick={onProfileClick ? (e) => { e.stopPropagation(); onProfileClick() } : undefined}
-      className={`flex items-center gap-[clamp(3px,0.45vw,7px)] rounded-md border-2 ${borderClass} ${bgClass} ${onProfileClick ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'} select-none w-[clamp(52px,8.2vw,118px)] h-[clamp(26px,3.9vw,46px)] px-[clamp(3px,0.55vw,7px)] shrink-0 shadow-sm`}
-      title={`${player.firstName} ${player.lastName} (${player.position.primary}) — click to view profile`}
+      className={`relative flex items-center gap-[clamp(3px,0.45vw,7px)] rounded-md border-2 ${borderClass} ${bgClass} ${onProfileClick ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing'} select-none w-[clamp(52px,8.2vw,118px)] h-[clamp(26px,3.9vw,46px)] px-[clamp(3px,0.55vw,7px)] shrink-0 shadow-sm`}
+      title={fitDisplay && fitDisplay.level !== 'primary'
+        ? `${player.firstName} ${player.lastName} (${player.position.primary}) — ${fitDisplay.label}: −${fitDisplay.perfPenaltyPct}% performance, ×${fitDisplay.injuryMult.toFixed(2)} injury risk`
+        : `${player.firstName} ${player.lastName} (${player.position.primary}) — Natural position`}
     >
       <span className="hidden min-[1150px]:block w-[clamp(18px,1.8vw,28px)] text-center text-[clamp(8px,1vw,12px)] font-bold leading-none text-white">
         #{player.jerseyNumber}
@@ -79,6 +78,13 @@ export function PlayerMagnet({ player, slot, suitability, onProfileClick }: Play
           {slotPrimaryPos ? `${slotPrimaryPos} ${slotOverall}` : `OVR ${overall}`}
         </span>
       </div>
+      {/* Emergency indicator pip */}
+      {fitDisplay && fitDisplay.level === 'emergency' && (
+        <span className="absolute top-0.5 right-0.5 text-[7px] font-bold leading-none text-rose-400">⚠</span>
+      )}
+      {fitDisplay && fitDisplay.level === 'secondary' && (
+        <span className="absolute top-0.5 right-0.5 text-[7px] font-bold leading-none text-amber-400">!</span>
+      )}
     </div>
   )
 }

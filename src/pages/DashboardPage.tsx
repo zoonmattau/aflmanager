@@ -1,9 +1,13 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import React, { useState, useMemo, useEffect, useCallback } from 'react'
+import { useDashboardConfig } from '@/hooks/useDashboardConfig'
+import type { DashboardWidgetId } from '@/hooks/useDashboardConfig'
+import { DashboardCustomizeSheet } from '@/components/dashboard/DashboardCustomizeSheet'
 import { h2hKey, isRivalryMatch, h2hPerspective } from '@/engine/history/h2hTracker'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ConfirmButton } from '@/components/ui/ConfirmButton'
 import {
   Dialog,
   DialogContent,
@@ -24,9 +28,11 @@ import {
   Trophy, Calendar,
   Play, FastForward, SkipForward, ChevronLeft, ChevronRight, ArrowRight,
   Plus, Moon, X,
-  Users, ClipboardList, Shield, BarChart3, Gamepad2,
+  Users, ClipboardList, Shield, ShieldAlert, BarChart3, Gamepad2,
   AlertTriangle, GraduationCap, Scale, Mail, FileText, Cog, DollarSign,
-  Newspaper, TrendingUp, TrendingDown, Minus,
+  Newspaper, TrendingUp, TrendingDown, Minus, LayoutGrid,
+  Flame, CheckCircle2, Zap,
+  Sun, CloudRain, Wind, Thermometer, Droplets,
 } from 'lucide-react'
 import type { Match } from '@/types/match'
 import type { Player, PlayerPositionType } from '@/types/player'
@@ -35,7 +41,7 @@ import type { Club } from '@/types/club'
 import type { Fixture, LadderEntry } from '@/types/season'
 import type { GamePhase } from '@/types/game'
 import type { GameEvent, GameEventType, ScheduleSlot } from '@/types/calendar'
-import type { TrainingFocus, TrainingSession } from '@/engine/training/trainingEngine'
+import type { TrainingFocus, TrainingSession, TrainingResult } from '@/engine/training/trainingEngine'
 import {
   runTrainingSessions,
   applyTrainingResults,
@@ -43,6 +49,7 @@ import {
   weekPlanToSessions,
   advanceClubUpskilling,
 } from '@/engine/training/trainingEngine'
+import { generateSquadPulseNotes } from '@/engine/training/squadPulseEngine'
 import { SeededRNG } from '@/engine/core/rng'
 import { getClubBudgetAllocation, getBudgetMultiplier } from '@/engine/clubs/budgetEngine'
 import {
@@ -68,22 +75,32 @@ import {
 } from '@/engine/offseason/offseasonCalendar'
 import { MatchEngagementBanner } from '@/components/dashboard/MatchEngagementBanner'
 import { RecommendedActions } from '@/components/dashboard/RecommendedActions'
+import { PlayerStorylinesWidget } from '@/components/dashboard/PlayerStorylinesWidget'
+import { DynastyQuestCard } from '@/components/dashboard/DynastyQuestCard'
 import { ClubListNeedsCard } from '@/components/dashboard/ClubListNeedsCard'
 import { OffseasonPhaseCard } from '@/components/dashboard/OffseasonPhaseCard'
 import { PhaseProgressCard } from '@/components/dashboard/PhaseProgressCard'
 import { OffseasonCalendarOverlay } from '@/components/dashboard/OffseasonCalendarOverlay'
-import { MatchupFieldPreview } from '@/components/lineup/MatchupFieldPreview'
-import { selectBestLineup } from '@/engine/ai/lineupSelection'
-import { getLineupSlots } from '@/engine/core/constants'
 import { calculateClubSalaryTotal, calculateLuxuryTax } from '@/engine/contracts/negotiation'
 import { isPlayerSuspended } from '@/engine/players/availability'
 import { canBeSelectedForAfl } from '@/engine/players/contracts'
 import { PLAYER_TRAINING_FOCUS_LABELS } from '@/engine/players/trainingFocus'
 import { applyMediaCoverage, deriveMediaStories } from '@/engine/media/mediaFeedEngine'
 import { LiveMatchView } from '@/components/match/LiveMatchView'
+import { MatchupFieldPreview } from '@/components/lineup/MatchupFieldPreview'
+import { TrainingReportCard } from '@/components/training/TrainingReportCard'
 import { buildSpecialEventSimInput } from '@/engine/specialEvents/specialEventSimInput'
 import type { SimulateMatchInput } from '@/engine/match/simulateMatch'
 import type { SpecialEventInstance } from '@/types/specialEvents'
+import { NewChallengeModal } from '@/components/legacy/NewChallengeModal'
+import { buildLegacyRating } from '@/engine/legacy/legacyEngine'
+import type { BettingMarketsState } from '@/types/betting'
+import { computeLeadershipStabilityPct } from '@/engine/leadership/leadershipChangeEngine'
+import { generateRivalScoutReport } from '@/engine/match/rivalScoutEngine'
+import { generateMatchWeather, windDirectionArrow, windStrengthLabel } from '@/engine/match/weatherEngine'
+import type { MatchWeatherData } from '@/engine/match/weatherEngine'
+import { buildSquadStorylines } from '@/engine/player/storyArc'
+import { cn } from '@/lib/utils'
 
 // Stable fallback for optional h2hRecords (avoids new-reference-per-render in selector)
 const EMPTY_H2H: Record<string, import('@/types/history').H2HRecord> = {}
@@ -105,6 +122,95 @@ const EVENT_COLORS: Record<GameEventType, string> = {
 }
 
 const SHORT_DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+// ---------------------------------------------------------------------------
+// Training slot colour helpers (used in Training Overview card)
+// ---------------------------------------------------------------------------
+const SLOT_ABBREV: Record<string, string> = {
+  rest: '−', recovery: 'Rc', physical: 'Ph', contested: 'Co',
+  'match-fitness': 'MF', kicking: 'Kk', handball: 'Hb', marking: 'Mk',
+  'game-sense': 'GS', offensive: 'Of', defensive: 'Df',
+  'set-pieces': 'SP', 'video-review': 'VR', mental: 'Mn', ruck: 'Rk',
+}
+
+function getSlotBgClass(focus: TrainingFocus | 'rest'): string {
+  switch (focus) {
+    case 'rest': return 'bg-sky-500/20 text-sky-700 dark:text-sky-300'
+    case 'recovery': return 'bg-teal-500/20 text-teal-700 dark:text-teal-300'
+    case 'physical': case 'contested': case 'match-fitness':
+      return 'bg-red-500/20 text-red-700 dark:text-red-300'
+    case 'kicking': case 'handball': case 'marking':
+      return 'bg-green-500/20 text-green-700 dark:text-green-300'
+    case 'game-sense': case 'offensive': case 'defensive': case 'set-pieces':
+      return 'bg-purple-500/20 text-purple-700 dark:text-purple-300'
+    case 'video-review': return 'bg-zinc-500/20 text-zinc-700 dark:text-zinc-300'
+    case 'mental': return 'bg-blue-500/20 text-blue-700 dark:text-blue-300'
+    case 'ruck': return 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
+    default: return 'bg-muted/40 text-muted-foreground'
+  }
+}
+
+function getSlotDotClass(focus: TrainingFocus | 'rest'): string {
+  switch (focus) {
+    case 'rest': return 'bg-sky-400'
+    case 'recovery': return 'bg-teal-400'
+    case 'physical': case 'contested': case 'match-fitness': return 'bg-red-400'
+    case 'kicking': case 'handball': case 'marking': return 'bg-green-400'
+    case 'game-sense': case 'offensive': case 'defensive': case 'set-pieces': return 'bg-purple-400'
+    case 'video-review': return 'bg-zinc-400'
+    case 'mental': return 'bg-blue-400'
+    case 'ruck': return 'bg-amber-400'
+    default: return 'bg-muted'
+  }
+}
+
+function getLoadBarClass(level: string): string {
+  switch (level) {
+    case 'low': return 'bg-green-500'
+    case 'moderate': return 'bg-yellow-500'
+    case 'high': return 'bg-orange-500'
+    case 'extreme': return 'bg-red-600'
+    default: return 'bg-muted'
+  }
+}
+
+function getLoadBarWidth(level: string): string {
+  switch (level) {
+    case 'low': return '25%'
+    case 'moderate': return '50%'
+    case 'high': return '75%'
+    case 'extreme': return '100%'
+    default: return '0%'
+  }
+}
+
+function getLoadTextClass(level: string): string {
+  switch (level) {
+    case 'low': return 'text-green-600 dark:text-green-400'
+    case 'moderate': return 'text-yellow-600 dark:text-yellow-400'
+    case 'high': return 'text-orange-600 dark:text-orange-400'
+    case 'extreme': return 'text-red-600 dark:text-red-400'
+    default: return 'text-muted-foreground'
+  }
+}
+
+function getRiskDotClass(risk: string): string {
+  switch (risk) {
+    case 'low': return 'bg-green-500'
+    case 'moderate': return 'bg-yellow-500'
+    case 'elevated': return 'bg-red-500'
+    default: return 'bg-muted'
+  }
+}
+
+function getRiskTextClass(risk: string): string {
+  switch (risk) {
+    case 'low': return 'text-green-600 dark:text-green-400'
+    case 'moderate': return 'text-yellow-600 dark:text-yellow-400'
+    case 'elevated': return 'text-red-600 dark:text-red-400'
+    default: return 'text-muted-foreground'
+  }
+}
 
 const POSITION_LABELS: Record<PlayerPositionType, string> = {
   BP: 'Back Pocket',
@@ -299,29 +405,6 @@ type MatchupOption =
       roundDate: string
     }
 
-function sanitizePreviewLineup(
-  rawLineup: Record<string, string>,
-  players: Record<string, Player>,
-  clubId: string,
-  interchangePlayers: number,
-): Record<string, string> {
-  const validSlots = new Set<string>(getLineupSlots(interchangePlayers))
-  const next: Record<string, string> = {}
-  const seen = new Set<string>()
-  for (const [slot, playerId] of Object.entries(rawLineup)) {
-    if (!validSlots.has(slot)) continue
-    if (!playerId || seen.has(playerId)) continue
-    const player = players[playerId]
-    if (!player) continue
-    if (player.clubId !== clubId) continue
-    if (!canBeSelectedForAfl(player)) continue
-    if (player.injury || isPlayerSuspended(player) || player.fitness < 50) continue
-    next[slot] = playerId
-    seen.add(playerId)
-  }
-  return next
-}
-
 // ---------------------------------------------------------------------------
 // Schedule Slot Cell (morning / afternoon)
 // ---------------------------------------------------------------------------
@@ -439,12 +522,19 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
   const selectedLineup = useGameStore((s) => s.selectedLineup)
   const selectedSubstituteId = useGameStore((s) => s.selectedSubstituteId)
   const trainingWeekPlan = useGameStore((s) => s.trainingWeekPlan)
+  const lastTrainingReport = useGameStore((s) => s.lastTrainingReport)
   const currentDate = useGameStore((s) => s.currentDate)
   const simulationActive = useGameStore((s) => s.simulation.active)
 
   const settings = useGameStore((s) => s.settings)
+  const bettingMarkets = useGameStore((s) => s.bettingMarkets)
   const enterOffseason = useGameStore((s) => s.enterOffseason)
   const offseasonState = useGameStore((s) => s.offseasonState)
+  const legacyState = useGameStore((s) => s.legacyState)
+  const dynastyQuests = useGameStore((s) => s.dynastyQuests ?? [])
+  const careerObjectives = useGameStore((s) => s.careerObjectives)
+  const leadershipPending = useGameStore((s) => s.leadershipPending)
+  const leadershipDisruptions = useGameStore((s) => s.leadershipDisruptions)
 
   // Offseason sim controls
   const simHalfDay = useGameStore((s) => s.simOffseasonHalfDay)
@@ -458,6 +548,9 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
   const isOffseason = phase === 'offseason'
   const offseasonDate = offseasonState?.calendarState?.currentDate ?? currentDate
   const effectiveDate = isOffseason ? offseasonDate : currentDate
+
+  const { widgets, setVisible, reorder, reset } = useDashboardConfig()
+  const [customiseOpen, setCustomiseOpen] = useState(false)
 
   const [lastResult, setLastResult] = useState<Match | null>(null)
   const [lastSpecialResult, _setLastSpecialResult] = useState<import('@/types/specialEvents').SpecialEventMatchResult | null>(null)
@@ -507,6 +600,41 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
     : null
   const opponent = opponentId ? clubs[opponentId] : null
   const isHome = nextFixture?.homeClubId === playerClubId
+
+  const matchScoutReport = useMemo(() => {
+    if (!opponent) return null
+    return generateRivalScoutReport(opponent, players)
+  }, [opponent, players])
+
+  const myMatchStorylines = useMemo(() => {
+    const leadership = clubs[playerClubId]?.leadership
+    const leaderIds = new Set([
+      ...(leadership?.captainId ? [leadership.captainId] : []),
+      ...(leadership?.viceCaptainId ? [leadership.viceCaptainId] : []),
+      ...(leadership?.leadershipGroupIds ?? []),
+    ])
+    const myPlayers = Object.values(players).filter((p) => p.clubId === playerClubId)
+    const myArcs = buildSquadStorylines(myPlayers, leaderIds, currentDate, 3)
+    const oppArcs = opponent
+      ? buildSquadStorylines(
+          Object.values(players).filter((p) => p.clubId === opponent.id),
+          new Set<string>(),
+          currentDate,
+          3,
+        )
+      : []
+    return [...myArcs, ...oppArcs].sort((a, b) => b.priority - a.priority).slice(0, 2)
+  }, [players, playerClubId, clubs, currentDate, opponent])
+
+  const forecastWeather = useMemo(() => {
+    if (!nextFixture) return null
+    const seed = Math.abs(
+      nextFixture.round * 31337 ^
+      (nextFixture.homeClubId.charCodeAt(0) * 1997) ^
+      (nextFixture.awayClubId.charCodeAt(0) * 997),
+    )
+    return generateMatchWeather(new SeededRNG(seed), (nextFixture as { venueId?: string }).venueId)
+  }, [nextFixture])
 
   const opponentLadderEntry = opponentId ? ladder.find((e) => e.clubId === opponentId) : null
   const opponentLadderPosition = opponentId ? ladder.findIndex((e) => e.clubId === opponentId) + 1 : 0
@@ -761,13 +889,15 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
     }
 
     // Apply user training (if any sessions scheduled)
+    let userTrainingResults: TrainingResult[] = []
     if (userSessions.length > 0 && userFacilities) {
       const userClub = state.clubs[state.playerClubId]
       const userBudget = userClub ? getClubBudgetAllocation(userClub) : undefined
       const userTrainingBudgetMul = userBudget
         ? (getBudgetMultiplier(userBudget, 'facilities') + getBudgetMultiplier(userBudget, 'coaching')) / 2
         : undefined
-      const userResults = runTrainingSessions(userClubPlayers, userSessions, userClubStaff, userFacilities, trainingRng, userTrainingBudgetMul)
+      userTrainingResults = runTrainingSessions(userClubPlayers, userSessions, userClubStaff, userFacilities, trainingRng, userTrainingBudgetMul)
+      const userResults = userTrainingResults
       // Apply results to the store's players
       useGameStore.setState((s) => {
         applyTrainingResults(s.players, userResults)
@@ -815,6 +945,86 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
             }
           }
         }
+
+        // Build and store the weekly training report
+        const topImprovers = userResults
+          .filter((r) => Object.values(r.attributeChanges).some((v) => (v as number) > 0))
+          .map((r) => {
+            const player = s.players[r.playerId]
+            const totalGain = Object.values(r.attributeChanges).reduce(
+              (sum, v) => sum + Math.max(0, v as number),
+              0,
+            )
+            const topEntry = Object.entries(r.attributeChanges)
+              .filter(([, v]) => (v as number) > 0)
+              .sort(([, a], [, b]) => (b as number) - (a as number))[0]
+            return {
+              playerId: r.playerId,
+              name: player ? `${player.firstName} ${player.lastName}` : r.playerId,
+              totalGain,
+              topAttr: topEntry?.[0] ?? '',
+              topGain: (topEntry?.[1] as number) ?? 0,
+            }
+          })
+          .sort((a, b) => b.totalGain - a.totalGain)
+          .slice(0, 5)
+
+        const nonZeroResults = userResults.filter((r) => r.fatigueChange !== 0 || r.fitnessChange !== 0)
+        const avgFatigueChange =
+          nonZeroResults.length > 0
+            ? nonZeroResults.reduce((sum, r) => sum + r.fatigueChange, 0) / nonZeroResults.length
+            : 0
+        const avgFitnessChange =
+          nonZeroResults.length > 0
+            ? nonZeroResults.reduce((sum, r) => sum + r.fitnessChange, 0) / nonZeroResults.length
+            : 0
+
+        // Detect overtrained players: those whose fatigue has crossed the overtraining threshold
+        const OVERTRAINING_THRESHOLD = 72
+        const overtrained = Object.values(s.players)
+          .filter((p) => p.clubId === s.playerClubId && !p.injury && p.fatigue >= OVERTRAINING_THRESHOLD)
+          .map((p) => ({ playerId: p.id, name: `${p.firstName} ${p.lastName}`, fatigue: p.fatigue }))
+          .sort((a, b) => b.fatigue - a.fatigue)
+
+        const loadLevel: import('@/types/game').TrainingWeekReport['loadLevel'] =
+          avgFatigueChange > 12 ? 'excessive' :
+          avgFatigueChange > 6  ? 'heavy' :
+          avgFatigueChange > 2  ? 'moderate' :
+          'light'
+
+        s.lastTrainingReport = {
+          round: s.currentRound,
+          date: s.currentDate,
+          sessionCount: userSessions.length,
+          topImprovers,
+          avgFatigueChange,
+          avgFitnessChange,
+          injuryScarePlayers: userResults
+            .filter((r) => r.injuryRisk)
+            .map((r) => {
+              const p = s.players[r.playerId]
+              return p ? `${p.firstName} ${p.lastName}` : r.playerId
+            }),
+          upskillCompletions: completions.map((c) => {
+            const p = s.players[c.playerId]
+            let targetLabel = c.targetLabel
+            if (c.type === 'position') {
+              targetLabel = POSITION_LABELS[c.targetLabel as PlayerPositionType] ?? c.targetLabel
+            } else {
+              targetLabel =
+                PLAYER_TRAINING_FOCUS_LABELS[
+                  c.targetLabel as keyof typeof PLAYER_TRAINING_FOCUS_LABELS
+                ] ?? c.targetLabel
+            }
+            return {
+              playerName: p ? `${p.firstName} ${p.lastName}` : c.playerId,
+              targetLabel,
+              type: c.type,
+            }
+          }),
+          overtrained,
+          loadLevel,
+        }
       })
     }
 
@@ -857,6 +1067,29 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
         )
       })
     }
+
+    // Generate Squad Pulse notes for user club (always, even if no training planned)
+    useGameStore.setState((s) => {
+      const pulseRng = new SeededRNG(s.rngSeed + s.currentRound * 6673)
+      const clubPlayersForPulse = Object.values(s.players).filter(
+        (p) => p.clubId === s.playerClubId && !p.injury,
+      )
+      const pulseEntries = generateSquadPulseNotes(
+        clubPlayersForPulse,
+        userTrainingResults,
+        pulseRng,
+        s.currentRound,
+        s.currentDate,
+      )
+      for (const { playerId, note } of pulseEntries) {
+        const p = s.players[playerId]
+        if (!p) continue
+        if (!p.pulseNotes) p.pulseNotes = []
+        p.pulseNotes.push(note)
+        // Rolling window — keep last 10 notes
+        if (p.pulseNotes.length > 10) p.pulseNotes.splice(0, 1)
+      }
+    })
 
     // Clear the week schedule and training plan
     clearWeekSchedule()
@@ -1224,6 +1457,19 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
     return count
   }, [trainingWeekPlan])
 
+  const squadPulseSummary = useMemo(() => {
+    let primed = 0
+    let concern = 0
+    for (const p of Object.values(players)) {
+      if (p.clubId !== playerClubId || p.injury) continue
+      const lastNote = p.pulseNotes?.[p.pulseNotes.length - 1]
+      if (!lastNote) continue
+      if (lastNote.modifier >= 0.02) primed++
+      else if (lastNote.modifier <= -0.025) concern++
+    }
+    return { primed, concern }
+  }, [players, playerClubId])
+
   const reservesTopRating = useMemo(() => {
     const ownPerformances = reserves.lastRoundPerformances
       .filter((p) => p.clubId === playerClubId)
@@ -1260,7 +1506,29 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
 
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      {/* Leadership Appointment Required banner */}
+      {leadershipPending && (
+        <Card className="border-amber-400 bg-amber-50 dark:bg-amber-950/20">
+          <CardContent className="flex items-center justify-between gap-3 px-4 py-3">
+            <div className="flex items-center gap-2.5">
+              <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600" />
+              <div>
+                <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
+                  Leadership Appointment Required
+                </p>
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  Appoint your captain and leadership group before Round 1. Round simulation is blocked until complete.
+                </p>
+              </div>
+            </div>
+            <Button size="sm" onClick={() => navigate('/preseason-leadership')}>
+              Appoint Now
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Header + Date + Controls */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-4">
@@ -1282,6 +1550,15 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
                     {unreadCount}
                   </span>
                 )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 px-0"
+                onClick={() => setCustomiseOpen(true)}
+                title="Customise dashboard"
+              >
+                <LayoutGrid className="h-4 w-4" />
               </Button>
             </div>
             <p className="text-muted-foreground">
@@ -1464,29 +1741,27 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
 
       {/* Week Calendar */}
       <Card>
-        <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
-            <Button variant="ghost" size="icon" onClick={() => setWeekStart(addDays(weekStart, -7))}>
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <div className="flex items-center gap-3">
-              <CardTitle className="text-base">{weekLabel}</CardTitle>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-6 px-2 text-xs font-medium"
-                onClick={() => setWeekStart(getWeekStart(effectiveDate))}
-              >
-                Today
-              </Button>
-            </div>
-            <Button variant="ghost" size="icon" onClick={() => setWeekStart(addDays(weekStart, 7))}>
-              <ChevronRight className="h-4 w-4" />
+        <div className="flex items-center justify-between px-3 pt-0 pb-0">
+          <Button variant="ghost" size="icon" onClick={() => setWeekStart(addDays(weekStart, -7))}>
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <div className="flex items-center gap-3">
+            <p className="text-base font-semibold">{weekLabel}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-xs font-medium"
+              onClick={() => setWeekStart(getWeekStart(effectiveDate))}
+            >
+              Today
             </Button>
           </div>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-7 gap-2">
+          <Button variant="ghost" size="icon" onClick={() => setWeekStart(addDays(weekStart, 7))}>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+        <CardContent className="px-4 pb-0 pt-0">
+          <div className="grid grid-cols-7 gap-1">
             {weekDays.map((day) => {
               const isSelected = day.date === selectedDate
               const daySchedule = weekSchedule[day.date]
@@ -1497,7 +1772,7 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
                   key={day.date}
                   onClick={() => setSelectedDate(day.date === selectedDate ? null : day.date)}
                   className={`
-                    rounded-lg text-left transition-colors border min-h-[84px]
+                    rounded-lg text-left transition-colors border min-h-[68px]
                     flex flex-col cursor-pointer
                     ${day.isToday
                       ? 'border-primary border-2 bg-primary/20 ring-2 ring-primary/50 shadow-lg shadow-primary/25'
@@ -1573,7 +1848,7 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
           </div>
 
           {/* Legend */}
-          <div className="flex items-center gap-4 mt-3 text-[10px] text-muted-foreground">
+          <div className="flex items-center gap-3 mt-2 text-[10px] text-muted-foreground">
             {isOffseason ? (
               <>
                 <div className="flex items-center gap-1">
@@ -1634,7 +1909,7 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
 
           {/* Selected date detail */}
           {selectedDate && (
-            <div className="mt-3 border-t pt-3">
+            <div className="mt-2 border-t pt-2">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm font-medium">{formatDate(selectedDate)}</p>
                 {canSimToDate && (
@@ -1741,13 +2016,16 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
         </CardContent>
       </Card>
 
-      {/* Priority Row: Match Focus + Decision Support */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
+      {/* Priority Row: Match Focus + Match Preview */}
+      <div className="-mt-3 grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
         <div className="xl:col-span-8">
-          {isOffseason ? (
-            <OffseasonPhaseCard />
-          ) : (
-            <MatchupCard
+      {isOffseason ? (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">
+          <OffseasonPhaseCard />
+          <PhaseProgressCard />
+        </div>
+      ) : (
+        <MatchupCard
               phase={phase}
               seasonComplete={seasonComplete}
               currentRound={currentRound}
@@ -1775,14 +2053,13 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
               isRivalry={isRivalry}
               allTimeH2H={allTimeH2H}
               playerClubId={playerClubId}
-              players={players}
               clubs={clubs}
-              selectedLineup={selectedLineup}
-              selectedSubstituteId={selectedSubstituteId}
-              interchangePlayers={settings.matchRules.interchangePlayers}
-              substitutesEnabled={settings.matchRules.enableSubstitutes}
-              potentialMatchups={potentialMatchups}
               matchResults={matchResults}
+              bettingMarkets={bettingMarkets}
+              bettingEnabled={settings.betting?.enabled ?? false}
+              matchScoutReport={matchScoutReport}
+              myMatchStorylines={myMatchStorylines}
+              forecastWeather={forecastWeather}
             />
           )}
         </div>
@@ -1791,27 +2068,26 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
             <PhaseProgressCard />
           ) : (
             <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 px-4 pt-3 pb-2">
                 <CardTitle className="text-sm font-medium">Ladder Position</CardTitle>
                 <Trophy className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
-              <CardContent>
-                <div className="text-center">
-                  <div className="text-4xl font-bold">
+              <CardContent className="px-4 pb-3">
+                <div className="flex items-center justify-center gap-3">
+                  <div className="text-3xl font-bold tabular-nums">
                     {ladderPosition > 0 ? `${ladderPosition}${ordinal(ladderPosition)}` : '-'}
                   </div>
                   {ladderEntry ? (
-                    <div className="mt-2.5 space-y-1 text-sm text-muted-foreground">
+                    <div className="text-xs text-muted-foreground space-y-0.5">
                       <p>
-                        <span className="font-semibold text-foreground">{ladderEntry.points}</span> pts
+                        <span className="font-semibold text-foreground">{ladderEntry.wins}W {ladderEntry.draws}D {ladderEntry.losses}L</span>
                         {' · '}
-                        <span className="font-semibold text-foreground">{ladderEntry.percentage.toFixed(1)}%</span>
+                        <span className="font-semibold text-foreground">{ladderEntry.points}</span> pts
                       </p>
-                      <p>{ladderEntry.pointsFor} PF / {ladderEntry.pointsAgainst} PA</p>
-                      <p>{ladderEntry.wins}W {ladderEntry.draws}D {ladderEntry.losses}L</p>
+                      <p>{ladderEntry.percentage.toFixed(1)}% · {ladderEntry.pointsFor} PF / {ladderEntry.pointsAgainst} PA</p>
                     </div>
                   ) : (
-                    <p className="mt-2 text-sm text-muted-foreground">Season not started</p>
+                    <p className="text-xs text-muted-foreground">Season not started</p>
                   )}
                 </div>
               </CardContent>
@@ -1839,7 +2115,7 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
               ? ladderProgressionData.map((d) => `${toX(d.round)},${toY(d.position)}`).join(' ')
               : ''
             return (
-              <Card className="mt-3">
+              <Card className="mt-2">
                 <CardHeader className="py-2 px-4">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-xs text-muted-foreground font-medium">
@@ -1903,7 +2179,7 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
               : 0
             const finalsCount = historicalPositionData.filter((d) => d.position <= 8).length
             return (
-              <Card className="mt-3">
+              <Card className="mt-2">
                 <CardHeader className="py-2 px-4">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-xs text-muted-foreground font-medium">Historical Position</CardTitle>
@@ -1970,7 +2246,7 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
       </div>
 
       {/* Secondary: Ladder + Hub */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">
         {(() => {
           const userLadderIdx = ladder.findIndex((e) => e.clubId === playerClubId)
           const visibleItems = ladder.map((e, i) => ({ entry: e, idx: i }))
@@ -1985,7 +2261,7 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
             : null
           return (
             <Card className="cursor-pointer" onClick={() => navigate('/ladder')}>
-              <CardHeader className="pb-2">
+              <CardHeader className="px-4 pt-3 pb-2">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-medium">Ladder Snapshot</CardTitle>
                   <span className="text-xs text-muted-foreground flex items-center gap-1">
@@ -2005,7 +2281,7 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
                   )}
                 </div>
               </CardHeader>
-              <CardContent className="pb-3">
+              <CardContent className="px-4 pb-3">
                 <div className="space-y-0.5 max-h-72 overflow-y-auto">
                   {visibleItems.map(({ entry, idx }, vi) => {
                     const ladderClub = clubs[entry.clubId]
@@ -2031,7 +2307,7 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
                             isFinalsCutLine ? 'border-b border-dashed border-emerald-500/40' : '',
                           ].join(' ')}
                         >
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1">
                             <span className="w-5 text-right text-xs text-muted-foreground">{idx + 1}</span>
                             <div
                               className="h-3 w-3 rounded-full flex-shrink-0"
@@ -2064,86 +2340,108 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
           )
         })()}
 
+        <div className="space-y-3">
         <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Training Overview</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Weekly load, risk, and focus coverage for your high performance staff.
-            </p>
+          <CardHeader className="px-4 pt-3 pb-2">
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-sm font-medium">Upcoming Deadlines</CardTitle>
+              {urgentDeadlineCount > 0 && (
+                <Badge variant="destructive" className="text-[10px] h-4 px-1.5">
+                  {urgentDeadlineCount} urgent
+                </Badge>
+              )}
+            </div>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {!isOffseason && scheduledSlotCount === 0 && (
-              <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                No training scheduled this week — players will miss development gains.
-              </div>
-            )}
-            {isOffseason ? (
-              <div className="rounded border px-3 py-2 text-xs text-muted-foreground">
-                Offseason mode: run sessions from the offseason planner.
+          <CardContent className="pt-0">
+            {deadlineCountdowns.length > 0 ? (
+              <div className="space-y-0.5">
+                {deadlineCountdowns.map((dl) => (
+                  <button
+                    key={dl.eventId}
+                    onClick={() => navigate(dl.linkTo)}
+                    className="w-full flex items-center justify-between rounded px-2 py-1.5 hover:bg-accent/40 transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className={`h-2 w-2 rounded-full flex-shrink-0 ${EVENT_COLORS[dl.type]}`} />
+                      <span className="text-sm truncate">{dl.title}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                      <span className={`text-xs font-semibold ${
+                        dl.urgency === 'urgent' ? 'text-red-500'
+                        : dl.urgency === 'warning' ? 'text-amber-500'
+                        : 'text-muted-foreground'
+                      }`}>
+                        {dl.daysUntil === 0 ? 'Today' : dl.daysUntil === 1 ? 'Tomorrow' : `${dl.daysUntil}d`}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground/60">
+                        {new Date(dl.date + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}
+                      </span>
+                    </div>
+                  </button>
+                ))}
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="rounded border px-2 py-1.5">
-                  <p className="text-muted-foreground">Scheduled Slots</p>
-                  <p className="font-semibold">{scheduledSlotCount}</p>
-                </div>
-                <div className="rounded border px-2 py-1.5">
-                  <p className="text-muted-foreground">Training Groups</p>
-                  <p className="font-semibold">{plannedGroupCount}</p>
-                </div>
-                <div className="rounded border px-2 py-1.5">
-                  <p className="text-muted-foreground">Weekly Load</p>
-                  <p className="font-semibold">
-                    {scheduleSummary ? scheduleSummary.fatigueLevel : 'Not set'}
-                  </p>
-                </div>
-                <div className="rounded border px-2 py-1.5">
-                  <p className="text-muted-foreground">Injury Risk</p>
-                  <p className="font-semibold">
-                    {scheduleSummary ? scheduleSummary.injuryRisk : 'Not set'}
-                  </p>
-                </div>
-                <div className="rounded border px-2 py-1.5 col-span-2">
-                  <p className="text-muted-foreground">Focus Areas</p>
-                  <p className="font-semibold truncate">
-                    {scheduleSummary && scheduleSummary.skillAreas.length > 0
-                      ? scheduleSummary.skillAreas.join(', ')
-                      : 'No focus areas configured'}
-                  </p>
-                </div>
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant="outline" size="sm" onClick={() => navigate('/training')}>
-                Open Planner
-              </Button>
-              {!isOffseason && (
-                <Button
-                  variant={scheduledSlotCount === 0 ? 'destructive' : 'outline'}
-                  size="sm"
-                  onClick={handleAutoFillTraining}
-                >
-                  Auto-fill Week
-                </Button>
-              )}
-              {isOffseason && (
-                <Button variant="outline" size="sm" onClick={() => navigate('/offseason')}>
-                  Open Offseason
-                </Button>
-              )}
-              <Button variant="outline" size="sm" onClick={() => navigate('/lineup')}>
-                Review Selection
-              </Button>
-            </div>
-            {!isOffseason && (
-              <div className="text-xs text-muted-foreground">
-                Week events in next 7 days: {upcomingWeekEvents.length}
-              </div>
+              <p className="py-4 text-center text-xs text-muted-foreground">No upcoming deadlines</p>
             )}
           </CardContent>
         </Card>
+
+        {/* Leadership Stability Meter — shown only when an active disruption exists */}
+        {(() => {
+          const disruption = leadershipDisruptions[playerClubId]
+          if (!disruption) return null
+          const stabilityPct = computeLeadershipStabilityPct(
+            disruption.disruptionLevel,
+            disruption.roundsRemaining,
+            disruption.roundsToRecover,
+          )
+          const barColor = stabilityPct >= 70 ? 'bg-green-500' : stabilityPct >= 40 ? 'bg-yellow-500' : 'bg-red-500'
+          const textColor = stabilityPct >= 70 ? 'text-green-600 dark:text-green-400' : stabilityPct >= 40 ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400'
+          return (
+            <Card
+              className="cursor-pointer border-amber-500/40 hover:bg-accent/30 transition-colors"
+              onClick={() => navigate(`/club/${playerClubId}`)}
+            >
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-500" />
+                    Leadership Stability
+                  </CardTitle>
+                  <span className={`text-sm font-bold tabular-nums ${textColor}`}>
+                    {stabilityPct}%
+                  </span>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-0 space-y-2">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className={`h-full rounded-full transition-all ${barColor}`}
+                    style={{ width: `${stabilityPct}%` }}
+                  />
+                </div>
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>
+                    {disruption.changeType === 'captain' ? 'Captaincy change'
+                      : disruption.changeType === 'vice-captain' ? 'VC change'
+                      : disruption.changeType === 'both' ? 'Full leadership reshuffle'
+                      : 'Leadership group change'}
+                    {disruption.incomingCaptainName && ` — ${disruption.incomingCaptainName} named captain`}
+                  </span>
+                  <span className="font-medium">
+                    {disruption.roundsRemaining} rd{disruption.roundsRemaining !== 1 ? 's' : ''} left
+                  </span>
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  On-field cohesion penalty active · Tap to manage leadership
+                </p>
+              </CardContent>
+            </Card>
+          )
+        })()}
+        </div>
       </div>
+
       {/* Compact club intelligence cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <Card className="cursor-pointer transition-colors hover:bg-accent/40" onClick={() => navigate('/squad')}>
@@ -2398,45 +2696,6 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
         <ClubListNeedsCard />
       </div>
 
-      {/* Upcoming Deadlines */}
-      {deadlineCountdowns.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center gap-2">
-              <CardTitle className="text-sm">Upcoming Deadlines</CardTitle>
-              {urgentDeadlineCount > 0 && (
-                <Badge variant="destructive" className="text-[10px] h-4 px-1.5">
-                  {urgentDeadlineCount} urgent
-                </Badge>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="space-y-0.5">
-              {deadlineCountdowns.map((dl) => (
-                <button
-                  key={dl.eventId}
-                  onClick={() => navigate(dl.linkTo)}
-                  className="w-full flex items-center justify-between rounded px-2 py-1.5 hover:bg-accent/40 transition-colors text-left"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className={`h-2 w-2 rounded-full flex-shrink-0 ${EVENT_COLORS[dl.type]}`} />
-                    <span className="text-sm truncate">{dl.title}</span>
-                  </div>
-                  <span className={`text-xs font-semibold flex-shrink-0 ml-2 ${
-                    dl.urgency === 'urgent' ? 'text-red-500'
-                    : dl.urgency === 'warning' ? 'text-amber-500'
-                    : 'text-muted-foreground'
-                  }`}>
-                    {dl.daysUntil === 0 ? 'Today' : dl.daysUntil === 1 ? 'Tomorrow' : `${dl.daysUntil}d`}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Preseason Special Event Result */}
       {lastSpecialResult && lastSpecialEventTitle && (
         <Card className="border-amber-500/40">
@@ -2506,6 +2765,62 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
           </CardContent>
         </Card>
       )}
+
+      {/* Legacy & Dynasty widget */}
+      {(phase === 'regular-season' || phase === 'finals' || phase === 'post-season') && legacyState.seasonsManaged > 0 && (() => {
+        const { label, colour } = buildLegacyRating(legacyState.totalPoints)
+        const activeGoal = careerObjectives.find((o) => o.status === 'active')
+        const pct = activeGoal && activeGoal.targetValue > 0
+          ? Math.min(100, (activeGoal.currentValue / activeGoal.targetValue) * 100)
+          : 0
+        return (
+          <Card
+            className="cursor-pointer hover:bg-accent/40 transition-colors"
+            onClick={() => navigate('/legacy')}
+          >
+            <CardContent className="px-4 py-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <Trophy className="h-4 w-4 text-yellow-400" />
+                  <span className="text-sm font-semibold">Legacy &amp; Dynasty</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-medium ${colour}`}>{label}</span>
+                  <Badge variant="outline" className="text-xs">
+                    {legacyState.totalPoints.toLocaleString()} pts
+                  </Badge>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                <span>🏆 {legacyState.premiershipsWon} flags</span>
+                <span>{legacyState.allTimeWins}W career</span>
+                {legacyState.currentWinStreak >= 3 && (
+                  <span className="text-green-400">{legacyState.currentWinStreak}-game streak</span>
+                )}
+              </div>
+              {activeGoal && (
+                <div className="mt-2 space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground truncate">{activeGoal.title}</span>
+                    <span className="text-muted-foreground shrink-0 ml-2">
+                      {activeGoal.currentValue}/{activeGoal.targetValue}
+                    </span>
+                  </div>
+                  <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full bg-primary rounded-full transition-all"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )
+      })()}
+
+      {/* Post-premiership challenge modal */}
+      <NewChallengeModal />
 
       {/* Live special event viewer — fullscreen overlay */}
       {liveSpecialEvent && (
@@ -2688,14 +3003,11 @@ interface MatchupCardProps {
   isRivalry: boolean
   allTimeH2H: import('@/engine/history/h2hTracker').H2HPerspective | null
   playerClubId: string
-  players: Record<string, Player>
   clubs: Record<string, Club>
-  selectedLineup: Record<string, string> | null
-  selectedSubstituteId: string | null
-  interchangePlayers: number
-  substitutesEnabled: boolean
-  potentialMatchups: MatchupOption[]
   matchResults: Match[]
+  matchScoutReport: import('@/engine/match/rivalScoutEngine').RivalScoutReport | null
+  myMatchStorylines: import('@/engine/player/storyArc').PlayerStoryArc[]
+  forecastWeather: MatchWeatherData | null
 }
 
 function FormBadges({ form }: { form: string[] }) {
@@ -2748,49 +3060,15 @@ function MatchupCard({
   isRivalry,
   allTimeH2H,
   playerClubId,
-  players,
   clubs,
-  selectedLineup,
-  selectedSubstituteId,
-  interchangePlayers,
-  substitutesEnabled,
-  potentialMatchups,
   matchResults,
+  bettingMarkets,
+  bettingEnabled,
+  matchScoutReport,
+  myMatchStorylines,
+  forecastWeather,
 }: MatchupCardProps) {
   const navigate = useNavigate()
-  const [showPotential, setShowPotential] = useState(false)
-  const [confirmSimToEnd, setConfirmSimToEnd] = useState(false)
-  const [selectedPotentialKey, setSelectedPotentialKey] = useState<string | null>(null)
-  const selectedPotential = useMemo(() => {
-    if (potentialMatchups.length === 0) return null
-    if (selectedPotentialKey) {
-      const found = potentialMatchups.find((opt) => opt.key === selectedPotentialKey)
-      if (found) return found
-    }
-    return potentialMatchups[0]
-  }, [potentialMatchups, selectedPotentialKey])
-  const userPreviewLineup = useMemo(() => {
-    const fallback = selectBestLineup(
-      Object.values(players),
-      playerClubId,
-      { interchangePlayers, club: clubs[playerClubId] },
-    ).lineup
-    return sanitizePreviewLineup(selectedLineup ?? fallback, players, playerClubId, interchangePlayers)
-  }, [players, playerClubId, selectedLineup, interchangePlayers, clubs])
-  const oppositionPreviewLineup = useMemo(() => {
-    if (!selectedPotential || selectedPotential.kind !== 'match') return {}
-    return selectBestLineup(
-      Object.values(players),
-      selectedPotential.opponentId,
-      { interchangePlayers, club: clubs[selectedPotential.opponentId] },
-    ).lineup
-  }, [players, selectedPotential, interchangePlayers, clubs])
-  const previewCountdown = useMemo(() => {
-    if (!selectedPotential) return null
-    const now = new Date(currentDate + 'T00:00:00').getTime()
-    const then = new Date(selectedPotential.roundDate + 'T00:00:00').getTime()
-    return Math.max(0, Math.round((then - now) / 86_400_000))
-  }, [selectedPotential, currentDate])
 
   if (seasonComplete) {
     return (
@@ -2854,22 +3132,10 @@ function MatchupCard({
                 <Play className="mr-1 h-4 w-4" />
                 Sim Week
               </Button>
-              {confirmSimToEnd ? (
-                <div className="flex items-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5">
-                  <span className="text-xs text-destructive">Sim all remaining rounds?</span>
-                  <Button size="sm" variant="destructive" className="h-6 px-2 text-xs" onClick={() => { setConfirmSimToEnd(false); onSimToEnd() }} disabled={simming}>
-                    Confirm
-                  </Button>
-                  <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setConfirmSimToEnd(false)}>
-                    Cancel
-                  </Button>
-                </div>
-              ) : (
-                <Button variant="outline" onClick={() => setConfirmSimToEnd(true)} disabled={simming}>
-                  <FastForward className="mr-1 h-4 w-4" />
-                  Sim to Finals
-                </Button>
-              )}
+              <ConfirmButton variant="outline" onConfirm={onSimToEnd} disabled={simming} confirmLabel="Click again to sim to finals">
+                <FastForward className="mr-1 h-4 w-4" />
+                Sim to Finals
+              </ConfirmButton>
             </div>
           </div>
         </CardContent>
@@ -2892,6 +3158,17 @@ function MatchupCard({
     const oppPaPg = opponentLadderEntry && opponentLadderEntry.played > 0
       ? (opponentLadderEntry.pointsAgainst / opponentLadderEntry.played).toFixed(0)
       : '-'
+    // Stats grid display order: home team always on left, away on right
+    const leftPos    = isHome ? ladderPosition         : opponentLadderPosition
+    const rightPos   = isHome ? opponentLadderPosition : ladderPosition
+    const leftEntry  = isHome ? userLadderEntry        : opponentLadderEntry
+    const rightEntry = isHome ? opponentLadderEntry    : userLadderEntry
+    const leftForm   = isHome ? userForm               : opponentForm
+    const rightForm  = isHome ? opponentForm           : userForm
+    const leftPfPg   = isHome ? userPfPg               : oppPfPg
+    const leftPaPg   = isHome ? userPaPg               : oppPaPg
+    const rightPfPg  = isHome ? oppPfPg                : userPfPg
+    const rightPaPg  = isHome ? oppPaPg                : userPaPg
     const daysToGame = (() => {
       if (!nextMatchDate) return null
       const now = new Date(currentDate + 'T00:00:00').getTime()
@@ -2899,214 +3176,337 @@ function MatchupCard({
       const days = Math.round((then - now) / 86_400_000)
       return Math.max(0, days)
     })()
+    const matchId = `match-${currentRound}-${nextFixture.homeClubId}-${nextFixture.awayClubId}`
+    const market = bettingMarkets?.matchMarkets[matchId] ?? null
+    const homeClub = clubs[nextFixture.homeClubId]
+    const awayClub = clubs[nextFixture.awayClubId]
+
     return (
-      <Card>
-        <CardContent className="py-6">
-          <div className="text-center mb-4">
-            <div className="mb-2 flex justify-start gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={() => setShowPotential((v) => !v)}
-              >
-                {showPotential ? 'Hide' : 'Show'} Potential Matchups
-              </Button>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Round {currentRound + 1} of {totalRounds}
-              {matchDayLabel ? ` · ${matchDayLabel}` : ''}
-            </p>
-            {nextMatchDate && (
-              <p className="text-xs text-muted-foreground mt-1">
-                {formatDate(nextMatchDate)} · {nextFixture.scheduledTime}
-              </p>
-            )}
-            {daysToGame !== null && (
-              <p className="text-xs text-muted-foreground mt-1">
-                {daysToGame === 0 ? 'Game day' : `${daysToGame} day${daysToGame === 1 ? '' : 's'} to game`}
-              </p>
-            )}
-          </div>
-
-          {/* Teams */}
-          <div className="flex items-center justify-center gap-6">
-            <div className="flex flex-col items-center gap-2">
-              <div
-                className="h-12 w-12 rounded-full"
-                style={{ backgroundColor: (isHome ? club : opponent)?.colors.primary ?? '#666' }}
-              />
-              <span className="text-sm font-bold">
-                {(isHome ? club : opponent)?.abbreviation}
-              </span>
-              <Badge variant="secondary" className="text-[10px]">HOME</Badge>
-            </div>
-            <span className="text-xl font-bold text-muted-foreground">vs</span>
-            <div className="flex flex-col items-center gap-2">
-              <div
-                className="h-12 w-12 rounded-full"
-                style={{ backgroundColor: (isHome ? opponent : club)?.colors.primary ?? '#666' }}
-              />
-              <span className="text-sm font-bold">
-                {(isHome ? opponent : club)?.abbreviation}
-              </span>
-              <Badge variant="outline" className="text-[10px]">AWAY</Badge>
-            </div>
-          </div>
-
-          <div className="flex justify-center">
-            <VenuePopover
-              venue={nextFixture.venue}
-              playerClubId={playerClubId}
-              matchResults={matchResults}
-              clubs={clubs}
-            />
-          </div>
-
-          {isRivalry && (
-            <div className="mt-3 flex items-center justify-center gap-2 rounded border border-red-500/30 bg-red-500/8 px-3 py-2 text-xs font-semibold text-red-600">
-              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-              Rivalry Match
-            </div>
-          )}
-
-          {showPotential && (
-            <div className="mt-3 rounded border p-2.5 space-y-2.5">
-              <div className="flex flex-wrap gap-1.5">
-                {potentialMatchups.map((opt) => (
-                  <Button
-                    key={opt.key}
-                    variant={selectedPotential?.key === opt.key ? 'default' : 'outline'}
-                    size="sm"
-                    className="h-6 px-2 text-[10px]"
-                    onClick={() => setSelectedPotentialKey(opt.key)}
-                  >
-                    R{opt.round}{opt.kind === 'bye' ? ' BYE' : ` ${clubs[opt.opponentId]?.abbreviation ?? opt.opponentId}`}
-                  </Button>
-                ))}
-              </div>
-              <div className="max-h-[560px] overflow-y-auto pr-1">
-                {!selectedPotential ? (
-                  <p className="text-xs text-muted-foreground">No upcoming matchups available.</p>
-                ) : selectedPotential.kind === 'bye' ? (
-                  <div className="rounded border bg-muted/20 p-2 text-xs text-muted-foreground">
-                    Round {selectedPotential.round} is a bye
-                    {previewCountdown !== null && ` · ${previewCountdown === 0 ? 'current week' : `${previewCountdown} day${previewCountdown === 1 ? '' : 's'} away`}`}
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="rounded border bg-muted/20 p-2 text-xs text-muted-foreground">
-                      {formatDate(selectedPotential.roundDate)} · {selectedPotential.homeAway.toUpperCase()} · {selectedPotential.venue}
-                      {previewCountdown !== null && ` · ${previewCountdown === 0 ? 'game week' : `${previewCountdown} day${previewCountdown === 1 ? '' : 's'} to game`}`}
-                    </div>
-                    <MatchupFieldPreview
-                      userLineup={userPreviewLineup}
-                      opponentLineup={oppositionPreviewLineup}
-                      players={players}
-                      userClub={clubs[playerClubId]}
-                      opponentClub={clubs[selectedPotential.opponentId]}
-                      interchangeCount={interchangePlayers}
-                      substitutesEnabled={substitutesEnabled}
-                      userSubstituteId={selectedSubstituteId}
-                    />
-                  </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch">
+        {/* Left: Match Focus */}
+        <Card className="h-full flex flex-col">
+          <CardHeader className="px-4 pt-3 pb-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <CardTitle className="text-sm font-medium">
+                  Round {currentRound + 1} of {totalRounds}
+                  {matchDayLabel ? ` · ${matchDayLabel}` : ''}
+                </CardTitle>
+                {nextMatchDate && (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {formatDate(nextMatchDate)} · {nextFixture.scheduledTime}
+                    {daysToGame !== null && ` · ${daysToGame === 0 ? 'Game day' : `${daysToGame}d to go`}`}
+                  </p>
                 )}
               </div>
+              {forecastWeather && (() => {
+                const cond = forecastWeather.quarterWeather[0]?.condition ?? 'clear'
+                const condIcon = cond === 'wet' ? <CloudRain className="h-3 w-3" />
+                  : cond === 'windy' ? <Wind className="h-3 w-3" />
+                  : cond === 'hot' ? <Thermometer className="h-3 w-3" />
+                  : cond === 'humid' ? <Droplets className="h-3 w-3" />
+                  : <Sun className="h-3 w-3" />
+                const condLabel = cond.charAt(0).toUpperCase() + cond.slice(1)
+                const rainfallMm = cond === 'wet'
+                  ? ({ calm: 2, light: 5, moderate: 10, strong: 15, gale: 25 } as Record<string, number>)[forecastWeather.windStrength] ?? 5
+                  : 0
+                const windLabel = forecastWeather.windStrength === 'calm'
+                  ? ''
+                  : `${windStrengthLabel(forecastWeather.windStrength)} ${windDirectionArrow(forecastWeather.windDirection)}`
+                return (
+                  <div className="flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground shrink-0">
+                    {condIcon}
+                    <span>{condLabel}</span>
+                    {rainfallMm > 0 && <span className="opacity-70">· {rainfallMm}mm</span>}
+                    {windLabel && <span className="opacity-70">· {windLabel}</span>}
+                  </div>
+                )
+              })()}
             </div>
-          )}
-
-          {/* Stats comparison */}
-          <div className="mt-4 border-t pt-4">
-            <div className="grid grid-cols-3 gap-2 text-center text-xs">
-              <div className="font-medium text-muted-foreground">{club?.abbreviation}</div>
-              <div className="font-medium text-muted-foreground">Stat</div>
-              <div className="font-medium text-muted-foreground">{opponent?.abbreviation}</div>
-
-              <div className="font-semibold">
-                {ladderPosition > 0 ? `${ladderPosition}${ordinal(ladderPosition)}` : '-'}
+          </CardHeader>
+          <CardContent className="px-4 pb-4">
+            {/* Teams */}
+            <div className="flex items-center justify-center gap-4">
+              <div className="flex flex-col items-center gap-1">
+                <div
+                  className="h-10 w-10 rounded-full"
+                  style={{ backgroundColor: (isHome ? club : opponent)?.colors.primary ?? '#666' }}
+                />
+                <span className="text-sm font-bold">
+                  {(isHome ? club : opponent)?.abbreviation}
+                </span>
+                <Badge variant="secondary" className="text-[10px]">HOME</Badge>
               </div>
-              <div className="text-muted-foreground">Position</div>
-              <div className="font-semibold">
-                {opponentLadderPosition > 0 ? `${opponentLadderPosition}${ordinal(opponentLadderPosition)}` : '-'}
+              <span className="text-xl font-bold text-muted-foreground">vs</span>
+              <div className="flex flex-col items-center gap-1">
+                <div
+                  className="h-10 w-10 rounded-full"
+                  style={{ backgroundColor: (isHome ? opponent : club)?.colors.primary ?? '#666' }}
+                />
+                <span className="text-sm font-bold">
+                  {(isHome ? opponent : club)?.abbreviation}
+                </span>
+                <Badge variant="outline" className="text-[10px]">AWAY</Badge>
               </div>
-
-              <div>
-                {userLadderEntry
-                  ? `${userLadderEntry.wins}-${userLadderEntry.draws}-${userLadderEntry.losses}`
-                  : '-'}
-              </div>
-              <div className="text-muted-foreground">W-D-L</div>
-              <div>
-                {opponentLadderEntry
-                  ? `${opponentLadderEntry.wins}-${opponentLadderEntry.draws}-${opponentLadderEntry.losses}`
-                  : '-'}
-              </div>
-
-              <div className="flex justify-center"><FormBadges form={userForm} /></div>
-              <div className="text-muted-foreground">Form</div>
-              <div className="flex justify-center"><FormBadges form={opponentForm} /></div>
-
-              <div>{userPfPg} / {userPaPg}</div>
-              <div className="text-muted-foreground">Avg PF/PA</div>
-              <div>{oppPfPg} / {oppPaPg}</div>
             </div>
 
-            {allTimeH2H && allTimeH2H.played > 0 && (
-              <div className="mt-3 text-center text-xs text-muted-foreground border-t pt-2">
-                <span className="font-medium">All-time H2H: </span>
-                <span className="font-semibold text-green-600">{allTimeH2H.wins}W</span>
-                <span className="mx-1 text-muted-foreground">/</span>
-                <span className="font-semibold">{allTimeH2H.draws}D</span>
-                <span className="mx-1 text-muted-foreground">/</span>
-                <span className="font-semibold text-red-600">{allTimeH2H.losses}L</span>
-                {allTimeH2H.streak && allTimeH2H.streak.length >= 2 && (
-                  <span className="ml-2 font-semibold">({allTimeH2H.streak.length}{allTimeH2H.streak.type} streak)</span>
-                )}
+            <div className="flex justify-center mt-2">
+              <VenuePopover
+                venue={nextFixture.venue}
+                playerClubId={playerClubId}
+                matchResults={matchResults}
+                clubs={clubs}
+              />
+            </div>
+
+            {isRivalry && (
+              <div className="mt-3 flex items-center justify-center gap-2 rounded border border-red-500/30 bg-red-500/8 px-3 py-2 text-xs font-semibold text-red-600">
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                Rivalry Match
               </div>
             )}
-            {headToHead && (
-              <div className="mt-1 text-center text-xs text-muted-foreground">
-                <span className="font-medium">Last meeting: </span>
-                <span className="font-semibold text-foreground">{headToHead.userScore}</span>
-                {' - '}
-                <span className="font-semibold text-foreground">{headToHead.oppScore}</span>
-              </div>
-            )}
-          </div>
 
-          <div className="mt-5 space-y-2">
-            <div className="flex flex-wrap justify-center gap-2">
-              <Button onClick={() => navigate('/fixture')} variant="default">
-                <Calendar className="mr-1 h-4 w-4" />
-                Match Day
-              </Button>
-              <Button onClick={onSimWeek} disabled={simming} variant="outline">
-                <SkipForward className="mr-1 h-4 w-4" />
-                Auto-Simulate
-              </Button>
-              {confirmSimToEnd ? (
-                <div className="flex items-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-1.5">
-                  <span className="text-xs text-destructive">Sim all remaining rounds?</span>
-                  <Button size="sm" variant="destructive" className="h-6 px-2 text-xs" onClick={() => { setConfirmSimToEnd(false); onSimToEnd() }} disabled={simming}>
-                    Confirm
-                  </Button>
-                  <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => setConfirmSimToEnd(false)}>
-                    Cancel
-                  </Button>
+            {/* Stats comparison — home team always on left */}
+            <div className="mt-3 border-t pt-3">
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="font-medium text-muted-foreground">{(isHome ? club : opponent)?.abbreviation}</div>
+                <div className="font-medium text-muted-foreground">Stat</div>
+                <div className="font-medium text-muted-foreground">{(isHome ? opponent : club)?.abbreviation}</div>
+
+                <div className="font-semibold">
+                  {leftPos > 0 ? `${leftPos}${ordinal(leftPos)}` : '-'}
                 </div>
-              ) : (
-                <Button variant="ghost" onClick={() => setConfirmSimToEnd(true)} disabled={simming} className="text-muted-foreground hover:text-foreground">
-                  <FastForward className="mr-1 h-4 w-4" />
-                  Sim to Finals
-                </Button>
+                <div className="text-muted-foreground">Position</div>
+                <div className="font-semibold">
+                  {rightPos > 0 ? `${rightPos}${ordinal(rightPos)}` : '-'}
+                </div>
+
+                <div>
+                  {leftEntry
+                    ? `${leftEntry.wins}-${leftEntry.draws}-${leftEntry.losses}`
+                    : '-'}
+                </div>
+                <div className="text-muted-foreground">W-D-L</div>
+                <div>
+                  {rightEntry
+                    ? `${rightEntry.wins}-${rightEntry.draws}-${rightEntry.losses}`
+                    : '-'}
+                </div>
+
+                <div className="flex justify-center"><FormBadges form={leftForm} /></div>
+                <div className="text-muted-foreground">Form</div>
+                <div className="flex justify-center"><FormBadges form={rightForm} /></div>
+
+                <div>{leftPfPg} / {leftPaPg}</div>
+                <div className="text-muted-foreground">Avg PF/PA</div>
+                <div>{rightPfPg} / {rightPaPg}</div>
+              </div>
+
+              {allTimeH2H && allTimeH2H.played > 0 && (
+                <div className="mt-3 text-center text-xs text-muted-foreground border-t pt-2">
+                  <span className="font-medium">All-time H2H: </span>
+                  <span className="font-semibold text-green-600">{allTimeH2H.wins}W</span>
+                  <span className="mx-1 text-muted-foreground">/</span>
+                  <span className="font-semibold">{allTimeH2H.draws}D</span>
+                  <span className="mx-1 text-muted-foreground">/</span>
+                  <span className="font-semibold text-red-600">{allTimeH2H.losses}L</span>
+                  {allTimeH2H.streak && allTimeH2H.streak.length >= 2 && (
+                    <span className="ml-2 font-semibold">({allTimeH2H.streak.length}{allTimeH2H.streak.type} streak)</span>
+                  )}
+                </div>
+              )}
+              {headToHead && (
+                <div className="mt-1 text-center text-xs text-muted-foreground">
+                  <span className="font-medium">Last meeting: </span>
+                  <span className="font-semibold text-foreground">{headToHead.userScore}</span>
+                  {' - '}
+                  <span className="font-semibold text-foreground">{headToHead.oppScore}</span>
+                </div>
               )}
             </div>
-            <p className="text-center text-[10px] text-muted-foreground">
-              Match Day — manage lineup & play live&ensp;·&ensp;Auto-Simulate — instant result
+
+            {/* Action buttons */}
+            <div className="mt-2 flex flex-wrap justify-center gap-1.5">
+              <Button size="sm" onClick={() => navigate('/fixture')} variant="default" className="h-7 text-xs px-2.5">
+                <Calendar className="mr-1 h-3.5 w-3.5" />
+                Match Day
+              </Button>
+              <Button size="sm" onClick={onSimWeek} disabled={simming} variant="outline" className="h-7 text-xs px-2.5">
+                <SkipForward className="mr-1 h-3.5 w-3.5" />
+                Auto-Simulate
+              </Button>
+              <ConfirmButton size="sm" variant="ghost" onConfirm={onSimToEnd} disabled={simming} className="h-7 text-xs px-2.5 text-muted-foreground hover:text-foreground" confirmLabel="Click again to sim to finals">
+                <FastForward className="mr-1 h-3.5 w-3.5" />
+                Sim to Finals
+              </ConfirmButton>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Right: Media Match Preview */}
+        <Card className="h-full flex flex-col">
+          <CardHeader className="px-4 pt-3 pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-medium">Match Preview</CardTitle>
+              <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => navigate('/matchup-preview')}>
+                Full Preview <ArrowRight className="ml-0.5 h-3 w-3 inline" />
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {homeClub?.abbreviation} (H) vs {awayClub?.abbreviation} (A) · {nextFixture.venue}
             </p>
-          </div>
-        </CardContent>
-      </Card>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 space-y-3">
+            {/* Win probability bar */}
+            {(() => {
+              let homeProb: number
+              if (market) {
+                const rawHome = 1 / market.homeOdds
+                const rawTotal = rawHome + (1 / market.awayOdds)
+                homeProb = rawHome / rawTotal
+              } else {
+                const homePos = isHome ? ladderPosition : opponentLadderPosition
+                const awayPos = isHome ? opponentLadderPosition : ladderPosition
+                const homeStr = Math.max(1, 19 - (homePos > 0 ? homePos : 9))
+                const awayStr = Math.max(1, 19 - (awayPos > 0 ? awayPos : 9))
+                homeProb = homeStr / (homeStr + awayStr)
+              }
+              const awayProb = 1 - homeProb
+              const homeColor = homeClub?.colors?.primary ?? '#6b7280'
+              const awayColor = awayClub?.colors?.primary ?? '#6b7280'
+              return (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs font-medium">
+                    <span>{homeClub?.abbreviation}</span>
+                    <span className="text-[10px] font-normal text-muted-foreground uppercase tracking-wide">Win Probability</span>
+                    <span>{awayClub?.abbreviation}</span>
+                  </div>
+                  <div className="flex h-3 overflow-hidden rounded-full border">
+                    <div style={{ width: `${(homeProb * 100).toFixed(0)}%`, backgroundColor: homeColor }} />
+                    <div style={{ width: `${(awayProb * 100).toFixed(0)}%`, backgroundColor: awayColor }} />
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                    <span className="font-semibold tabular-nums">{(homeProb * 100).toFixed(0)}%</span>
+                    <span className="font-semibold tabular-nums">{(awayProb * 100).toFixed(0)}%</span>
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Compact betting odds */}
+            {bettingEnabled && market && (
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Markets</p>
+                <div className="rounded border divide-x grid text-center text-xs"
+                  style={{ gridTemplateColumns: market.line !== 0 ? '1fr 1fr 1fr' : '1fr 1fr' }}>
+                  <div className="px-2 py-1.5">
+                    <p className="text-muted-foreground text-[10px] mb-0.5">{homeClub?.abbreviation}</p>
+                    <p className="font-mono font-semibold tabular-nums">${market.homeOdds.toFixed(2)}</p>
+                  </div>
+                  {market.line !== 0 && (
+                    <div className="px-2 py-1.5">
+                      <p className="text-muted-foreground text-[10px] mb-0.5">Line</p>
+                      <p className="font-mono font-semibold tabular-nums">
+                        {market.line > 0 ? `-${market.line}` : `+${Math.abs(market.line)}`}
+                      </p>
+                    </div>
+                  )}
+                  <div className="px-2 py-1.5">
+                    <p className="text-muted-foreground text-[10px] mb-0.5">{awayClub?.abbreviation}</p>
+                    <p className="font-mono font-semibold tabular-nums">${market.awayOdds.toFixed(2)}</p>
+                  </div>
+                </div>
+                {market.totalLine !== null && market.overOdds !== null && market.underOdds !== null && (
+                  <div className="rounded border divide-x grid grid-cols-2 text-center text-xs">
+                    <div className="px-2 py-1">
+                      <span className="text-muted-foreground">O{market.totalLine} </span>
+                      <span className="font-mono font-semibold tabular-nums">{market.overOdds.toFixed(2)}</span>
+                    </div>
+                    <div className="px-2 py-1">
+                      <span className="text-muted-foreground">U{market.totalLine} </span>
+                      <span className="font-mono font-semibold tabular-nums">{market.underOdds.toFixed(2)}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Scout report */}
+            {matchScoutReport && (() => {
+              const oppColor = opponent ? (clubs[opponent.id]?.colors.primary ?? '#6b7280') : '#6b7280'
+              return (
+              <div className="border-t pt-3 space-y-1.5">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Scout</p>
+                <div className="flex items-start gap-2 text-xs">
+                  <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                  <span className="text-muted-foreground">{matchScoutReport.headline}</span>
+                </div>
+                {matchScoutReport.keyThreats[0] && (
+                  <div className="flex items-start gap-2 text-xs">
+                    <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: oppColor }} />
+                    <span className="text-muted-foreground">
+                      <button
+                        className="font-medium text-foreground underline underline-offset-2 hover:text-foreground/70"
+                        onClick={() => navigate(`/player/${matchScoutReport.keyThreats[0]!.playerId}`)}
+                      >
+                        {matchScoutReport.keyThreats[0].playerName}
+                      </button>
+                      {' — '}{matchScoutReport.keyThreats[0].reason}
+                    </span>
+                  </div>
+                )}
+              </div>
+              )
+            })()}
+
+            {/* Media storylines */}
+            {myMatchStorylines.length > 0 && (() => {
+              const myColor = clubs[playerClubId]?.colors.primary ?? '#6b7280'
+              return (
+              <div className="border-t pt-3 space-y-1.5">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium">Media</p>
+                {myMatchStorylines.slice(0, 2).map((arc) => {
+                  const [firstName, ...restParts] = arc.playerName.split(' ')
+                  const lastName = restParts.join(' ')
+                  // Find earliest occurrence of full name, then last, then first
+                  const candidates = [arc.playerName, lastName, firstName].filter(Boolean)
+                  let nameStr = ''
+                  let nameIdx = -1
+                  for (const n of candidates) {
+                    const i = arc.blurb.indexOf(n)
+                    if (i !== -1 && (nameIdx === -1 || i < nameIdx)) {
+                      nameStr = n
+                      nameIdx = i
+                    }
+                  }
+                  const before = nameIdx >= 0 ? arc.blurb.slice(0, nameIdx) : ''
+                  const after = nameIdx >= 0 ? arc.blurb.slice(nameIdx + nameStr.length) : arc.blurb
+                  return (
+                    <div key={arc.playerId} className="flex items-start gap-2 text-xs">
+                      <span
+                        className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: myColor }}
+                      />
+                      <span className="text-muted-foreground">
+                        {before}
+                        <button
+                          className="font-medium text-foreground underline underline-offset-2 hover:text-foreground/70"
+                          onClick={() => navigate(`/player/${arc.playerId}`)}
+                        >
+                          {nameStr || arc.playerName}
+                        </button>
+                        {after}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+              )
+            })()}
+
+          </CardContent>
+        </Card>
+      </div>
     )
   }
 

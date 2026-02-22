@@ -324,6 +324,19 @@ export interface H2HRecord {
   biggestWin1: { margin: number; year: number; round: number } | null
   lastMeeting: H2HMeeting | null
 }
+export interface LeadershipChangeRecord {
+  id: string
+  date: string          // ISO date
+  year: number
+  round: number         // -1 = offseason
+  clubId: string
+  role: 'captain' | 'vice-captain' | 'leadership-group'
+  changeType: 'appointed' | 'removed'
+  playerId: string
+  replacedPlayerId: string | null
+  triggerType: 'user' | 'auto-select' | 'retirement' | 'trade'
+}
+
 export interface GameHistory {
   seasons: SeasonRecord[]
   draftHistory: DraftHistoryEntry[]
@@ -339,4 +352,5 @@ export interface GameHistory {
   financialHistory?: import('@/types/historyArchive').FinancialSeasonRecord[]
   h2hRecords?: Record<string, H2HRecord>
   allAustralianHistory?: import('@/types/allAustralian').AllAustralianHistoryEntry[]
+  leadershipChangelog?: LeadershipChangeRecord[]
 }

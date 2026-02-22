@@ -9,21 +9,30 @@ import {
 } from '@/engine/core/constants'
 import { createDefaultGameplan } from '@/engine/gameplan/defaults'
 import type { Match, MatchResult, MatchPlayerStats, QuarterScore, MatchKeyEvent, PlayByPlayEvent } from '@/types/match'
-import type { Player } from '@/types/player'
+import type { Player, LineupSlot } from '@/types/player'
 import type { Club, ClubGameplan } from '@/types/club'
 import type { MatchDay } from '@/types/season'
-import type { MatchRulesSettings, RealismSettings, WeeklyMatchupTactics } from '@/types/game'
+import type { MatchRulesSettings, RealismSettings, WeeklyMatchupTactics, RotationEvent } from '@/types/game'
 import { getRoleSimulationMultiplier } from '@/engine/player/roles'
 import { isPlayerSuspended } from '@/engine/players/availability'
 import { getMoraleModifier } from '@/engine/players/morale'
+import { getReadinessMod } from '@/engine/player/readinessEngine'
 import { getClutchModifier } from '@/engine/leadership/leadershipEngine'
 import { VENUES, VENUE_NAME_TO_ID } from '@/data/venues'
+import { getMonthlyWeatherBias } from '@/data/monthlyWeather'
 import { calculateMatchAttendanceFull, getVenueFamiliarityRatingBonus } from '@/engine/venues/venueEngine'
 import type { LadderEntry } from '@/types/season'
 import { getCultureMatchModifier } from '@/engine/culture/cultureEngine'
+import { getCohesionMatchModifier } from '@/engine/cohesion/cohesionEngine'
 import { getTacticalModifiers } from '@/engine/core/tacticalIdentity'
 import type { TacticalIdentity } from '@/types/club'
 import type { MidMatchAdjustment } from '@/types/matchEvent'
+import { generateMatchWeather } from '@/engine/match/weatherEngine'
+import type { MatchWeatherData } from '@/engine/match/weatherEngine'
+import { deriveOppositionTendencies, applyScoutCounterToMods } from '@/engine/match/rivalScoutEngine'
+import { getPositionFitMultiplier } from '@/engine/lineup/emergencyRoles'
+import { analyzeTrainingImpact, injectTrainingCallouts } from '@/engine/match/trainingImpactEngine'
+import type { TrainingFocus } from '@/engine/training/trainingEngine'
 
 export interface SimulateMatchInput {
   homeClubId: string
@@ -31,6 +40,8 @@ export interface SimulateMatchInput {
   venue: string
   venueId?: string
   matchDay?: MatchDay
+  /** Calendar month (1 = January … 12 = December). Used for seasonal weather modelling. */
+  month?: number
   round: number
   players: Record<string, Player>
   clubs: Record<string, Club>
@@ -51,6 +62,36 @@ export interface SimulateMatchInput {
   awayLineupPlayerIds?: string[]
   homeSubstituteId?: string | null
   awaySubstituteId?: string | null
+  homeRotationPlan?: RotationEvent[]
+  /**
+   * ID of the scout counter selected by the user for the home club.
+   * Applied as a gameplan modifier against the away club's derived tendencies.
+   */
+  homeScoutCounterId?: string | null
+  /**
+   * ID of the scout counter selected by the user for the away club.
+   */
+  awayScoutCounterId?: string | null
+  /** Slot→playerId map for the home club (used to derive position-fit penalties). */
+  homeLineupSlots?: Record<string, string>
+  /** Slot→playerId map for the away club (used to derive position-fit penalties). */
+  awayLineupSlots?: Record<string, string>
+  /**
+   * Training focuses the user ran in the week before this match.
+   * When provided, the engine runs a training-impact analysis post-match
+   * and injects callout commentary into the play-by-play.
+   */
+  trainingFocuses?: TrainingFocus[]
+  /** The user's club ID — required alongside trainingFocuses for impact analysis. */
+  playerClubId?: string
+  /**
+   * Leadership disruption multiplier for the home club (0.95–1.0).
+   * < 1 reduces effective team rating and increases free-kick risk during
+   * the adjustment period following a captaincy change.
+   */
+  homeLeadershipDisruptionMult?: number
+  /** Leadership disruption multiplier for the away club (0.95–1.0). */
+  awayLeadershipDisruptionMult?: number
 }
 
 export type WeatherCondition = 'clear' | 'windy' | 'wet' | 'hot' | 'humid'
@@ -103,6 +144,7 @@ export interface MatchContext {
   awayActivePlayers: Player[]
   homePlayers: Player[]
   awayPlayers: Player[]
+  allHomePlayers: Player[]  // full squad (field + bench) for rotation purposes
   homeSubstitute: Player | null
   awaySubstitute: Player | null
 
@@ -147,6 +189,12 @@ export interface MatchContext {
   homeClubTacticalIdentity: TacticalIdentity | undefined
   awayClubTacticalIdentity: TacticalIdentity | undefined
 
+  /** Position fit multipliers keyed by playerId. 1.0 = no penalty (natural position). */
+  positionFitMults: Map<string, number>
+
+  // Rotation plan events (home team only; applied during possession loop)
+  homeRotationEvents: RotationEvent[]
+
   // Interactive tracking
   midMatchAdjustments: MidMatchAdjustment[]
   midMatchInjuredPlayerIds: Set<string>
@@ -156,6 +204,9 @@ export interface MatchContext {
 
   // Per-quarter stat snapshots (for tag-failing detection)
   quarterStartDisposals: Map<string, number>
+
+  // Dynamic weather data (wind direction, per-quarter conditions)
+  matchWeatherData: MatchWeatherData | null
 }
 
 type TeamLine = 'DEF' | 'MID' | 'FWD' | 'RK'
@@ -327,6 +378,7 @@ function generateWeatherModifiers(
   rng: SeededRNG,
   venueId: string | undefined,
   matchDay?: MatchDay,
+  month?: number,
 ): WeatherModifiers {
   const venue = venueId ? VENUES[venueId] : undefined
   const nightGame =
@@ -343,19 +395,24 @@ function generateWeatherModifiers(
     humid: 0.06,
   }
 
-  if (venue?.id === 'marvel-stadium') {
-    baseWeights.clear = 0.9
-    baseWeights.windy = 0.02
-    baseWeights.wet = 0.03
-    baseWeights.hot = 0.03
-    baseWeights.humid = 0.02
-  } else if (venue?.state === 'TAS' || venue?.state === 'WA') {
-    baseWeights.windy += 0.08
-    baseWeights.clear -= 0.05
-  } else if (venue?.state === 'QLD' || venue?.state === 'NT') {
-    baseWeights.humid += 0.08
-    baseWeights.hot += 0.05
-    baseWeights.clear -= 0.07
+  // Layer 1: Monthly seasonal bias — climate patterns for this time of year at this state
+  if (month !== undefined && venue?.state) {
+    const seasonal = getMonthlyWeatherBias(venue.state, month)
+    baseWeights.windy = Math.max(0, baseWeights.windy + seasonal.wind)
+    baseWeights.wet   = Math.max(0, baseWeights.wet   + seasonal.wet)
+    baseWeights.hot   = Math.max(0, baseWeights.hot   + seasonal.hot)
+    baseWeights.humid = Math.max(0, baseWeights.humid + seasonal.humid)
+    baseWeights.clear = Math.max(0.05, baseWeights.clear - (seasonal.wind + seasonal.wet + seasonal.hot + seasonal.humid))
+  }
+
+  // Layer 2: Venue-specific weather biases (ground exposure, roof, microclimate)
+  if (venue?.weatherBias) {
+    const { wind, wet, hot, humid } = venue.weatherBias
+    baseWeights.windy = Math.max(0, baseWeights.windy + wind)
+    baseWeights.wet   = Math.max(0, baseWeights.wet   + wet)
+    baseWeights.hot   = Math.max(0, baseWeights.hot   + hot)
+    baseWeights.humid = Math.max(0, baseWeights.humid + humid)
+    baseWeights.clear = Math.max(0.05, baseWeights.clear - (wind + wet + hot + humid))
   }
 
   if (nightGame) {
@@ -470,6 +527,19 @@ function generateWeatherModifiers(
         gameplanExecutionMult: groundCondition === 'dewy' ? 0.97 : 1,
       }
   }
+}
+
+/**
+ * Generate deterministic weather for a match preview (same inputs = same result).
+ * Uses the match seed so the forecast matches the actual simulation weather.
+ */
+export function previewMatchWeather(
+  seed: number,
+  venueId: string | undefined,
+  matchDay?: MatchDay,
+  month?: number,
+): WeatherModifiers {
+  return generateWeatherModifiers(new SeededRNG(seed), venueId, matchDay, month)
 }
 
 function getTeamProfile(players: Player[]): {
@@ -905,7 +975,8 @@ export function createMatchContext(input: SimulateMatchInput): MatchContext {
   const resolvedHomeGameplan = homeGameplan ?? createDefaultGameplan()
   const resolvedAwayGameplan = awayGameplan ?? createDefaultGameplan()
   const venueId = resolveVenueId(venue, input.venueId)
-  const weather = generateWeatherModifiers(rng, venueId, input.matchDay)
+  const weather = generateWeatherModifiers(rng, venueId, input.matchDay, input.month)
+  const matchWeatherData = generateMatchWeather(rng, venueId)
   const homeBaseMods = applyTacticalIdentityModifiers(
     computeGameplanModifiers(resolvedHomeGameplan),
     clubs[homeClubId]?.tacticalIdentity,
@@ -917,8 +988,23 @@ export function createMatchContext(input: SimulateMatchInput): MatchContext {
   const homeMods = applyConditionToGameplanModifiers(homeBaseMods, resolvedHomeGameplan, weather)
   const awayMods = applyConditionToGameplanModifiers(awayBaseMods, resolvedAwayGameplan, weather)
   const matchup = computeMatchupModifiers(homePlayers, awayPlayers, resolvedHomeGameplan, resolvedAwayGameplan)
-  const homeTeamFreeRisk = getGameplanFreeRiskModifier(resolvedHomeGameplan, weather)
-  const awayTeamFreeRisk = getGameplanFreeRiskModifier(resolvedAwayGameplan, weather)
+  // Base free-risk; boosted during leadership disruption (unsettled composure)
+  const homeTeamFreeRisk = getGameplanFreeRiskModifier(resolvedHomeGameplan, weather) * (2 - (input.homeLeadershipDisruptionMult ?? 1.0))
+  const awayTeamFreeRisk = getGameplanFreeRiskModifier(resolvedAwayGameplan, weather) * (2 - (input.awayLeadershipDisruptionMult ?? 1.0))
+  // Apply scout counter modifiers — user's pre-game preparation against the opposition
+  if (input.homeScoutCounterId && clubs[awayClubId]) {
+    const awayTendencies = deriveOppositionTendencies(clubs[awayClubId], input.players)
+    const result = applyScoutCounterToMods(homeMods, awayMods, input.homeScoutCounterId, awayTendencies)
+    Object.assign(homeMods, result.userMods)
+    Object.assign(awayMods, result.oppMods)
+  }
+  if (input.awayScoutCounterId && clubs[homeClubId]) {
+    const homeTendencies = deriveOppositionTendencies(clubs[homeClubId], input.players)
+    const result = applyScoutCounterToMods(awayMods, homeMods, input.awayScoutCounterId, homeTendencies)
+    Object.assign(awayMods, result.userMods)
+    Object.assign(homeMods, result.oppMods)
+  }
+
   const homeTactical = buildTacticalRuntime(input.matchupTacticsByClub?.[homeClubId], homePlayers, awayPlayers)
   const awayTactical = buildTacticalRuntime(input.matchupTacticsByClub?.[awayClubId], awayPlayers, homePlayers)
   const suspensionStrictness = input.realism?.tacticalSuspensionConsequences ? 1 : 0.55
@@ -930,8 +1016,14 @@ export function createMatchContext(input: SimulateMatchInput): MatchContext {
   const awayTravelPenalty = (input.travelFatigue?.away ?? 0) * 0.5
   const homeCultureMod = getCultureMatchModifier(clubs[homeClubId]?.culture)
   const awayCultureMod = getCultureMatchModifier(clubs[awayClubId]?.culture)
-  const adjustedHomeRating = (homeRating + homeAdvantage + homeVenueFamiliarity - homeTravelPenalty) * homeCultureMod
-  const adjustedAwayRating = (awayRating + awayVenueFamiliarity - awayTravelPenalty) * awayCultureMod
+  const homeCohesionMod = getCohesionMatchModifier(clubs[homeClubId]?.cohesion)
+  const awayCohesionMod = getCohesionMatchModifier(clubs[awayClubId]?.cohesion)
+  // Leadership disruption penalty: post-captaincy-change adjustment period reduces
+  // effective team rating and increases free kick risk (unsettled decision-making)
+  const homeLeaderMult = input.homeLeadershipDisruptionMult ?? 1.0
+  const awayLeaderMult = input.awayLeadershipDisruptionMult ?? 1.0
+  const adjustedHomeRating = (homeRating + homeAdvantage + homeVenueFamiliarity - homeTravelPenalty) * homeCultureMod * homeCohesionMod * homeLeaderMult
+  const adjustedAwayRating = (awayRating + awayVenueFamiliarity - awayTravelPenalty) * awayCultureMod * awayCohesionMod * awayLeaderMult
 
   const homeStarCount = homePlayers.filter((p) => getOverall(p) >= 80).length
   const awayStarCount = awayPlayers.filter((p) => getOverall(p) >= 80).length
@@ -951,6 +1043,17 @@ export function createMatchContext(input: SimulateMatchInput): MatchContext {
         rng,
       })
     : null
+
+  // Build position fit multiplier map from lineup slot assignments (only non-primary slots have < 1)
+  const positionFitMults = new Map<string, number>()
+  for (const [slot, playerId] of Object.entries(input.homeLineupSlots ?? {})) {
+    const player = players[playerId]
+    if (player) positionFitMults.set(playerId, getPositionFitMultiplier(player, slot as LineupSlot))
+  }
+  for (const [slot, playerId] of Object.entries(input.awayLineupSlots ?? {})) {
+    const player = players[playerId]
+    if (player) positionFitMults.set(playerId, getPositionFitMultiplier(player, slot as LineupSlot))
+  }
 
   const homeStats = initPlayerStats(homePlayers, homeSubstitute)
   const awayStats = initPlayerStats(awayPlayers, awaySubstitute)
@@ -976,6 +1079,7 @@ export function createMatchContext(input: SimulateMatchInput): MatchContext {
     awayActivePlayers: [...awayPlayers],
     homePlayers,
     awayPlayers,
+    allHomePlayers: homeAvailablePlayers,
     homeSubstitute,
     awaySubstitute,
     homeStats,
@@ -1011,12 +1115,17 @@ export function createMatchContext(input: SimulateMatchInput): MatchContext {
     venueId,
     homeClubTacticalIdentity: clubs[homeClubId]?.tacticalIdentity,
     awayClubTacticalIdentity: clubs[awayClubId]?.tacticalIdentity,
+    positionFitMults,
+    homeRotationEvents: (input.homeRotationPlan ?? []).filter(
+      (e) => e.playerOffId && e.playerOnId,
+    ),
     midMatchAdjustments: [],
     midMatchInjuredPlayerIds: new Set(),
     positionOverrides: new Map(),
     userSubActivated: false,
     effectiveAggressionQuarters: [],
     quarterStartDisposals: new Map(),
+    matchWeatherData,
   }
 }
 
@@ -1102,8 +1211,17 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
     possessionsBase, pointsPerGoal, pointsPerBehind,
     suspensionStrictness, positionOverrides,
     resolvedHomeGameplan, resolvedAwayGameplan,
+    positionFitMults,
   } = ctx
   const { homeClubId, awayClubId, isFinal } = input
+
+  // Ground characteristics — affect scoring, possession style, and stat distributions
+  const venueData = ctx.venueId ? VENUES[ctx.venueId] : undefined
+  const venueScoringCoeff     = venueData?.scoringCoefficient   ?? 1.0
+  const venueKickBias         = venueData?.kickToHandballRatio  ?? 1.0
+  const venueDisposalCoeff    = venueData?.disposalCoefficient  ?? 1.0
+  const venueMarkCoeff        = venueData?.markCoefficient      ?? 1.0
+  const venueContestedCoeff   = venueData?.contestedCoefficient ?? 1.0
 
   // Use active players (may be reduced by mid-match injuries)
   const homePlayers = ctx.homeActivePlayers
@@ -1122,7 +1240,7 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
   const avgPossessionBonus = Math.round((homeMods.possessionBonus + awayMods.possessionBonus) / 2)
   const possessions = Math.max(
     65,
-    Math.round((possessionsBase + avgPossessionBonus + rng.nextInt(-20, 20)) * weather.possessionMult),
+    Math.round((possessionsBase + avgPossessionBonus + rng.nextInt(-20, 20)) * weather.possessionMult * venueDisposalCoeff),
   )
 
   // Play-by-play tracking (uses counter for template variety, no extra rng calls)
@@ -1141,7 +1259,40 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
     isHighlight: false,
   })
 
+  // Set up rotation events for this quarter, sorted by minute ascending
+  const quarterNum = (quarterIndex + 1) as 1 | 2 | 3 | 4
+  const pendingRotations = ctx.homeRotationEvents
+    .filter((e) => e.quarter === quarterNum)
+    .sort((a, b) => a.minute - b.minute)
+  const appliedRotationIds = new Set<string>()
+
   for (let p = 0; p < possessions; p++) {
+    const currentMinute = Math.floor((p / possessions) * 30)
+
+    // Apply any due rotation events before this possession
+    for (const event of pendingRotations) {
+      if (appliedRotationIds.has(event.id)) continue
+      if (currentMinute < event.minute) break  // sorted, safe to break
+
+      const offIdx = ctx.homeActivePlayers.findIndex((pl) => pl.id === event.playerOffId)
+      const onPlayer = ctx.allHomePlayers.find((pl) => pl.id === event.playerOnId)
+
+      if (
+        offIdx !== -1 &&
+        onPlayer &&
+        !ctx.homeActivePlayers.some((pl) => pl.id === event.playerOnId)
+      ) {
+        ctx.homeActivePlayers.splice(offIdx, 1, onPlayer)
+        if (!ctx.homeStats.some((s) => s.playerId === event.playerOnId)) {
+          ctx.homeStats.push(createEmptyPlayerStats(event.playerOnId))
+        }
+        appliedRotationIds.add(event.id)
+      } else {
+        // Can't apply (player not found or already on field) — mark as skipped
+        appliedRotationIds.add(event.id)
+      }
+    }
+
     const homeChance = adjustedHomeRating / (adjustedHomeRating + adjustedAwayRating)
     const homeWins = rng.chance(homeChance)
 
@@ -1182,7 +1333,7 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
       captainPresent: homeWins ? awayCaptainPresent : homeCaptainPresent,
     }
 
-    const primaryPlayer = pickWeightedPlayer(rng, attackingPlayers, surfaceContext, attClutchCtx)
+    const primaryPlayer = pickWeightedPlayer(rng, attackingPlayers, surfaceContext, attClutchCtx, positionFitMults)
     const primaryStatIndex = attackingStats.findIndex((s) => s.playerId === primaryPlayer.id)
     const primaryRatings = getGranularRatings(primaryPlayer)
     const tacticalFocus = defendingTactical.focusByTarget.get(primaryPlayer.id)
@@ -1190,7 +1341,8 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
     const roughPenalty = tacticalFocus?.roughPressure ?? 0
     const pressurePenalty = tagPenalty + roughPenalty * 0.6
 
-    const targetKH = attackingGameplan.targetKHRatio ?? 1.5
+    // Blend tactical target K:H ratio with the ground's inherent kick bias
+    const targetKH = (attackingGameplan.targetKHRatio ?? 1.5) * venueKickBias
     const kickProbFromTarget = targetKH / (targetKH + 1)
     const isKick = rng.chance(Math.max(0.30, Math.min(0.80, kickProbFromTarget)))
     if (isKick) {
@@ -1221,6 +1373,7 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
       (0.22 + primaryRatings.strength * 0.0012 + primaryRatings.tackling * 0.0012)
       * attMods.contestedMult
       * weather.contestedMult
+      * venueContestedCoeff
       * (1 + tagPenalty * 0.1),
     )
     if (rng.chance(contestedChance)) {
@@ -1228,7 +1381,7 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
       const attackerFreeRisk = getPlayerFreeRiskMultiplier(primaryPlayer, weather)
       const holdingBallChance = clampChance(0.006 * attackingTeamFreeRisk * attackerFreeRisk)
       if (rng.chance(holdingBallChance)) {
-        const tackler = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx)
+        const tackler = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx, positionFitMults)
         const defStats = homeWins ? awayStats : homeStats
         const tacklerIdx = defStats.findIndex((s) => s.playerId === tackler.id)
         attackingStats[primaryStatIndex].freesAgainst++
@@ -1272,10 +1425,11 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
       (0.09 + primaryRatings.kicking * 0.001 + primaryRatings.decisionMaking * 0.0009)
       * attMods.markMult
       * matchupMarkMult
-      * weather.markMult,
+      * weather.markMult
+      * venueMarkCoeff,
     )
     if (rng.chance(markBaseChance)) {
-      const marker = pickWeightedPlayer(rng, attackingPlayers, surfaceContext, attClutchCtx)
+      const marker = pickWeightedPlayer(rng, attackingPlayers, surfaceContext, attClutchCtx, positionFitMults)
       const markerIdx = attackingStats.findIndex((s) => s.playerId === marker.id)
       const markerRatings = getGranularRatings(marker)
       const completesMark = rng.chance(clampChance(0.2 + markerRatings.marking * 0.006))
@@ -1307,10 +1461,11 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
       (0.07 + ((100 - primaryRatings.agility) * 0.001) + ((100 - primaryRatings.discipline) * 0.0008))
       * defMods.tackleMult
       * matchupTackleMult
+      * venueContestedCoeff
       * (1 + roughPenalty * 0.35),
     )
     if (rng.chance(tackleBaseChance)) {
-      const tackler = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx)
+      const tackler = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx, positionFitMults)
       const defStats = homeWins ? awayStats : homeStats
       const tacklerIdx = defStats.findIndex((s) => s.playerId === tackler.id)
       const tacklerRatings = getGranularRatings(tackler)
@@ -1375,7 +1530,7 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
       * (1 - pressurePenalty * 0.18),
     )
     if (rng.chance(inside50Chance)) {
-      const i50Player = pickWeightedPlayer(rng, attackingPlayers, surfaceContext, attClutchCtx)
+      const i50Player = pickWeightedPlayer(rng, attackingPlayers, surfaceContext, attClutchCtx, positionFitMults)
       const i50Idx = attackingStats.findIndex((s) => s.playerId === i50Player.id)
       const i50Ratings = getGranularRatings(i50Player)
       attackingStats[i50Idx].insideFifties++
@@ -1391,7 +1546,7 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
 
       const scoreChance = clampChance(0.16 + i50Ratings.decisionMaking * 0.0015 + i50Ratings.kicking * 0.001)
       if (rng.chance(scoreChance)) {
-        const scorer = pickScoringPlayer(rng, attackingPlayers, attClutchCtx, positionOverrides)
+        const scorer = pickScoringPlayer(rng, attackingPlayers, attClutchCtx, positionOverrides, positionFitMults)
         const scorerIdx = attackingStats.findIndex((s) => s.playerId === scorer.id)
         const scorerRatings = getGranularRatings(scorer)
 
@@ -1399,7 +1554,7 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
           (0.2 + scorerRatings.goalSense * 0.005 + scorerRatings.kicking * 0.001)
           * attMods.accuracyMult,
         )
-        if (rng.chance(clampChance(goalChance * matchupAccuracyMult * weather.accuracyMult))) {
+        if (rng.chance(clampChance(goalChance * matchupAccuracyMult * weather.accuracyMult * venueScoringCoeff))) {
           if (homeWins) homeGoals++
           else awayGoals++
           attackingStats[scorerIdx].goals++
@@ -1456,7 +1611,7 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
 
     const reboundChance = clampChance((0.08 + primaryRatings.discipline * 0.0008) * attMods.opponentReboundMult)
     if (!homeWins && rng.chance(reboundChance)) {
-      const rebounder = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx)
+      const rebounder = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx, positionFitMults)
       const rebStats = homeWins ? awayStats : homeStats
       const rebIdx = rebStats.findIndex((s) => s.playerId === rebounder.id)
       rebStats[rebIdx].rebound50s++
@@ -1491,7 +1646,7 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
 
     const interceptBaseChance = clampChance(0.03 + (100 - primaryRatings.kicking) * 0.0007 + (100 - primaryRatings.decisionMaking) * 0.0008)
     if (rng.chance(interceptBaseChance)) {
-      const interceptor = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx)
+      const interceptor = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx, positionFitMults)
       const defStats = homeWins ? awayStats : homeStats
       const intIdx = defStats.findIndex((s) => s.playerId === interceptor.id)
       const interceptorRatings = getGranularRatings(interceptor)
@@ -1517,7 +1672,7 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
     }
 
     if (rng.chance(0.03 + averageGranularRating(defendingPlayers, 'spoiling') * 0.00035)) {
-      const defender = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx)
+      const defender = pickWeightedPlayer(rng, defendingPlayers, surfaceContext, defClutchCtx, positionFitMults)
       const defStats = homeWins ? awayStats : homeStats
       const defIdx = defStats.findIndex((s) => s.playerId === defender.id)
       defStats[defIdx].onePercenters++
@@ -1630,6 +1785,21 @@ export function finalizeMatch(ctx: MatchContext, skipUserSubForSide?: 'home' | '
     else if (counts.low > counts.medium && counts.low > counts.high) effectiveAggressionLevel = 'low'
   }
 
+  // ── Training impact analysis ─────────────────────────────────────────────
+  let trainingImpactSummary: import('@/types/match').TrainingImpactSummary | undefined
+  let finalPlayByPlay = ctx.playByPlay
+  if (input.trainingFocuses && input.trainingFocuses.length > 0 && input.playerClubId) {
+    const isHome = input.playerClubId === homeClubId
+    const userStats = isHome ? homeStats : awayStats
+    const userScores = isHome ? homeScores : awayScores
+    const oppScores = isHome ? awayScores : homeScores
+    const summary = analyzeTrainingImpact(input.trainingFocuses, userStats, userScores, oppScores)
+    if (summary) {
+      trainingImpactSummary = summary
+      finalPlayByPlay = injectTrainingCallouts(ctx.playByPlay, summary, input.playerClubId)
+    }
+  }
+
   const result: MatchResult = {
     homeScores,
     awayScores,
@@ -1638,10 +1808,11 @@ export function finalizeMatch(ctx: MatchContext, skipUserSubForSide?: 'home' | '
     homePlayerStats: homeStats,
     awayPlayerStats: awayStats,
     keyEvents,
-    playByPlay: ctx.playByPlay,
+    playByPlay: finalPlayByPlay,
     midMatchAdjustments: midMatchAdjustments.length > 0 ? midMatchAdjustments : undefined,
     midMatchInjuredPlayerIds: midMatchInjuredPlayerIds.size > 0 ? [...midMatchInjuredPlayerIds] : undefined,
     effectiveAggressionLevel: effectiveAggressionQuarters.length > 0 ? effectiveAggressionLevel : undefined,
+    trainingImpactSummary,
     simulationContext: {
       weather: weather.condition,
       groundCondition: weather.groundCondition,
@@ -1655,6 +1826,11 @@ export function finalizeMatch(ctx: MatchContext, skipUserSubForSide?: 'home' | '
       umpiringRisk: { home: homeTeamFreeRisk, away: awayTeamFreeRisk },
       attendance: attendanceResult?.attendance,
       capacityPct: attendanceResult?.capacityPct,
+      windDirection: ctx.matchWeatherData?.windDirection,
+      windStrength: ctx.matchWeatherData?.windStrength,
+      windAdvantageEnd: ctx.matchWeatherData?.windAdvantageEnd,
+      quarterWeather: ctx.matchWeatherData?.quarterWeather,
+      coinTossWinner: ctx.matchWeatherData?.coinTossWinner,
     },
   }
 
@@ -1842,6 +2018,41 @@ function allocateByWeights(total: number, weights: number[], rng?: SeededRNG): n
   return floored
 }
 
+function createEmptyPlayerStats(playerId: string): MatchPlayerStats {
+  return {
+    playerId,
+    participated: false,
+    minutesPlayed: 0,
+    aflFantasyPoints: 0,
+    superCoachPoints: 0,
+    disposals: 0,
+    kicks: 0,
+    handballs: 0,
+    marks: 0,
+    tackles: 0,
+    goals: 0,
+    behinds: 0,
+    hitouts: 0,
+    contestedPossessions: 0,
+    uncontestedPossessions: 0,
+    uncountestedPossessions: 0,
+    clearances: 0,
+    insideFifties: 0,
+    rebound50s: 0,
+    freesFor: 0,
+    freesAgainst: 0,
+    contestedMarks: 0,
+    scoreInvolvements: 0,
+    metresGained: 0,
+    turnovers: 0,
+    intercepts: 0,
+    onePercenters: 0,
+    bounces: 0,
+    clangers: 0,
+    goalAssists: 0,
+  }
+}
+
 function initPlayerStats(players: Player[], substitute?: Player | null): MatchPlayerStats[] {
   const stats: MatchPlayerStats[] = players.map((p) => ({
     playerId: p.id,
@@ -1983,6 +2194,7 @@ function pickWeightedPlayer(
   players: Player[],
   surface?: { contestedBoost: number; kickingPenalty: number },
   clutchCtx?: ClutchContext,
+  positionFitMults?: Map<string, number>,
 ): Player {
   // Weight by granular ball-winning profile + role influence.
   const weights = players.map((p) =>
@@ -1993,9 +2205,11 @@ function pickWeightedPlayer(
       const kickingSkill = granular.kicking / 100
       const kickingMult = 1 - (Math.max(0, 1 - kickingSkill) * (surface?.kickingPenalty ?? 0))
       const moraleMult = getMoraleModifier(p.morale)
+      const readinessMult = getReadinessMod(p)
       const clutchMult = clutchCtx
         ? getClutchModifier(p, clutchCtx.quarter, clutchCtx.margin, clutchCtx.isFinal, clutchCtx.captainPresent)
         : 1.0
+      const posFitMult = positionFitMults?.get(p.id) ?? 1.0
       return (
       getOverall(p) * 0.45 +
       granular.decisionMaking * 0.2 +
@@ -2003,11 +2217,12 @@ function pickWeightedPlayer(
       granular.speed * 0.1 +
       granular.kicking * 0.1
       ) *
-      getAvailabilityMultiplier(p) *
+      getAvailabilityMultiplier(p, posFitMult) *
       getRoleSimulationMultiplier(p.preferredRole, 'general') *
       contestedMult *
       kickingMult *
       moraleMult *
+      readinessMult *
       clutchMult
     },
   )
@@ -2020,20 +2235,23 @@ function pickWeightedPlayer(
   return players[players.length - 1]
 }
 
-function pickScoringPlayer(rng: SeededRNG, players: Player[], clutchCtx?: ClutchContext, positionOverrides?: Map<string, 'forward' | 'back'>): Player {
+function pickScoringPlayer(rng: SeededRNG, players: Player[], clutchCtx?: ClutchContext, positionOverrides?: Map<string, 'forward' | 'back'>, positionFitMults?: Map<string, number>): Player {
   // Weight toward forwards using position modifier and goalkicking ability
   const weights = players.map((p) => {
     const moraleMult = getMoraleModifier(p.morale)
+    const readinessMult = getReadinessMod(p)
     const clutchMult = clutchCtx
       ? getClutchModifier(p, clutchCtx.quarter, clutchCtx.margin, clutchCtx.isFinal, clutchCtx.captainPresent)
       : 1.0
     const override = positionOverrides?.get(p.id)
     const forwardMod = getForwardModifier(p) * (override === 'forward' ? 1.5 : override === 'back' ? 0.4 : 1)
+    const posFitMult = positionFitMults?.get(p.id) ?? 1.0
     return forwardMod *
       (getGranularRatings(p).goalSense * 0.65 + getGranularRatings(p).marking * 0.2 + getGranularRatings(p).agility * 0.15 + 16) *
-      getAvailabilityMultiplier(p) *
+      getAvailabilityMultiplier(p, posFitMult) *
       getRoleSimulationMultiplier(p.preferredRole, 'scoring') *
       moraleMult *
+      readinessMult *
       clutchMult
   })
   const totalWeight = weights.reduce((a, b) => a + b, 0)
@@ -2207,12 +2425,16 @@ function estimateMinutesPlayed(stats: MatchPlayerStats): number {
   return Math.max(45, Math.min(120, Math.round(62 + workload * 0.9)))
 }
 
-function getAvailabilityMultiplier(player: Player): number {
+function getAvailabilityMultiplier(player: Player, posFitMult = 1.0): number {
   const fitnessMult = 0.6 + player.fitness / 250
   const fatigueMult = 1 - player.fatigue / 260
   const injuryMult =
     player.injury
       ? player.injury.weeksRemaining <= 1 ? 0.9 : 0.75
       : 1
-  return Math.max(0.5, Math.min(1.05, fitnessMult * fatigueMult * injuryMult))
+  // Squad Pulse modifier: latest note nudges availability ±5% at most.
+  const pn = player.pulseNotes
+  const pulseMod = pn?.length ? pn[pn.length - 1].modifier : 0
+  // posFitMult < 1 for out-of-position players; applied after base clamp so OOP penalties stack
+  return Math.max(0.5, Math.min(1.05, fitnessMult * fatigueMult * injuryMult * (1 + pulseMod))) * posFitMult
 }

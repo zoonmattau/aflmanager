@@ -87,3 +87,42 @@ export interface TradeExecutionResult {
   completedTrade?: import('./game').CompletedTrade
   news?: import('./game').NewsItem
 }
+
+// ── Trade Drama ─────────────────────────────────────────────────────────────
+
+export type TradeEventType =
+  | 'new-offer'
+  | 'rival-bid'
+  | 'offer-improved'
+  | 'offer-withdrawn'
+  | 'deadline-pressure'
+  | 'player-push'
+  | 'rival-withdrew'
+
+export interface TradeInboxEvent {
+  id: string
+  date: string
+  type: TradeEventType
+  clubId?: string
+  playerId?: string
+  offerId?: string
+  message: string
+  /** Which side this event benefits */
+  leverageShift: 'buyer' | 'seller' | 'neutral'
+  demandDelta?: number
+}
+
+export interface BiddingWarCluster {
+  playerId: string
+  /** All clubs currently competing for this player */
+  clubIds: string[]
+  startedAt: string
+  intensity: 'mild' | 'moderate' | 'hot'
+}
+
+export interface TradeDramaState {
+  /** Chronological event log (capped at 100) */
+  events: TradeInboxEvent[]
+  /** Active bidding wars indexed by player */
+  biddingWars: BiddingWarCluster[]
+}

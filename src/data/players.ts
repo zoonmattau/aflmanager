@@ -1412,7 +1412,7 @@ export function generatePlayers(
     )
 
     const player: Player = {
-      id: `${clubId}-player-${String(i + 1).padStart(3, '0')}`,
+      id: crypto.randomUUID(),
       firstName,
       lastName,
       age,
@@ -1487,7 +1487,7 @@ export function generateStateLeagueContractPlayers(
     }
     return {
       ...player,
-      id: `${clubId}-state-player-${String(idx + 1).padStart(3, '0')}`,
+      id: crypto.randomUUID(),
       clubId,
       listStatus: 'reserves',
       isRookie: false,

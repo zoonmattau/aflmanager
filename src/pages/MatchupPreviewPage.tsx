@@ -21,6 +21,14 @@ import {
   buildUpcomingMilestoneNotes,
   formatUpcomingMilestoneLabel,
 } from '@/engine/narrative/upcomingMilestones'
+import {
+  computePlayerArc,
+  ARC_META,
+} from '@/engine/player/storyArc'
+import { generateRivalScoutReport } from '@/engine/match/rivalScoutEngine'
+import type { RivalScoutReport } from '@/engine/match/rivalScoutEngine'
+import { cn } from '@/lib/utils'
+import { Crosshair, Zap, Target, CheckCircle2, AlertCircle } from 'lucide-react'
 
 type MatchupOption =
   | {
@@ -106,6 +114,7 @@ export function MatchupPreviewPage() {
   const weeklyGameplans = useGameStore((s) => s.weeklyGameplans)
   const setWeeklyMatchupTactics = useGameStore((s) => s.setWeeklyMatchupTactics)
   const clearWeeklyMatchupTactics = useGameStore((s) => s.clearWeeklyMatchupTactics)
+  const setScoutCounter = useGameStore((s) => s.setScoutCounter)
 
   const seasonStartDate = settings.seasonStartDate ?? '2026-03-20'
 
@@ -230,6 +239,38 @@ export function MatchupPreviewPage() {
     }
     return map
   }, [userMilestoneNotes, opponentMilestoneNotes])
+
+  // Story arc callouts for match preview
+  const userArcCallouts = useMemo(() => {
+    if (!selected || selected.kind !== 'match') return []
+    const userLeadership = clubs[playerClubId]?.leadership
+    const userLeaderIds = new Set([
+      ...(userLeadership?.captainId ? [userLeadership.captainId] : []),
+      ...(userLeadership?.viceCaptainId ? [userLeadership.viceCaptainId] : []),
+      ...(userLeadership?.leadershipGroupIds ?? []),
+    ])
+    return userLineupPlayers
+      .map((p) => computePlayerArc(p, { isLeader: userLeaderIds.has(p.id), currentDate }))
+      .filter(Boolean)
+      .sort((a, b) => b!.priority - a!.priority)
+      .slice(0, 3)
+  }, [userLineupPlayers, clubs, playerClubId, currentDate, selected])
+
+  const opponentArcCallouts = useMemo(() => {
+    if (!selected || selected.kind !== 'match') return []
+    const oppLeadership = clubs[selected.opponentId]?.leadership
+    const oppLeaderIds = new Set([
+      ...(oppLeadership?.captainId ? [oppLeadership.captainId] : []),
+      ...(oppLeadership?.viceCaptainId ? [oppLeadership.viceCaptainId] : []),
+      ...(oppLeadership?.leadershipGroupIds ?? []),
+    ])
+    return opponentLikelyPlayers
+      .map((p) => computePlayerArc(p, { isLeader: oppLeaderIds.has(p.id), currentDate }))
+      .filter(Boolean)
+      .sort((a, b) => b!.priority - a!.priority)
+      .slice(0, 3)
+  }, [opponentLikelyPlayers, clubs, selected, currentDate])
+
   const canEditSelectedMatchup = selected?.kind === 'match' && selected.roundIndex === currentRound
   const activeTactics = useMemo<WeeklyMatchupTactics>(() => {
     if (!selected || selected.kind !== 'match' || selected.roundIndex !== currentRound) {
@@ -250,6 +291,25 @@ export function MatchupPreviewPage() {
   const saveTactics = (next: WeeklyMatchupTactics) => {
     if (!canEditSelectedMatchup) return
     setWeeklyMatchupTactics(next)
+  }
+
+  const scoutReport = useMemo<RivalScoutReport | null>(() => {
+    if (!selected || selected.kind !== 'match') return null
+    const oppClub = clubs[selected.opponentId]
+    if (!oppClub) return null
+    return generateRivalScoutReport(oppClub, players)
+  }, [selected, clubs, players])
+
+  const activeScoutCounterId = useMemo<string | null>(() => {
+    if (!selected || selected.kind !== 'match' || selected.roundIndex !== currentRound) return null
+    const entry = weeklyGameplans[playerClubId]
+    if (!entry || entry.round !== currentRound || entry.opponentClubId !== selected.opponentId) return null
+    return entry.scoutCounterId ?? null
+  }, [selected, currentRound, weeklyGameplans, playerClubId])
+
+  const handleCounterSelect = (counterId: string) => {
+    if (!canEditSelectedMatchup) return
+    setScoutCounter(activeScoutCounterId === counterId ? null : counterId)
   }
 
   const opponentForm = useMemo(
@@ -364,6 +424,49 @@ export function MatchupPreviewPage() {
                           ))}
                           {opponentMilestoneNotes.length === 0 && (
                             <p className="text-muted-foreground">No immediate milestone chases.</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {(userArcCallouts.length > 0 || opponentArcCallouts.length > 0) && (
+                    <div className="rounded border border-violet-500/30 bg-violet-500/5 p-2 space-y-2">
+                      <p className="text-xs font-semibold text-violet-700 dark:text-violet-300">Storylines to Watch</p>
+                      <div className="grid gap-2 md:grid-cols-2 text-xs">
+                        <div className="space-y-1.5">
+                          <p className="font-medium">Your lineup</p>
+                          {userArcCallouts.map((arc) => {
+                            if (!arc) return null
+                            const meta = ARC_META[arc.arc]
+                            return (
+                              <div key={arc.playerId}>
+                                <span className={`font-medium ${meta.colour}`}>
+                                  {meta.icon} {arc.playerName}
+                                </span>
+                                <span className="text-muted-foreground ml-1">({meta.shortLabel})</span>
+                              </div>
+                            )
+                          })}
+                          {userArcCallouts.length === 0 && (
+                            <p className="text-muted-foreground">No active storylines.</p>
+                          )}
+                        </div>
+                        <div className="space-y-1.5">
+                          <p className="font-medium">Opponent lineup</p>
+                          {opponentArcCallouts.map((arc) => {
+                            if (!arc) return null
+                            const meta = ARC_META[arc.arc]
+                            return (
+                              <div key={arc.playerId}>
+                                <span className={`font-medium ${meta.colour}`}>
+                                  {meta.icon} {arc.playerName}
+                                </span>
+                                <span className="text-muted-foreground ml-1">({meta.shortLabel})</span>
+                              </div>
+                            )
+                          })}
+                          {opponentArcCallouts.length === 0 && (
+                            <p className="text-muted-foreground">No active storylines.</p>
                           )}
                         </div>
                       </div>
@@ -643,6 +746,125 @@ export function MatchupPreviewPage() {
                   )}
                 </CardContent>
               </Card>
+
+            {scoutReport && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Crosshair className="h-4 w-4" />
+                    Scout Report
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <p className="font-medium">{scoutReport.headline}</p>
+
+                  <div className="flex flex-wrap gap-1.5 text-xs">
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        scoutReport.tendencies.pressureStyle === 'high' && 'border-red-500/50 text-red-600 dark:text-red-400',
+                        scoutReport.tendencies.pressureStyle === 'low' && 'border-green-500/50 text-green-600 dark:text-green-400',
+                      )}
+                    >
+                      Pressure: {scoutReport.tendencies.pressureStyle}
+                    </Badge>
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        scoutReport.tendencies.tempo === 'fast' && 'border-amber-500/50 text-amber-600 dark:text-amber-400',
+                        scoutReport.tendencies.tempo === 'slow' && 'border-sky-500/50 text-sky-600 dark:text-sky-400',
+                      )}
+                    >
+                      Tempo: {scoutReport.tendencies.tempo}
+                    </Badge>
+                    <Badge variant="outline">
+                      Corridor: {scoutReport.tendencies.corridorUse}
+                    </Badge>
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        scoutReport.tendencies.taggingLikelihood === 'high' && 'border-orange-500/50 text-orange-600 dark:text-orange-400',
+                      )}
+                    >
+                      Tagging: {scoutReport.tendencies.taggingLikelihood}
+                    </Badge>
+                    <Badge variant="outline">
+                      Squad: {scoutReport.tendencies.squadBalance.replace('-', ' ')}
+                    </Badge>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground leading-relaxed">{scoutReport.tacticalSummary}</p>
+
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-semibold">Key Threats</p>
+                    {scoutReport.keyThreats.map((threat) => (
+                      <div key={threat.playerId} className="flex items-start gap-2 text-xs">
+                        <Target className="h-3.5 w-3.5 mt-0.5 text-red-500 shrink-0" />
+                        <div>
+                          <span className="font-medium">{threat.playerName}</span>
+                          <span className="text-muted-foreground ml-1 text-[11px]">{threat.reason}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-semibold">Tactical Counter</p>
+                      {!canEditSelectedMatchup && (
+                        <span className="text-xs text-muted-foreground">Current round only</span>
+                      )}
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {scoutReport.counters.map((counter) => {
+                        const isSelected = activeScoutCounterId === counter.id
+                        return (
+                          <button
+                            key={counter.id}
+                            disabled={!canEditSelectedMatchup}
+                            onClick={() => handleCounterSelect(counter.id)}
+                            className={cn(
+                              'rounded border p-2.5 text-left text-xs transition-colors',
+                              isSelected
+                                ? 'border-primary bg-primary/10'
+                                : 'hover:border-muted-foreground/50',
+                              !canEditSelectedMatchup && 'cursor-default opacity-70',
+                            )}
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="font-medium">{counter.label}</span>
+                              <div className="flex items-center gap-1 shrink-0">
+                                {counter.isEffective ? (
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+                                ) : (
+                                  <AlertCircle className="h-3.5 w-3.5 text-muted-foreground/40" />
+                                )}
+                                {isSelected && <Zap className="h-3.5 w-3.5 text-primary" />}
+                              </div>
+                            </div>
+                            <p className="text-muted-foreground leading-relaxed">{counter.description}</p>
+                            {counter.isEffective && (
+                              <p className="text-green-600 dark:text-green-400 mt-1.5 text-[11px] font-medium">
+                                ✓ Directly counters their tendency — full effect applied
+                              </p>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {activeScoutCounterId && canEditSelectedMatchup && (
+                      <p className="text-xs text-muted-foreground">
+                        Active:{' '}
+                        <span className="font-medium text-foreground">
+                          {scoutReport.counters.find((c) => c.id === activeScoutCounterId)?.label ?? activeScoutCounterId}
+                        </span>{' '}
+                        — modifier applied to the match simulation. Click again to deselect.
+                      </p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
               <FootballField
                 lineup={userLineup}

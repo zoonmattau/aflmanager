@@ -12,7 +12,7 @@ export function ClubBFLeaderboardWidget() {
   const phase = useGameStore((s) => s.phase)
 
   const leaderboard = useMemo(
-    () => (playerClubId ? getClubBFLeaderboard(bfTracker, playerClubId, 5) : []),
+    () => (playerClubId ? getClubBFLeaderboard(bfTracker ?? [], playerClubId, 5) : []),
     [bfTracker, playerClubId],
   )
 

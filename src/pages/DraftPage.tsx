@@ -6,6 +6,7 @@ import type { PlayerPositionType } from '@/types/player'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ConfirmButton } from '@/components/ui/ConfirmButton'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -38,6 +39,7 @@ import { useTableViewManager, type TableViewColumnConfig } from '@/components/ta
 import { TableViewManagerControl } from '@/components/table-view/TableViewManagerControl'
 import { ShortlistAssignMenu, ShortlistManager } from '@/components/shortlists/ShortlistManager'
 import { TermTooltip } from '@/components/help/TermTooltip'
+import { ProspectHoverCard } from '@/components/player/PlayerHoverCard'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -527,7 +529,11 @@ function ProspectSelectionDialog({
               {available.map((prospect) => (
                 <TableRow key={prospect.id}>
                   <TableCell className="font-medium">
-                    {prospect.firstName} {prospect.lastName}
+                    <ProspectHoverCard prospect={prospect} playerClubId={playerClubId} side="right">
+                      <span className="cursor-default">
+                        {prospect.firstName} {prospect.lastName}
+                      </span>
+                    </ProspectHoverCard>
                   </TableCell>
                   <TableCell>
                     <Badge
@@ -1288,7 +1294,6 @@ export function DraftPage() {
 
   const [suggestion, setSuggestion] = useState<SuggestNextPickResult | null>(null)
   const [delegatedRecords, setDelegatedRecords] = useState<DelegatedPickRecord[]>([])
-  const [showDelegateConfirm, setShowDelegateConfirm] = useState(false)
 
   const picks: DraftPick[] = useMemo(() => {
     if (!draft) return []
@@ -1349,7 +1354,6 @@ export function DraftPage() {
 
   const handleDelegateDraft = () => {
     if (simulationActive) return
-    setShowDelegateConfirm(false)
     const result = runDelegatedDraftAction()
     if (result.success && result.records.length > 0) {
       setDelegatedRecords(result.records)
@@ -1377,7 +1381,10 @@ export function DraftPage() {
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">National Draft {year}</h1>
+          <div>
+            <h1 className="text-2xl font-bold">National Draft {year}</h1>
+            <p className="text-sm text-muted-foreground">Select players from the incoming draft class to add to your list.</p>
+          </div>
           <StatusBadge draft={null} />
         </div>
 
@@ -1401,7 +1408,10 @@ export function DraftPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">National Draft {draft.year}</h1>
+        <div>
+          <h1 className="text-2xl font-bold">National Draft {draft.year}</h1>
+          <p className="text-sm text-muted-foreground">Select players from the incoming draft class to add to your list. Use your picks wisely — you can also trade them.</p>
+        </div>
         <StatusBadge draft={draft} />
       </div>
 
@@ -1470,34 +1480,18 @@ export function DraftPage() {
           >
             Suggest Pick
           </Button>
-          <Button
+          <ConfirmButton
             size="sm"
             variant="secondary"
-            onClick={() => setShowDelegateConfirm(true)}
+            onConfirm={handleDelegateDraft}
+            confirmLabel="Click again to delegate"
             disabled={draft.nationalDraftComplete || simulationActive}
           >
             Delegate to Staff
-          </Button>
+          </ConfirmButton>
         </CardContent>
       </Card>
 
-      {/* Delegate Confirmation Dialog */}
-      <Dialog open={showDelegateConfirm} onOpenChange={setShowDelegateConfirm}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delegate Draft to Staff?</DialogTitle>
-            <DialogDescription>
-              Your recruiting staff will make all remaining draft picks on your behalf.
-              You won't be able to intervene once the draft starts running.
-              A full recap with staff rationale for each pick will be shown when complete.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setShowDelegateConfirm(false)}>Cancel</Button>
-            <Button onClick={handleDelegateDraft}>Delegate All Picks</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       <DraftPickTradeOffersCard
         offers={pendingPickTradeOffers}

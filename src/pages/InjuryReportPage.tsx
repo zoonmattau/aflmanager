@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
+import { useAppStore } from '@/stores/appStore'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -26,7 +27,11 @@ export function InjuryReportPage() {
   const players = useGameStore((s) => s.players)
   const clubs = useGameStore((s) => s.clubs)
   const playerClubId = useGameStore((s) => s.playerClubId)
+  const viewedTeamClubId = useAppStore((s) => s.viewedTeamClubId)
   const currentDate = useGameStore((s) => s.currentDate)
+
+  const effectiveClubId = viewedTeamClubId ?? playerClubId
+  const effectiveClub = clubs[effectiveClubId]
 
   const allPlayers = useMemo(() => Object.values(players), [players])
 
@@ -39,17 +44,17 @@ export function InjuryReportPage() {
   )
 
   const myClubInjuries = useMemo(
-    () => leagueInjuries.filter((p) => p.clubId === playerClubId),
-    [leagueInjuries, playerClubId],
+    () => leagueInjuries.filter((p) => p.clubId === effectiveClubId),
+    [leagueInjuries, effectiveClubId],
   )
 
   const highRiskAvailable = useMemo(
     () =>
       allPlayers
-        .filter((p) => p.clubId === playerClubId && !p.injury)
+        .filter((p) => p.clubId === effectiveClubId && !p.injury)
         .filter((p) => p.fatigue >= 60 || p.hiddenAttributes.injuryProneness >= 65)
         .sort((a, b) => b.fatigue - a.fatigue),
-    [allPlayers, playerClubId],
+    [allPlayers, effectiveClubId],
   )
 
   const recentlyRecovered = useMemo(
@@ -67,14 +72,14 @@ export function InjuryReportPage() {
       <div>
         <h1 className="text-2xl font-bold">Injury Report</h1>
         <p className="text-sm text-muted-foreground">
-          Medical status across your club and the league.
+          Medical status for {effectiveClub?.name ?? effectiveClubId} and the league.
         </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <Card>
           <CardContent className="py-3">
-            <p className="text-xs text-muted-foreground">My Club Injuries</p>
+            <p className="text-xs text-muted-foreground">{effectiveClub?.abbreviation ?? 'Club'} Injuries</p>
             <p className="text-2xl font-bold">{myClubInjuries.length}</p>
           </CardContent>
         </Card>
@@ -100,7 +105,7 @@ export function InjuryReportPage() {
 
       <Tabs defaultValue="my-club">
         <TabsList>
-          <TabsTrigger value="my-club">My Club</TabsTrigger>
+          <TabsTrigger value="my-club">{effectiveClub?.abbreviation ?? 'Club'}</TabsTrigger>
           <TabsTrigger value="league">League</TabsTrigger>
           <TabsTrigger value="recoveries">Recoveries</TabsTrigger>
         </TabsList>
@@ -109,7 +114,7 @@ export function InjuryReportPage() {
           <Card>
             <CardHeader className="py-3">
               <CardTitle className="text-sm">Current Injuries</CardTitle>
-              <CardDescription>Unavailable players at your club.</CardDescription>
+              <CardDescription>Unavailable players at {effectiveClub?.name ?? effectiveClubId}.</CardDescription>
             </CardHeader>
             <CardContent className="p-0">
               <Table>

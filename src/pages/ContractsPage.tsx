@@ -5,6 +5,7 @@ import type { NegotiationOffer, ContractStructure, ActiveNegotiation, ContractCl
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ConfirmButton } from '@/components/ui/ConfirmButton'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
@@ -43,7 +44,6 @@ import {
   XCircle,
   Clock,
   MessageSquare,
-  TrendingUp,
   X,
   AlertTriangle,
 } from 'lucide-react'
@@ -51,10 +51,8 @@ import { getInjuryRiskLevel, injuryRiskDisplay, getDurabilityRating, durabilityR
 import { diffDays } from '@/engine/calendar/calendarEngine'
 import { calculatePlayerValue } from '@/engine/contracts/negotiation'
 import { buildYearByYearFromStructure, calculateIncentiveValue } from '@/engine/contracts/contractStructures'
-import { ContractProjectionPanel } from '@/components/contracts/ContractProjectionPanel'
-import { useTableViewManager, type TableViewColumnConfig } from '@/components/table-view/useTableViewManager'
-import { TableViewManagerControl } from '@/components/table-view/TableViewManagerControl'
-import { ShortlistAssignMenu, ShortlistManager } from '@/components/shortlists/ShortlistManager'
+import { ShortlistManager } from '@/components/shortlists/ShortlistManager'
+import { PlayerHoverCard } from '@/components/player/PlayerHoverCard'
 import { isAflListedPlayer } from '@/engine/players/contracts'
 import type { BoardApprovalResult } from '@/types/boardApproval'
 import { BoardApprovalPanel } from '@/components/board/BoardApprovalPanel'
@@ -976,7 +974,6 @@ function DelistDialog({
   const addNewsItem = useGameStore((s) => s.addNewsItem)
 
   const [selectedPlayerId, setSelectedPlayerId] = useState<string>('')
-  const [confirming, setConfirming] = useState(false)
   const [done, setDone] = useState(false)
 
   const clubPlayers = useMemo(
@@ -992,7 +989,6 @@ function DelistDialog({
 
   const resetForm = useCallback(() => {
     setSelectedPlayerId('')
-    setConfirming(false)
     setDone(false)
   }, [])
 
@@ -1030,7 +1026,6 @@ function DelistDialog({
     })
 
     setDone(true)
-    setConfirming(false)
   }, [selectedPlayer, clubName, playerClubId, currentDate, updatePlayer, addNewsItem])
 
   return (
@@ -1052,7 +1047,6 @@ function DelistDialog({
                   value={selectedPlayerId}
                   onValueChange={(v) => {
                     setSelectedPlayerId(v)
-                    setConfirming(false)
                   }}
                 >
                   <SelectTrigger className="w-full">
@@ -1069,7 +1063,7 @@ function DelistDialog({
                 </Select>
               </div>
 
-              {selectedPlayer && !confirming && (
+              {selectedPlayer && (
                 <div className="rounded-md border p-3 text-sm space-y-1">
                   <p>
                     <span className="font-medium">
@@ -1081,40 +1075,14 @@ function DelistDialog({
                     Contract: {selectedPlayer.contract.yearsRemaining}yr @{' '}
                     {formatDollars(selectedPlayer.contract.aav)}/yr
                   </p>
-                  <Button
-                    variant="destructive"
+                  <ConfirmButton
                     size="sm"
                     className="mt-2"
-                    onClick={() => setConfirming(true)}
+                    onConfirm={handleConfirmDelist}
+                    confirmLabel="Click again to confirm delisting"
                   >
                     Delist This Player
-                  </Button>
-                </div>
-              )}
-
-              {selectedPlayer && confirming && (
-                <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 space-y-3">
-                  <p className="text-sm font-medium">
-                    Are you sure you want to delist{' '}
-                    {selectedPlayer.firstName} {selectedPlayer.lastName}? They
-                    will be removed from your list.
-                  </p>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={handleConfirmDelist}
-                    >
-                      Confirm Delisting
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setConfirming(false)}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
+                  </ConfirmButton>
                 </div>
               )}
             </>
@@ -1318,9 +1286,11 @@ function ActiveNegotiationsPanel() {
               <div key={neg.id} className="flex items-center justify-between rounded-md border p-3">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm">
-                      {player.firstName} {player.lastName}
-                    </span>
+                    <PlayerHoverCard player={player} side="right">
+                      <span className="font-medium text-sm cursor-default">
+                        {player.firstName} {player.lastName}
+                      </span>
+                    </PlayerHoverCard>
                     {statusBadge(neg.status)}
                     {moodBadge(neg.playerMood)}
                     {neg.mediaLeaked && (
@@ -1371,7 +1341,6 @@ export function ContractsPage() {
   const [offerOpen, setOfferOpen] = useState(false)
   const [delistOpen, setDelistOpen] = useState(false)
   const [rookieOpen, setRookieOpen] = useState(false)
-  const [projectionPlayerId, setProjectionPlayerId] = useState<string | null>(null)
 
   const club = clubs[playerClubId]
 
@@ -1441,162 +1410,6 @@ export function ContractsPage() {
     return null
   }, [offseasonState])
 
-  const tableColumns = useMemo(() => {
-    const cols = [
-      {
-        id: 'player',
-        label: 'Player',
-        defaultWidth: 180,
-        sortable: true,
-        sortValue: (player: Player) => `${player.lastName},${player.firstName}`.toLowerCase(),
-        render: (player: Player) => <span className="font-medium">{player.firstName} {player.lastName}</span>,
-      },
-      {
-        id: 'pos',
-        label: 'Pos',
-        defaultWidth: 72,
-        sortable: true,
-        sortValue: (player: Player) => player.position.primary,
-        render: (player: Player) => <Badge variant="outline">{player.position.primary}</Badge>,
-      },
-      {
-        id: 'age',
-        label: 'Age',
-        defaultWidth: 60,
-        sortable: true,
-        sortValue: (player: Player) => player.age,
-        render: (player: Player) => player.age,
-      },
-      {
-        id: 'aav',
-        label: 'AAV',
-        defaultWidth: 96,
-        sortable: true,
-        sortValue: (player: Player) => player.contract.aav,
-        render: (player: Player) => <span className="font-mono text-xs">{formatDollars(player.contract.aav)}</span>,
-      },
-      {
-        id: 'years',
-        label: 'Years Left',
-        defaultWidth: 84,
-        sortable: true,
-        sortValue: (player: Player) => player.contract.yearsRemaining,
-        render: (player: Player) => (
-          <span className={player.contract.yearsRemaining <= 1 ? 'text-red-500 font-semibold' : ''}>
-            {player.contract.yearsRemaining}
-          </span>
-        ),
-      },
-      {
-        id: 'estValue',
-        label: 'Est. Value',
-        defaultWidth: 96,
-        sortable: true,
-        sortValue: (player: Player) => calculatePlayerValue(player),
-        render: (player: Player) => <span className="font-mono text-xs">{formatDollars(calculatePlayerValue(player))}</span>,
-      },
-      {
-        id: 'list',
-        label: 'List',
-        defaultWidth: 90,
-        sortable: true,
-        sortValue: (player: Player) => (player.isRookie ? 1 : 0),
-        render: (player: Player) => (
-          <Badge variant={player.isRookie ? 'secondary' : 'default'}>
-            {player.isRookie ? 'Rookie' : 'Senior'}
-          </Badge>
-        ),
-      },
-      {
-        id: 'status',
-        label: 'Status',
-        defaultWidth: 120,
-        sortable: true,
-        sortValue: (player: Player) => {
-          if (player.contract.yearsRemaining === 0) return 3
-          const mv = calculatePlayerValue(player)
-          if (player.contract.aav > mv * 1.15) return 2
-          if (player.contract.aav < mv * 0.8) return 0
-          return 1
-        },
-        render: (player: Player) => {
-          const mv = calculatePlayerValue(player)
-          const overpaid = player.contract.aav > mv * 1.15
-          const underpaid = player.contract.aav < mv * 0.8
-          return (
-            player.contract.yearsRemaining === 0 ? (
-              <Badge variant="destructive">Out of Contract</Badge>
-            ) : overpaid ? (
-              <Badge variant="outline" className="text-orange-500 border-orange-500/50">Overpaid</Badge>
-            ) : underpaid ? (
-              <Badge variant="outline" className="text-green-500 border-green-500/50">Underpaid</Badge>
-            ) : (
-              <Badge variant="outline" className="text-muted-foreground">Fair</Badge>
-            )
-          )
-        },
-      },
-      {
-        id: 'action',
-        label: '',
-        defaultWidth: 130,
-        sortable: false,
-        render: (player: Player) => (
-          <div className="flex items-center justify-center gap-1">
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-md p-1 text-muted-foreground hover:text-primary hover:bg-accent transition-colors"
-              title="Contract projection"
-              onClick={() => setProjectionPlayerId(player.id)}
-            >
-              <TrendingUp className="h-4 w-4" />
-            </button>
-            <ShortlistAssignMenu targetType="player" targetId={player.id} buttonLabel="List" buttonVariant="ghost" buttonSize="sm" />
-          </div>
-        ),
-      },
-    ]
-    return cols
-  }, [])
-
-  const tableViewColumns = useMemo<TableViewColumnConfig[]>(
-    () => tableColumns.map((col) => ({
-      id: col.id,
-      label: col.label || col.id,
-      defaultWidth: col.defaultWidth,
-      minWidth: 40,
-      maxWidth: 300,
-      sortable: col.sortable,
-    })),
-    [tableColumns],
-  )
-  const tableView = useTableViewManager({
-    tableId: 'contracts-overview',
-    columns: tableViewColumns,
-    defaultSort: { columnId: 'aav', direction: 'desc' },
-  })
-  const visibleColumns = useMemo(() => {
-    const hidden = new Set(tableView.snapshot.hiddenColumnIds)
-    const byId = new Map(tableColumns.map((col) => [col.id, col] as const))
-    return tableView.snapshot.columnOrder
-      .filter((id) => !hidden.has(id))
-      .map((id) => byId.get(id))
-      .filter((col): col is (typeof tableColumns)[number] => Boolean(col))
-  }, [tableView.snapshot.columnOrder, tableView.snapshot.hiddenColumnIds, tableColumns])
-  const sortedPlayers = useMemo(() => {
-    const sort = tableView.snapshot.sort
-    if (!sort) return clubPlayers
-    const col = tableColumns.find((c) => c.id === sort.columnId && c.sortable && c.sortValue)
-    if (!col?.sortValue) return clubPlayers
-    const sorted = [...clubPlayers].sort((a, b) => {
-      const va = col.sortValue!(a)
-      const vb = col.sortValue!(b)
-      if (va === vb) return 0
-      return va > vb ? 1 : -1
-    })
-    return sort.direction === 'desc' ? sorted.reverse() : sorted
-  }, [clubPlayers, tableColumns, tableView.snapshot.sort])
-
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -1604,7 +1417,7 @@ export function ContractsPage() {
         <div>
           <h1 className="text-2xl font-bold">Contract Management</h1>
           <p className="text-sm text-muted-foreground">
-            {club?.fullName} &middot; {phaseLabel}
+            {club?.fullName} &middot; {phaseLabel} &middot; Negotiate, delist, and manage deals — see the full year-by-year breakdown on the Squad page
           </p>
         </div>
         <div className="flex items-center gap-3 text-sm">
@@ -1756,64 +1569,6 @@ export function ContractsPage() {
         </Card>
       )}
 
-      {/* Contract Overview Table */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between gap-3">
-            <CardTitle>Squad Contracts</CardTitle>
-            <TableViewManagerControl columns={tableViewColumns} manager={tableView} />
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {visibleColumns.map((col) => (
-                    <TableHead
-                      key={col.id}
-                      className="px-3"
-                      style={{ width: tableView.snapshot.columnWidths[col.id] ?? col.defaultWidth }}
-                      onClick={() => {
-                        if (!col.sortable) return
-                        const current = tableView.snapshot.sort
-                        if (!current || current.columnId !== col.id) {
-                          tableView.setSort(col.id, 'desc')
-                          return
-                        }
-                        tableView.setSort(col.id, current.direction === 'desc' ? 'asc' : 'desc')
-                      }}
-                    >
-                      {col.label || ''}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sortedPlayers.map((player) => (
-                  <TableRow key={player.id} className="text-sm">
-                    {visibleColumns.map((col) => (
-                      <TableCell
-                        key={`${player.id}-${col.id}`}
-                        className={
-                          col.id === 'aav' || col.id === 'estValue' ? 'text-right'
-                            : col.id === 'age' || col.id === 'years' || col.id === 'list' || col.id === 'status' || col.id === 'action'
-                              ? 'text-center'
-                              : 'text-left'
-                        }
-                        style={{ width: tableView.snapshot.columnWidths[col.id] ?? col.defaultWidth }}
-                      >
-                        {col.render(player)}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
-
       <ShortlistManager targetTypeFilter="player" title="Contract Targets Shortlists" />
 
       {/* Recent Activity Feed */}
@@ -1853,11 +1608,6 @@ export function ContractsPage() {
       <NegotiationDialog open={offerOpen} onOpenChange={setOfferOpen} />
       <DelistDialog open={delistOpen} onOpenChange={setDelistOpen} />
       <RookieUpgradeDialog open={rookieOpen} onOpenChange={setRookieOpen} />
-      <ContractProjectionPanel
-        playerId={projectionPlayerId}
-        open={projectionPlayerId !== null}
-        onOpenChange={(open) => { if (!open) setProjectionPlayerId(null) }}
-      />
     </div>
   )
 }

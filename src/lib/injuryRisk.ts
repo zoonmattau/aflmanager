@@ -94,12 +94,27 @@ export function durabilityRatingColor(rating: DurabilityRating): string {
   }
 }
 
-/** True if a player returned from a significant injury recently (has a recovered history entry) */
-export function isRecentlyReturned(player: Player): boolean {
+/** Weeks since a player's most recent injury recovery (returns 0 if no recoveredOn) */
+export function weeksAgoReturned(player: Player, currentDate: string): number {
+  const last = (player.injuryHistory ?? []).at(-1)
+  if (!last?.recoveredOn) return 0
+  return Math.floor(
+    (new Date(currentDate).getTime() - new Date(last.recoveredOn).getTime()) /
+      (7 * 24 * 60 * 60 * 1000),
+  )
+}
+
+/** True if a player returned from a significant injury in the last 6 weeks */
+export function isRecentlyReturned(player: Player, currentDate?: string): boolean {
   if (player.injury) return false
   const history = player.injuryHistory ?? []
   if (history.length === 0) return false
   // Most recent history entry has recoveredOn and was a meaningful injury (≥2 weeks)
   const last = history[history.length - 1]
-  return !!(last?.recoveredOn && (last.initialWeeks ?? 0) >= 2)
+  if (!last?.recoveredOn || (last.initialWeeks ?? 0) < 2) return false
+  if (currentDate) {
+    const weeksAgo = weeksAgoReturned(player, currentDate)
+    if (weeksAgo > 6) return false
+  }
+  return true
 }

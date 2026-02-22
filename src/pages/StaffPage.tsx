@@ -1,20 +1,13 @@
-import { useMemo, useState, useCallback } from 'react'
+import { useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
 import type { StaffMember, StaffRole, StaffRatings } from '@/types/staff'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ConfirmButton } from '@/components/ui/ConfirmButton'
 import { Separator } from '@/components/ui/separator'
 import { Progress } from '@/components/ui/progress'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import {
   Users,
   DollarSign,
@@ -219,15 +212,15 @@ function StaffPositionCard({
             </div>
 
             {/* Fire button */}
-            <Button
-              variant="destructive"
+            <ConfirmButton
               size="sm"
               className="w-full text-xs"
-              onClick={() => onFire(member)}
+              onConfirm={() => onFire(member)}
+              confirmLabel="Click again to fire"
             >
               <UserMinus className="mr-1 h-3 w-3" />
               Fire Coach
-            </Button>
+            </ConfirmButton>
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-6 space-y-3">
@@ -371,9 +364,6 @@ export function StaffPage() {
 
   const club = clubs[playerClubId]
 
-  // Fire confirmation dialog state
-  const [fireTarget, setFireTarget] = useState<StaffMember | null>(null)
-
   // ---------------------------------------------------------------------------
   // Derived data
   // ---------------------------------------------------------------------------
@@ -449,12 +439,6 @@ export function StaffPage() {
   // ---------------------------------------------------------------------------
   // Handlers
   // ---------------------------------------------------------------------------
-
-  const handleFireConfirm = useCallback(() => {
-    if (!fireTarget) return
-    fireStaffMember(fireTarget.id)
-    setFireTarget(null)
-  }, [fireTarget, fireStaffMember])
 
   const handleHire = useCallback(
     (role: StaffRole) => {
@@ -547,7 +531,7 @@ export function StaffPage() {
               role={pos.role}
               slotLabel={pos.label}
               member={pos.member}
-              onFire={setFireTarget}
+              onFire={(m) => fireStaffMember(m.id)}
               onHire={handleHire}
             />
           ))}
@@ -561,57 +545,6 @@ export function StaffPage() {
       {/* ------------------------------------------------------------------ */}
       <CoachingImpactCard clubStaff={clubStaff} />
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Fire Confirmation Dialog                                            */}
-      {/* ------------------------------------------------------------------ */}
-      <Dialog open={fireTarget !== null} onOpenChange={(open) => { if (!open) setFireTarget(null) }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Fire Coach</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to fire this coaching staff member?
-            </DialogDescription>
-          </DialogHeader>
-          {fireTarget && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between rounded-lg border p-3">
-                <div>
-                  <p className="font-semibold">
-                    {fireTarget.firstName} {fireTarget.lastName}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {ROLE_DISPLAY_NAMES[fireTarget.role]}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm">
-                    Contract: {fireTarget.contractYears} year{fireTarget.contractYears !== 1 ? 's' : ''} remaining
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    Salary: {formatSalary(fireTarget.salary)}/yr
-                  </p>
-                </div>
-              </div>
-              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
-                <p className="text-sm font-medium text-destructive">
-                  Severance payout: {formatSalary(fireTarget.salary * fireTarget.contractYears)}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Based on {formatSalary(fireTarget.salary)} x {fireTarget.contractYears} year{fireTarget.contractYears !== 1 ? 's' : ''}
-                </p>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setFireTarget(null)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleFireConfirm}>
-              Confirm Termination
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

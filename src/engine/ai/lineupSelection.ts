@@ -65,7 +65,7 @@ function computeSuitability(
   const posRating = getPlayerPositionRatings(player)[targetType]
   if (posRating !== undefined) return effectiveRating * (posRating / 100) * roleFit
 
-  if (player.position.secondary.includes(targetType)) return effectiveRating * 0.8 * roleFit
+  if ((player.position.secondary ?? []).includes(targetType)) return effectiveRating * 0.8 * roleFit
 
   return effectiveRating * 0.5 * roleFit
 }
@@ -366,7 +366,7 @@ export function selectBestLineup(
   for (const { posType, slots } of FILL_ORDER) {
     const primaryCandidates = byType.get(posType) ?? []
     const secondaryCandidates = eligible.filter(
-      (p) => p.position.primary !== posType && p.position.secondary.includes(posType),
+      (p) => p.position.primary !== posType && (p.position.secondary ?? []).includes(posType),
     )
     const pool = [...primaryCandidates, ...secondaryCandidates]
 

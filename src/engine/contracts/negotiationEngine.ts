@@ -166,7 +166,7 @@ function evaluateDemandSatisfied(
     case 'role-promise': {
       const promised = concessions.promisedPosition
       if (!promised) return false
-      return promised === player.position.primary || player.position.secondary.includes(promised)
+      return promised === player.position.primary || (player.position.secondary ?? []).includes(promised)
     }
     case 'leadership-group-role':
       return concessions.leadershipGroupRole === true

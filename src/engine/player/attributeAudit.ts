@@ -252,7 +252,7 @@ export function auditAndNormalizeAttributes(
   }
 
   for (const key of ALL_ATTRIBUTE_KEYS) {
-    attrs[key] = Math.round(attrs[key] * 10) / 10
+    attrs[key] = Math.round(attrs[key])
   }
 
   return {

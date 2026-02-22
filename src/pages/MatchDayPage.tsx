@@ -1,5 +1,5 @@
-import { useMemo, useState, useCallback, useEffect } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import React, { useMemo, useState, useCallback, useEffect } from 'react'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { h2hKey, isRivalryMatch } from '@/engine/history/h2hTracker'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -13,17 +13,19 @@ import {
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import { simulateMatch } from '@/engine/match/simulateMatch'
-import type { SimulateMatchInput } from '@/engine/match/simulateMatch'
+import { simulateMatch, previewMatchWeather } from '@/engine/match/simulateMatch'
+import type { SimulateMatchInput, WeatherModifiers } from '@/engine/match/simulateMatch'
 import { LiveMatchView } from '@/components/match/LiveMatchView'
 import { PostMatchBoxScore } from '@/components/match/PostMatchBoxScore'
 import { selectBestLineup } from '@/engine/ai/lineupSelection'
 import { MatchReportModal } from '@/components/match/MatchReportModal'
 import { PlayByPlayPanel } from '@/components/match/PlayByPlayPanel'
+import { TrainingImpactCard } from '@/components/match/TrainingImpactCard'
 import { PostMatchReview } from '@/components/match/PostMatchReview'
 import type { PostMatchReviewPayload } from '@/types/postMatch'
 import { getOverallRating } from '@/engine/player/playerRating'
 import { VENUES } from '@/data/venues'
+import type { Venue } from '@/types/venue'
 import type { Club } from '@/types/club'
 import type { Match } from '@/types/match'
 import type { Fixture, MatchDay } from '@/types/season'
@@ -56,7 +58,15 @@ import {
   Users,
   Eye,
   Zap,
+  Wind,
+  CloudRain,
+  Sun,
+  Thermometer,
+  Droplets,
+  Ruler,
+  ShieldAlert,
 } from 'lucide-react'
+import { useNotificationStore } from '@/stores/notificationStore'
 
 const EMPTY_H2H: Record<string, import('@/types/history').H2HRecord> = {}
 
@@ -333,6 +343,8 @@ function computeWinProbabilities(args: {
 export function MatchDayPage() {
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const claimPendingReview = useNotificationStore(s => s.claimPendingReview)
 
   const playerClubId = useGameStore((s) => s.playerClubId)
   const clubs = useGameStore((s) => s.clubs)
@@ -340,6 +352,7 @@ export function MatchDayPage() {
   const season = useGameStore((s) => s.season)
   const settings = useGameStore((s) => s.settings)
   const currentRound = useGameStore((s) => s.currentRound)
+  const leadershipPending = useGameStore((s) => s.leadershipPending)
   const matchResults = useGameStore((s) => s.matchResults)
   const ladder = useGameStore((s) => s.ladder)
   const rngSeed = useGameStore((s) => s.rngSeed)
@@ -391,6 +404,15 @@ export function MatchDayPage() {
     navigate('/fixture', { replace: true, state: {} })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoMode])
+
+  // Claim a pending review from the notification store when navigated here via toast "View Match"
+  useEffect(() => {
+    if (searchParams.get('review') !== 'pending') return
+    const pending = claimPendingReview()
+    if (pending) setReviewPayload(pending)
+    setSearchParams({}, { replace: true })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Reset per-fixture resolved state whenever the round advances
   useEffect(() => {
@@ -477,6 +499,16 @@ export function MatchDayPage() {
 
     const keyMatchups = buildKeyMatchups(players, selectedFixture.homeClubId, selectedFixture.awayClubId)
 
+    // Weather forecast — same seed formula as advanceRound so preview matches sim
+    const fixtureIdx = round?.fixtures.findIndex(
+      (f) => f.homeClubId === selectedFixture.homeClubId && f.awayClubId === selectedFixture.awayClubId,
+    ) ?? 0
+    const weatherSeed = rngSeed + currentRound * 100 + fixtureIdx
+    const venueId = selectedFixture.venueId ?? VENUES[selectedFixture.venue]?.id
+    const month = currentDate ? parseInt(currentDate.split('-')[1]) : undefined
+    const weather = previewMatchWeather(weatherSeed, venueId, selectedFixture.matchDay, month)
+    const venueData = venueId ? VENUES[venueId] : undefined
+
     return {
       homeForm,
       awayForm,
@@ -487,8 +519,10 @@ export function MatchDayPage() {
       winProb,
       meetings,
       keyMatchups,
+      weather,
+      venueData,
     }
-  }, [ladderByClub, matchResults, players, selectedFixture])
+  }, [ladderByClub, matchResults, players, selectedFixture, round, rngSeed, currentRound, currentDate])
 
   const fixturesByDate = useMemo(() => {
     const groups = new Map<string, { iso: string; label: string; fixtures: Fixture[] }>()
@@ -581,6 +615,9 @@ export function MatchDayPage() {
 
   // Buttons are live only when the game date has reached the first match of this round
   const isMatchDay = earliestRoundMatchDate ? (currentDate ?? '') >= earliestRoundMatchDate : true
+  // Block simulation for Round 1 if player hasn't appointed leadership yet
+  const isLeadershipBlocked = leadershipPending && currentRound === 0
+  const canSimulate = isMatchDay && !isLeadershipBlocked
 
   const setDisplayRound = (idx: number) => {
     const clamped = Math.max(0, Math.min(season.rounds.length - 1, idx))
@@ -672,6 +709,7 @@ export function MatchDayPage() {
           venue: fixture.venue,
           venueId: fixture.venueId,
           matchDay: fixture.matchDay,
+          month: currentDate ? parseInt(currentDate.split('-')[1]) : undefined,
           round: currentRound,
           players,
           clubs,
@@ -698,6 +736,7 @@ export function MatchDayPage() {
       venue: fixture.venue,
       venueId: fixture.venueId,
       matchDay: fixture.matchDay,
+      month: currentDate ? parseInt(currentDate.split('-')[1]) : undefined,
       round: currentRound,
       players,
       clubs,
@@ -723,6 +762,7 @@ export function MatchDayPage() {
         venue: fixture.venue,
         venueId: fixture.venueId,
         matchDay: fixture.matchDay,
+        month: currentDate ? parseInt(currentDate.split('-')[1]) : undefined,
         round: currentRound,
         players,
         clubs,
@@ -882,14 +922,31 @@ export function MatchDayPage() {
             const liveIsPrimary =
               liveSimMode === 'always-live' ||
               (liveSimMode === 'finals-only' && isFinalsRound)
+            const simTitle = isLeadershipBlocked
+              ? 'Leadership appointment required before Round 1'
+              : !isMatchDay
+                ? `Match day not yet reached (${earliestRoundMatchDate})`
+                : undefined
             return (
               <>
+                {isLeadershipBlocked && (
+                  <div className="flex items-center gap-1.5 text-xs text-amber-600">
+                    <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
+                    Leadership appointment required.{' '}
+                    <button
+                      className="underline hover:no-underline"
+                      onClick={() => navigate('/preseason-leadership')}
+                    >
+                      Appoint now →
+                    </button>
+                  </div>
+                )}
                 {showLive && playerFixture && userFixtureSimInput && (
                   <Button
                     variant={liveIsPrimary ? 'default' : 'secondary'}
                     onClick={handlePlayLive}
-                    disabled={!isMatchDay}
-                    title={!isMatchDay ? `Match day not yet reached (${earliestRoundMatchDate})` : undefined}
+                    disabled={!canSimulate}
+                    title={simTitle}
                     className="flex items-center gap-2"
                   >
                     <Eye className="h-4 w-4" />
@@ -900,8 +957,8 @@ export function MatchDayPage() {
                   <Button
                     variant={liveIsPrimary ? 'secondary' : 'default'}
                     onClick={handleSimRound}
-                    disabled={!isMatchDay}
-                    title={!isMatchDay ? `Match day not yet reached (${earliestRoundMatchDate})` : undefined}
+                    disabled={!canSimulate}
+                    title={simTitle}
                     className="flex items-center gap-2"
                   >
                     <Play className="h-4 w-4" />
@@ -1405,38 +1462,42 @@ export function MatchDayPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Win Probability</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span>{homeClub?.abbreviation}</span>
-                  <span className="font-semibold">{previewData.winProb.home}%</span>
+          <div className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Win Probability</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span>{homeClub?.abbreviation}</span>
+                    <span className="font-semibold">{previewData.winProb.home}%</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-muted overflow-hidden">
+                    <div className="h-full bg-primary" style={{ width: `${previewData.winProb.home}%` }} />
+                  </div>
                 </div>
-                <div className="h-2 rounded-full bg-muted overflow-hidden">
-                  <div className="h-full bg-primary" style={{ width: `${previewData.winProb.home}%` }} />
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span>{awayClub?.abbreviation}</span>
+                    <span className="font-semibold">{previewData.winProb.away}%</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-muted overflow-hidden">
+                    <div className="h-full bg-secondary" style={{ width: `${previewData.winProb.away}%` }} />
+                  </div>
                 </div>
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span>{awayClub?.abbreviation}</span>
-                  <span className="font-semibold">{previewData.winProb.away}%</span>
+                <div className="rounded border p-2 text-xs text-muted-foreground">
+                  Model factors: ladder points/percentage, recent form, squad strength, and home-ground edge.
                 </div>
-                <div className="h-2 rounded-full bg-muted overflow-hidden">
-                  <div className="h-full bg-secondary" style={{ width: `${previewData.winProb.away}%` }} />
+                <div className="rounded border p-2 text-xs">
+                  <div className="flex justify-between"><span>{homeClub?.abbreviation} strength</span><span>{previewData.homeStrength.toFixed(1)}</span></div>
+                  <div className="flex justify-between"><span>{awayClub?.abbreviation} strength</span><span>{previewData.awayStrength.toFixed(1)}</span></div>
                 </div>
-              </div>
-              <div className="rounded border p-2 text-xs text-muted-foreground">
-                Model factors: ladder points/percentage, recent form, squad strength, and home-ground edge.
-              </div>
-              <div className="rounded border p-2 text-xs">
-                <div className="flex justify-between"><span>{homeClub?.abbreviation} strength</span><span>{previewData.homeStrength.toFixed(1)}</span></div>
-                <div className="flex justify-between"><span>{awayClub?.abbreviation} strength</span><span>{previewData.awayStrength.toFixed(1)}</span></div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+
+            <MatchConditionsCard weather={previewData.weather} venueData={previewData.venueData} />
+          </div>
         </div>
       )}
 
@@ -1481,6 +1542,8 @@ function MatchResultView({
   const homeClub = clubs[match.homeClubId]
   const [showCommentary, setShowCommentary] = useState(false)
 
+  const userClub = clubs[playerClubId]
+
   return (
     <div className="space-y-4">
       <PostMatchBoxScore
@@ -1489,6 +1552,13 @@ function MatchResultView({
         players={players}
         playerClubId={playerClubId}
       />
+
+      {result.trainingImpactSummary && (
+        <TrainingImpactCard
+          summary={result.trainingImpactSummary}
+          clubName={userClub?.abbreviation}
+        />
+      )}
 
       {result.playByPlay && result.playByPlay.length > 0 && (
         <>
@@ -1520,5 +1590,171 @@ function MatchResultView({
         </>
       )}
     </div>
+  )
+}
+
+// ── Match Conditions Card ─────────────────────────────────────────────────────
+
+const WEATHER_META: Record<string, {
+  label: string
+  icon: React.ElementType
+  color: string
+  bg: string
+  impacts: string[]
+}> = {
+  clear:  {
+    label: 'Clear',
+    icon: Sun,
+    color: 'text-yellow-400',
+    bg: 'bg-yellow-400/10',
+    impacts: ['Ideal conditions', 'Full disposal & marking rates', 'Set shots rewarded'],
+  },
+  windy:  {
+    label: 'Windy',
+    icon: Wind,
+    color: 'text-sky-400',
+    bg: 'bg-sky-400/10',
+    impacts: ['Marking more difficult', 'Kick accuracy reduced', 'More turnovers expected'],
+  },
+  wet:    {
+    label: 'Wet',
+    icon: CloudRain,
+    color: 'text-blue-400',
+    bg: 'bg-blue-400/10',
+    impacts: ['Slippery conditions', 'Low accuracy & high turnovers', 'Contested play favoured'],
+  },
+  hot:    {
+    label: 'Hot',
+    icon: Thermometer,
+    color: 'text-orange-400',
+    bg: 'bg-orange-400/10',
+    impacts: ['Fatigue factor elevated', 'Disposal count may dip', 'Fit squads gain edge'],
+  },
+  humid:  {
+    label: 'Humid',
+    icon: Droplets,
+    color: 'text-teal-400',
+    bg: 'bg-teal-400/10',
+    impacts: ['Sticky ball, kicking affected', 'Higher contested rate', 'Stamina more critical'],
+  },
+}
+
+const GROUND_META: Record<string, { label: string; desc: string }> = {
+  firm:  { label: 'Firm',  desc: 'Fast surface, true bounce' },
+  dewy:  { label: 'Dewy',  desc: 'Slippery underfoot, night-game feel' },
+  soft:  { label: 'Soft',  desc: 'Slower game, harder running' },
+  heavy: { label: 'Heavy', desc: 'Saturated ground, physicality wins' },
+  muddy: { label: 'Muddy', desc: 'Worst conditions — handball-first football' },
+}
+
+function MatchConditionsCard({
+  weather,
+  venueData,
+}: {
+  weather: WeatherModifiers
+  venueData: Venue | undefined
+}) {
+  const wMeta = WEATHER_META[weather.condition] ?? WEATHER_META.clear
+  const gMeta = GROUND_META[weather.groundCondition] ?? GROUND_META.firm
+  const WeatherIcon = wMeta.icon
+
+  const scoringNote =
+    venueData && Math.abs(venueData.scoringCoefficient - 1) > 0.04
+      ? venueData.scoringCoefficient > 1
+        ? `Compact ground — shots convert well (+${Math.round((venueData.scoringCoefficient - 1) * 100)}%)`
+        : `Open ground — conversion harder (${Math.round((venueData.scoringCoefficient - 1) * 100)}%)`
+      : null
+
+  const kickNote =
+    venueData && Math.abs(venueData.kickToHandballRatio - 1) > 0.07
+      ? venueData.kickToHandballRatio > 1
+        ? 'Wide corridors reward long kicking'
+        : 'Compact shape drives handball game'
+      : null
+
+  const disposalNote =
+    venueData && Math.abs(venueData.disposalCoefficient - 1) > 0.04
+      ? venueData.disposalCoefficient > 1
+        ? `High-disposal ground (+${Math.round((venueData.disposalCoefficient - 1) * 100)}%)`
+        : `Low-disposal ground (${Math.round((venueData.disposalCoefficient - 1) * 100)}%)`
+      : null
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <WeatherIcon className={`h-4 w-4 ${wMeta.color}`} />
+          Match Conditions
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-xs">
+        {/* Weather + Ground badges */}
+        <div className="flex flex-wrap gap-2">
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium ${wMeta.bg} ${wMeta.color}`}>
+            <WeatherIcon className="h-3 w-3" />
+            {wMeta.label}
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 font-medium text-muted-foreground">
+            {gMeta.label} ground
+          </span>
+        </div>
+
+        {/* Ground description */}
+        <p className="text-muted-foreground">{gMeta.desc}</p>
+
+        {/* Gameplay impacts from weather */}
+        <div className="space-y-1">
+          {wMeta.impacts.map((imp) => (
+            <div key={imp} className="flex items-start gap-1.5 text-muted-foreground">
+              <span className={`mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full ${wMeta.color.replace('text-', 'bg-')}`} />
+              {imp}
+            </div>
+          ))}
+        </div>
+
+        {/* Multiplier bars for non-clear weather */}
+        {weather.condition !== 'clear' && (
+          <div className="space-y-1.5 rounded border px-2.5 py-2">
+            {[
+              { label: 'Mark rate',    value: weather.markMult },
+              { label: 'Accuracy',     value: weather.accuracyMult },
+              { label: 'Kick efficiency', value: weather.kickingEfficiencyMult },
+              { label: 'Disposals',    value: weather.possessionMult },
+            ].map(({ label, value }) => {
+              const pct = Math.round((value - 1) * 100)
+              return (
+                <div key={label} className="flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground w-28 shrink-0">{label}</span>
+                  <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${value < 1 ? 'bg-red-500' : 'bg-emerald-500'}`}
+                      style={{ width: `${Math.min(100, Math.abs(pct) * 5 + 5)}%`, marginLeft: value < 1 ? 'auto' : 0 }}
+                    />
+                  </div>
+                  <span className={`w-10 text-right font-mono ${pct < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                    {pct >= 0 ? '+' : ''}{pct}%
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Ground characteristics */}
+        {(scoringNote || kickNote || disposalNote || venueData?.dimensions) && (
+          <div className="space-y-1 rounded border px-2.5 py-2 text-muted-foreground">
+            {venueData?.dimensions && (
+              <div className="flex items-center gap-1.5">
+                <Ruler className="h-3 w-3 shrink-0" />
+                {venueData.dimensions.length}m × {venueData.dimensions.width}m
+              </div>
+            )}
+            {scoringNote  && <div className="flex items-start gap-1.5"><span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-500" />{scoringNote}</div>}
+            {kickNote     && <div className="flex items-start gap-1.5"><span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-500" />{kickNote}</div>}
+            {disposalNote && <div className="flex items-start gap-1.5"><span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-500" />{disposalNote}</div>}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }

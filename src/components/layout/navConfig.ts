@@ -9,6 +9,7 @@ import {
   Globe,
   BookOpen,
   Shirt,
+  Trophy,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -16,6 +17,12 @@ export interface NavItem {
   to: string
   label: string
   icon?: LucideIcon
+  /** Hide this item once the season reaches this round number (inclusive). */
+  hideAfterRound?: number
+  /** Only show this item when viewing the player's own club. */
+  requiresOwnClub?: boolean
+  /** Show an attention dot when relevant (e.g. leadershipPending). */
+  badge?: boolean
 }
 
 export interface NavGroup {
@@ -37,12 +44,13 @@ export const navGroups: NavGroup[] = [
     label: 'Team',
     icon: Users,
     defaultTo: '/squad',
-    matchPaths: ['/squad', '/lineup', '/gameplan', '/training', '/injury-report', '/jumper-management', '/compare'],
+    matchPaths: ['/squad', '/lineup', '/gameplan', '/training', '/injury-report', '/jumper-management', '/compare', '/leadership', '/preseason-leadership'],
     items: [
       { to: '/squad', label: 'Squad' },
+      { to: '/leadership', label: 'Leadership', requiresOwnClub: true, badge: true },
       { to: '/lineup', label: 'Lineup' },
-      { to: '/gameplan', label: 'Gameplan' },
-      { to: '/training', label: 'Training' },
+      { to: '/gameplan', label: 'Gameplan', requiresOwnClub: true },
+      { to: '/training', label: 'Training', requiresOwnClub: true },
       { to: '/injury-report', label: 'Injuries' },
       { to: '/compare', label: 'Compare' },
       { to: '/jumper-management', label: 'Jumper Numbers' },
@@ -76,7 +84,7 @@ export const navGroups: NavGroup[] = [
       { to: '/ladder', label: 'Ladder' },
       { to: '/calendar', label: 'Calendar' },
       { to: '/tribunal', label: 'Tribunal' },
-      { to: '/preseason-preview', label: 'Season Preview' },
+      { to: '/preseason-preview', label: 'Season Preview', hideAfterRound: 2 },
       { to: '/offseason', label: 'Offseason' },
       { to: '/betting', label: 'Betting' },
       { to: '/state-of-origin', label: 'State of Origin' },
@@ -116,7 +124,7 @@ export const navGroups: NavGroup[] = [
     label: 'World',
     icon: Globe,
     defaultTo: '/world-hub',
-    matchPaths: ['/world-hub', '/league', '/state-leagues', '/development-report', '/youth-pathway', '/expansion'],
+    matchPaths: ['/world-hub', '/league', '/state-leagues', '/development-report', '/youth-pathway', '/expansion', '/coaches'],
     items: [
       { to: '/world-hub', label: 'Hub' },
       { to: '/league', label: 'League' },
@@ -124,6 +132,7 @@ export const navGroups: NavGroup[] = [
       { to: '/youth-pathway', label: 'Youth Pathway' },
       { to: '/development-report', label: 'Dev Report' },
       { to: '/expansion', label: 'Expansion' },
+      { to: '/coaches', label: 'Coaches' },
     ],
   },
   {
@@ -131,12 +140,13 @@ export const navGroups: NavGroup[] = [
     label: 'History',
     icon: BookOpen,
     defaultTo: '/records',
-    matchPaths: ['/records', '/history', '/awards-history', '/all-australian', '/rules', '/glossary'],
+    matchPaths: ['/records', '/history', '/awards-history', '/all-australian', '/rules', '/glossary', '/legacy'],
     items: [
       { to: '/records', label: 'Records' },
       { to: '/history', label: 'History' },
       { to: '/awards-history', label: 'Awards History' },
       { to: '/all-australian/squad', label: 'AA Squad' },
+      { to: '/legacy', label: 'Legacy & Dynasty', icon: Trophy },
       { to: '/rules', label: 'Rulebook' },
       { to: '/glossary', label: 'Glossary' },
     ],

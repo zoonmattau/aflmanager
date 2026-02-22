@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { ArrowLeft, ArrowLeftRight, Heart, Zap, TrendingUp, Shield, AlertTriangle, Trophy, Info } from 'lucide-react'
+import { ArrowLeft, ArrowLeftRight, AlertTriangle, Trophy, Info, Shield, TrendingUp, ArrowUp } from 'lucide-react'
 import { FieldSvg } from '@/components/lineup/FieldSvg'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { Player, PlayerJumperPreferenceLevel, PlayerPositionType, PlayerTrainingFocus } from '@/types/player'
@@ -17,7 +17,7 @@ import {
 import { computeProjectionContext } from '@/lib/trainingProjection'
 import { TrainingProjectionPanel } from '@/components/training/TrainingProjectionPanel'
 import { getPlayerEligiblePositionTypes } from '@/engine/player/positionEligibility'
-import { getOverallRating, getPlayerStarRating } from '@/engine/player/playerRating'
+import { getOverallRating, getPlayerStarRating, getPlayerPositionRating } from '@/engine/player/playerRating'
 import { PlayerStarRating } from '@/components/player/PlayerStarRating'
 import { getPositionBadgeClass, getPositionBadgeStrongClass } from '@/lib/positionColor'
 import { ShortlistAssignMenu } from '@/components/shortlists/ShortlistManager'
@@ -26,7 +26,14 @@ import { matchRatingColorClass } from '@/engine/match/matchRatings'
 import { getPlayerRecentGames } from '@/lib/formGuide'
 import { getTotalGamesMissed, getRecurringBodyRegions, bodyRegionLabel, getInjuryRiskLevel, injuryRiskDisplay } from '@/lib/injuryRisk'
 import { FormDots } from '@/components/player/FormDots'
+import { MomentsFeed } from '@/components/player/MomentsFeed'
 import { isPlayerRFA } from '@/engine/contracts/freeAgency'
+import { cn } from '@/lib/utils'
+import { calcDisposalEfficiency, calcKickingAccuracy, calcContestedPossessionPct, calcKickToHandballRatio, fmtPct, fmtKHRatio } from '@/lib/efficiencyStats'
+import { computePlayerArc, ARC_META } from '@/engine/player/storyArc'
+import { computeAllTrends } from '@/engine/player/trendEngine'
+import type { AttributeTrendData } from '@/engine/player/trendEngine'
+import { AttributeTrendBadge } from '@/components/player/AttributeTrendBadge'
 
 function moraleLabel(morale: number): string {
   if (morale >= 90) return 'Ecstatic'
@@ -60,66 +67,37 @@ function getJumperPreferenceMoraleImpact(player: Player): number {
 
 // Landscape coordinates: new_left = 100 - portrait_top, new_top = portrait_left
 // (FB defending on left, FF attacking on right)
+// FB defending on left, FF attacking on right
 const FIELD_POSITION_COORDS: Record<PlayerPositionType, { x: number; y: number }> = {
-  FB:  { x: 92.1, y: 50.0 },
-  BP:  { x: 86.5, y: 31.5 },
-  HBF: { x: 74.3, y: 76.9 },
-  CHB: { x: 74.3, y: 50.0 },
+  FB:  { x:  7.9, y: 50.0 },
+  BP:  { x: 13.5, y: 31.5 },
+  HBF: { x: 25.7, y: 76.9 },
+  CHB: { x: 25.7, y: 50.0 },
   W:   { x: 50.0, y: 15.7 },
-  IM:  { x: 56.0, y: 38.5 },
+  IM:  { x: 44.0, y: 38.5 },
   OM:  { x: 50.0, y: 84.3 },
   RK:  { x: 50.0, y: 50.0 },
-  HFF: { x: 25.7, y: 23.1 },
-  CHF: { x: 25.7, y: 50.0 },
-  FP:  { x: 13.5, y: 68.5 },
-  FF:  { x:  7.9, y: 50.0 },
+  HFF: { x: 74.3, y: 23.1 },
+  CHF: { x: 74.3, y: 50.0 },
+  FP:  { x: 86.5, y: 68.5 },
+  FF:  { x: 92.1, y: 50.0 },
 }
 
-function PositionHeatMapCard({ player }: { player: Player }) {
-  const secondary = new Set(player.position.secondary)
-  const eligible = new Set<PlayerPositionType>(
-    getPlayerEligiblePositionTypes(player, { includeRated: false }),
-  )
-
-  function getChipStyle(pos: PlayerPositionType): string {
-    const base = getPositionBadgeStrongClass(pos)
-    if (pos === player.position.primary) return `${base} ring-2 ring-white`
-    if (secondary.has(pos)) return base
-    return `${base} opacity-70`
-  }
-
+function SidebarStatusRow({ label, value, sub, inverted }: { label: string; value: number; sub?: string; inverted?: boolean }) {
+  const eff = inverted ? 100 - value : value
   return (
-    <Card>
-      <CardHeader className="py-3">
-        <CardTitle className="text-sm">Position Heat Map</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="mx-auto w-full max-w-[368px] aspect-[35/27] relative">
-          <FieldSvg idPrefix="player-heatmap" landscape />
-          {(Object.keys(FIELD_POSITION_COORDS) as PlayerPositionType[])
-            .filter((pos) => eligible.has(pos))
-            .map((pos) => {
-              const coords = FIELD_POSITION_COORDS[pos]
-              return (
-                <div
-                  key={pos}
-                  className={`absolute -translate-x-1/2 -translate-y-1/2 rounded border px-2 py-0.5 text-[10px] font-bold tracking-wide shadow ${getChipStyle(pos)}`}
-                  style={{ left: `${coords.x}%`, top: `${coords.y}%` }}
-                >
-                  {pos}
-                </div>
-              )
-            })}
+    <div className="space-y-0.5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <div className="flex items-center gap-1.5">
+          {sub && <span className="text-[10px] text-muted-foreground">{sub}</span>}
+          <span className={cn('text-xs font-mono font-bold w-6 text-right', attrColor(eff))}>{value}</span>
         </div>
-
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className={`rounded border px-2 py-0.5 ${getPositionBadgeClass('DEF')}`}>Defenders</span>
-          <span className={`rounded border px-2 py-0.5 ${getPositionBadgeClass('MID')}`}>Midfielders</span>
-          <span className={`rounded border px-2 py-0.5 ${getPositionBadgeClass('FWD')}`}>Forwards</span>
-          <span className={`rounded border px-2 py-0.5 ${getPositionBadgeClass('RK')}`}>Rucks</span>
-        </div>
-      </CardContent>
-    </Card>
+      </div>
+      <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+        <div className={cn('h-full rounded-full', attrBgColor(eff))} style={{ width: `${value}%` }} />
+      </div>
+    </div>
   )
 }
 
@@ -136,6 +114,8 @@ export function PlayerProfilePage() {
   const brownlowTracker = useGameStore((s) => s.brownlowTracker)
   const playerClubId = useGameStore((s) => s.playerClubId)
   const phase = useGameStore((s) => s.phase)
+  const commissionerMode = useGameStore((s) => s.settings.commissionerMode)
+  const currentDate = useGameStore((s) => s.currentDate)
   const offseasonState = useGameStore((s) => s.offseasonState)
   const tradeBlock = useGameStore((s) => s.tradeBlock)
   const startContractNegotiation = useGameStore((s) => s.startContractNegotiation)
@@ -146,6 +126,7 @@ export function PlayerProfilePage() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [actionSuccess, setActionSuccess] = useState<string | null>(null)
   const [previewFocus, setPreviewFocus] = useState<PlayerTrainingFocus | null | '__current__'>('__current__')
+  const [trendWindow, setTrendWindow] = useState<1 | 2 | 3>(1)
   const setPlayerTrainingFocus = useGameStore((s) => s.setPlayerTrainingFocus)
 
   const playerId = useMemo(() => {
@@ -170,12 +151,40 @@ export function PlayerProfilePage() {
   const hasAnyPlayers = useMemo(() => Object.keys(players).length > 0, [players])
   const player = playerId ? players[playerId] : null
 
+  // Projection context (coaching + facilities for the player's club) — must be
+  // before any early returns to satisfy Rules of Hooks
+  const projCtx = useMemo(() => {
+    if (!player) return null
+    const playerClub = clubs[player.clubId]
+    if (!playerClub) return null
+    const clubStaff = Object.values(staff).filter((s) => s.clubId === player.clubId)
+    return computeProjectionContext(playerClub, clubStaff)
+  }, [clubs, staff, player])
+
+  // Story arc — must be before early returns to satisfy Rules of Hooks
+  const storyArc = useMemo(() => {
+    if (!player) return null
+    const playerClub = clubs[player.clubId]
+    const leadership = playerClub?.leadership
+    const isLeader = !!(
+      leadership?.captainId === player.id ||
+      leadership?.viceCaptainId === player.id ||
+      leadership?.leadershipGroupIds?.includes(player.id)
+    )
+    return computePlayerArc(player, { isLeader, currentDate })
+  }, [player, clubs, currentDate])
+
+  // Attribute trends (historical + projected) — all computed upfront so badges render inline
+  const allTrends = useMemo(
+    () => (player ? computeAllTrends(player, currentYear, trendWindow) : null),
+    [player, currentYear, trendWindow],
+  )
+
   // Last 10 games for this player
   const recentGames = useMemo(
     () => (playerId ? getPlayerRecentGames(playerId, matchResults, 10) : []),
     [playerId, matchResults],
   )
-
 
   // Find draft info from history
   const draftInfo = useMemo(() => {
@@ -298,13 +307,6 @@ export function PlayerProfilePage() {
   const isUserClubPlayer = player.clubId === playerClubId
   const tradeListing = tradeBlock.listings[player.id]
 
-  // Projection context (coaching + facilities for the player's club)
-  const projCtx = useMemo(() => {
-    const playerClub = clubs[player.clubId]
-    if (!playerClub) return null
-    const clubStaff = Object.values(staff).filter((s) => s.clubId === player.clubId)
-    return computeProjectionContext(playerClub, clubStaff)
-  }, [clubs, staff, player.clubId])
   const inDelistingsPhase = phase === 'offseason' && offseasonState?.currentPhase === 'delistings'
 
   function setSuccess(message: string) {
@@ -353,858 +355,1158 @@ export function PlayerProfilePage() {
     setSuccess(`${currentPlayer.firstName} ${currentPlayer.lastName} has been delisted.`)
   }
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <div
-          className="h-14 w-14 rounded-full flex items-center justify-center text-white font-bold text-xl"
-          style={{ backgroundColor: club?.colors.primary ?? '#666' }}
-        >
-          {player.jerseyNumber}
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold">
-            {player.firstName} {player.lastName}
-          </h1>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>{club?.name}</span>
-            <span>&middot;</span>
-            <Badge variant="outline" className={getPositionBadgeClass(player.position.primary)}>{player.position.primary}</Badge>
-            {alternatePositions.map((pos) => (
-              <Badge
-                key={pos}
-                variant="outline"
-                className={`text-xs ${getPositionBadgeClass(pos)} ${secondaryPositions.has(pos) ? '' : 'opacity-85'}`}
-              >
-                {pos}
-              </Badge>
-            ))}
-            <span>&middot;</span>
-            <span>Age {player.age}</span>
-            <span>&middot;</span>
-            <span>{player.height}cm / {player.weight}kg</span>
-            <span>&middot;</span>
-            {(player.suspension?.weeksRemaining ?? 0) > 0 ? (
-              <Badge variant="outline" className="text-[10px] border-orange-500/30 bg-orange-500/15 text-orange-700">
-                Suspended ({player.suspension?.weeksRemaining ?? 0}w)
-              </Badge>
-            ) : player.injury ? (
-              <Badge variant="outline" className="text-[10px] border-red-500/30 bg-red-500/15 text-red-600">
-                {player.injury.type} ({player.injury.weeksRemaining}w)
-              </Badge>
-            ) : (
-              <Badge variant="outline" className="text-[10px] border-green-500/30 bg-green-500/15 text-green-600">
-                Fit
-              </Badge>
-            )}
-          </div>
-        </div>
-        <div className="ml-auto flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={() => navigate(`/compare/${player.id}`)}>
-            <ArrowLeftRight className="mr-1.5 h-3.5 w-3.5" /> Compare
-          </Button>
-          <div className="text-right">
-            <div className="text-3xl font-bold">{overall}</div>
-            <PlayerStarRating stars={getPlayerStarRating(player, overall)} player={player} overall={overall} className="justify-end" />
-            <p className="text-xs text-muted-foreground">Overall</p>
-          </div>
-        </div>
-      </div>
+  // RFA matching rights
+  const rfaMatchingRight = offseasonState?.rfaMatchingRights?.find(
+    (r) => r.playerId === player.id && r.status === 'pending'
+  )
 
-      {/* Status gauges */}
-      <div className="grid gap-4 md:grid-cols-5">
-        <StatusCard icon={Heart} label="Morale" value={player.morale} sub={moraleLabel(player.morale)} />
-        <StatusCard icon={Zap} label="Fitness" value={player.fitness} />
-        <StatusCard icon={TrendingUp} label="Form" value={player.form} />
-        <StatusCard icon={Shield} label="Fatigue" value={player.fatigue} inverted />
-        {player.injury ? (
-          <Card className="border-red-500/50">
-            <CardContent className="py-3 text-center">
-              <AlertTriangle className="mx-auto h-5 w-5 text-red-500 mb-1" />
-              <p className="text-sm font-semibold text-red-500">{player.injury.type}</p>
-              <p className="text-xs text-muted-foreground">{player.injury.weeksRemaining} weeks</p>
-              {player.injury.severity && (
-                <p className="text-[11px] text-muted-foreground capitalize">
-                  {player.injury.severity} {player.injury.recurring ? '• recurring' : ''}
-                </p>
+  // FA status
+  const faStatusBadge = player.contract.yearsRemaining > 0
+    ? <Badge variant="outline" className="text-[10px]">Under Contract</Badge>
+    : isPlayerRFA(player, currentYear)
+      ? <Badge variant="secondary" className="text-[10px]">RFA</Badge>
+      : <Badge variant="outline" className="text-[10px]">UFA</Badge>
+
+  // Inline field heat map helpers
+  const eligiblePositions = new Set<PlayerPositionType>(
+    getPlayerEligiblePositionTypes(player, { includeRated: false }),
+  )
+
+  function getChipStyle(pos: PlayerPositionType): string {
+    const base = getPositionBadgeStrongClass(pos)
+    if (pos === player.position.primary) return `${base} ring-2 ring-white`
+    if (secondaryPositions.has(pos)) return base
+    return `${base} opacity-70`
+  }
+
+  // Key stats for overview
+  const gp = ss.gamesPlayed
+
+  // Form trend computation
+  const formRecent5 = (player.matchRatingHistory ?? []).slice(-5)
+  const formAvg5 = formRecent5.length > 0 ? formRecent5.reduce((a, b) => a + b, 0) / formRecent5.length : 0
+  const formTrendLabel = formAvg5 >= 8.5 ? 'On Fire' : formAvg5 >= 7.0 ? 'Good Form' : formAvg5 >= 5.5 ? 'Steady' : 'Poor Form'
+  const formStripCls = formAvg5 >= 8.5
+    ? 'border-green-500/40 bg-green-500/10 text-green-600 dark:text-green-400'
+    : formAvg5 >= 7.0
+      ? 'border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-400'
+      : formAvg5 >= 5.5
+        ? 'border-yellow-500/40 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
+        : 'border-red-500/40 bg-red-500/10 text-red-500 dark:text-red-400'
+
+  return (
+    <div className="flex items-start gap-0">
+      {/* ── SIDEBAR ────────────────────────────────────────────────────── */}
+      <div className="w-60 shrink-0 border-r border-border pr-4 space-y-4">
+
+        {/* Club color strip */}
+        <div className="h-[3px] rounded-full" style={{ backgroundColor: club?.colors.primary ?? '#666' }} />
+
+        {/* Back + Compare */}
+        <div className="flex items-center justify-between pt-1">
+          <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => navigate(-1)}>
+            <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Back
+          </Button>
+          <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => navigate(`/compare/${player.id}`)}>
+            <ArrowLeftRight className="h-3 w-3 mr-1" /> Compare
+          </Button>
+        </div>
+
+        {/* Jersey + Name + Club */}
+        <div className="flex items-center gap-3">
+          <div
+            className="h-14 w-14 shrink-0 rounded-full flex items-center justify-center text-white font-bold text-xl"
+            style={{ backgroundColor: club?.colors.primary ?? '#666' }}
+          >
+            {player.jerseyNumber}
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-base font-bold leading-tight truncate">
+              {player.firstName} {player.lastName}
+            </h1>
+            <p className="text-xs text-muted-foreground truncate">{club?.name}</p>
+          </div>
+        </div>
+
+        {/* Position badges */}
+        <div className="flex flex-wrap gap-1.5">
+          <Badge variant="outline" className={cn('text-xs', getPositionBadgeClass(player.position.primary))}>
+            {player.position.primary}
+          </Badge>
+          {alternatePositions.map((pos) => (
+            <Badge
+              key={pos}
+              variant="outline"
+              className={cn('text-xs', getPositionBadgeClass(pos), !secondaryPositions.has(pos) && 'opacity-75')}
+            >
+              {pos}
+            </Badge>
+          ))}
+        </div>
+
+        {/* Age / physical / home state */}
+        <p className="text-xs text-muted-foreground">
+          Age {player.age} &middot; {player.height}cm / {player.weight}kg
+          {player.homeState ? ` \u00b7 ${player.homeState}` : ''}
+        </p>
+
+        {/* Overall + Stars */}
+        <div className="flex items-center gap-3">
+          <span className="text-5xl font-black tabular-nums">{overall}</span>
+          <div>
+            <PlayerStarRating stars={getPlayerStarRating(player, overall)} player={player} overall={overall} />
+            <p className="text-[10px] text-muted-foreground mt-0.5">Overall</p>
+          </div>
+        </div>
+
+        {/* Story arc badge */}
+        {storyArc && (() => {
+          const meta = ARC_META[storyArc.arc]
+          return (
+            <div className="rounded-lg border border-border bg-muted/40 p-2.5 space-y-1">
+              <div className="flex items-center gap-1.5">
+                <span className={`text-[10px] font-semibold uppercase tracking-wide ${meta.colour}`}>
+                  {meta.icon} {meta.label}
+                </span>
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-snug">{storyArc.blurb}</p>
+            </div>
+          )
+        })()}
+
+        {/* Status rows */}
+        <div className="space-y-1.5">
+          <SidebarStatusRow label="Morale" value={player.morale} sub={moraleLabel(player.morale)} />
+          <SidebarStatusRow label="Fitness" value={player.fitness} />
+          <SidebarStatusRow label="Form" value={player.form} />
+          <SidebarStatusRow label="Fatigue" value={player.fatigue} inverted />
+        </div>
+
+        {/* Contract panel */}
+        <div className="rounded-lg border border-border p-2.5 space-y-1.5">
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Contract</p>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm font-mono font-semibold">
+              ${(player.contract.aav / 1000).toFixed(0)}k / yr
+            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">{player.contract.yearsRemaining}yr</span>
+              {faStatusBadge}
+            </div>
+          </div>
+          {player.contract.yearByYear.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {player.contract.yearByYear.map((y, i) => (
+                <span
+                  key={i}
+                  className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-mono tabular-nums"
+                >
+                  ${(y / 1000).toFixed(0)}k
+                </span>
+              ))}
+            </div>
+          )}
+          {rfaMatchingRight && (
+            <div className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[10px]">
+              <p className="font-medium text-amber-700 dark:text-amber-400">Matching Rights Pending</p>
+              <p className="text-muted-foreground mt-0.5">
+                {clubs[rfaMatchingRight.holdingClubId]?.name ?? rfaMatchingRight.holdingClubId} holds rights on a {rfaMatchingRight.years}-yr offer
+                from {clubs[rfaMatchingRight.offeringClubId]?.name ?? rfaMatchingRight.offeringClubId} at ${(rfaMatchingRight.aav / 1000).toFixed(0)}k/yr
+              </p>
+              {rfaMatchingRight.holdingClubId === playerClubId && (
+                <p className="text-amber-600 dark:text-amber-500 mt-0.5 font-medium">Go to Contracts → RFA Matching</p>
               )}
-              {player.injury.recoveryProgress !== undefined && (
-                <p className="text-[11px] text-muted-foreground">
-                  Recovery {Math.round(player.injury.recoveryProgress)}%
-                </p>
+            </div>
+          )}
+        </div>
+
+        {/* Quick Actions */}
+        <div className="space-y-2">
+          {isUserClubPlayer ? (
+            <>
+              <ShortlistAssignMenu targetType="player" targetId={player.id} buttonLabel="Add to Shortlist" buttonVariant="outline" buttonClassName="w-full" />
+              <Button size="sm" className="w-full" onClick={handleStartNegotiation}>
+                Negotiate Contract
+              </Button>
+              <div className="space-y-1.5">
+                <Select
+                  value={tradeListing?.availability ?? '__none__'}
+                  onValueChange={(v) => {
+                    if (v === '__none__') {
+                      clearPlayerTradeAvailability(player.id)
+                      setSuccess('Player removed from trade block.')
+                    } else {
+                      handleSetAvailability(v as 'available' | 'reluctant' | 'salary-dump')
+                    }
+                  }}
+                >
+                  <SelectTrigger className="h-8 text-xs w-full">
+                    <SelectValue placeholder="Set trade availability..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Not listed</SelectItem>
+                    <SelectItem value="available">Available</SelectItem>
+                    <SelectItem value="reluctant">Reluctant</SelectItem>
+                    <SelectItem value="salary-dump">Salary Dump</SelectItem>
+                  </SelectContent>
+                </Select>
+                {tradeListing && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="w-full text-xs h-7"
+                    onClick={() => { clearPlayerTradeAvailability(player.id); setSuccess('Player removed from trade block.') }}
+                  >
+                    Remove Trade Listing
+                  </Button>
+                )}
+              </div>
+              {inDelistingsPhase && (
+                <Button size="sm" variant="destructive" className="w-full" onClick={handleDelist}>
+                  Delist Player
+                </Button>
               )}
-            </CardContent>
-          </Card>
-        ) : (player.suspension?.weeksRemaining ?? 0) > 0 ? (
-          <Card className="border-orange-500/50">
-            <CardContent className="py-3 text-center">
-              <Shield className="mx-auto h-5 w-5 text-orange-500 mb-1" />
-              <p className="text-sm font-semibold text-orange-600">Suspended</p>
-              <p className="text-xs text-muted-foreground">{player.suspension?.weeksRemaining ?? 0} weeks remaining</p>
-              <p className="text-[11px] text-muted-foreground">{player.suspension?.reason}</p>
-            </CardContent>
-          </Card>
-        ) : (
-          <Card>
-            <CardContent className="py-3 text-center">
-              <Shield className="mx-auto h-5 w-5 text-green-500 mb-1" />
-              <p className="text-sm font-semibold text-green-500">Healthy</p>
-              <p className="text-xs text-muted-foreground">No injury</p>
-            </CardContent>
-          </Card>
+              {actionError && <p className="text-xs text-red-500">{actionError}</p>}
+              {actionSuccess && <p className="text-xs text-green-600">{actionSuccess}</p>}
+            </>
+          ) : (
+            <>
+              <ShortlistAssignMenu targetType="player" targetId={player.id} buttonLabel="Add to Shortlist" buttonVariant="outline" buttonClassName="w-full" />
+              <Button size="sm" variant="outline" className="w-full" onClick={() => navigate('/trade')}>
+                Request Trade
+              </Button>
+              <p className="text-xs text-muted-foreground text-center">Rival player — view-only</p>
+            </>
+          )}
+        </div>
+
+        {/* Bio */}
+        {player.bio && (
+          <p className="text-xs text-muted-foreground leading-relaxed">{player.bio}</p>
         )}
       </div>
 
-      {/* ── Player Bio ───────────────────────────────────────────────────── */}
-      {player.bio && (
-        <Card>
-          <CardContent className="py-3">
-            <p className="text-sm text-muted-foreground leading-relaxed">{player.bio}</p>
-          </CardContent>
-        </Card>
-      )}
+      {/* ── RIGHT PANEL ─────────────────────────────────────────────────── */}
+      <div className="flex-1 min-w-0 pl-5 space-y-4">
 
-      {/* ── Injury History Summary ───────────────────────────────────────── */}
-      {(player.injuryHistory?.length ?? 0) > 0 && (() => {
-        const totalMissed = getTotalGamesMissed(player)
-        const recurringRegions = getRecurringBodyRegions(player)
-        const riskLevel = getInjuryRiskLevel(player)
-        const { label: riskLabel, bgClass } = injuryRiskDisplay(riskLevel)
-        const recent = [...(player.injuryHistory ?? [])].reverse().slice(0, 5)
-        return (
-          <Card>
-            <CardContent className="py-3 space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-sm font-semibold">Injury History</p>
-                <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-medium ${bgClass}`}>
-                  {riskLabel}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {player.injuryHistory!.length} career injur{player.injuryHistory!.length === 1 ? 'y' : 'ies'}
-                  {totalMissed > 0 && ` · ${totalMissed} game${totalMissed !== 1 ? 's' : ''} missed`}
-                </span>
-              </div>
-
-              {recurringRegions.length > 0 && (
-                <div className="flex items-center gap-1.5 text-xs text-amber-600">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                  <span>Recurring {recurringRegions.map(bodyRegionLabel).join(' & ')} issues</span>
-                </div>
-              )}
-
-              <div className="flex flex-wrap gap-1.5">
-                {recent.map((h, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center gap-1 rounded border border-border/50 bg-muted/30 px-2 py-0.5 text-[11px]"
-                  >
-                    <span className="font-medium">{h.type}</span>
-                    <span className="text-muted-foreground capitalize">{h.severity}</span>
-                    <span className="text-muted-foreground">{h.initialWeeks}w</span>
-                    {(h.gamesMissed ?? 0) > 0 && (
-                      <span className="text-muted-foreground">{h.gamesMissed} gm</span>
-                    )}
-                    {h.recurring && (
-                      <span className="text-amber-600 font-semibold">↩</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )
-      })()}
-
-      <Card>
-        <CardHeader className="py-3">
-          <CardTitle className="text-sm">Profile Actions</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {isUserClubPlayer ? (
-            <>
-              <div className="flex flex-wrap gap-2">
-                <ShortlistAssignMenu targetType="player" targetId={player.id} buttonLabel="Add to Shortlist" buttonVariant="outline" />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" onClick={handleStartNegotiation}>Start Contract Negotiation</Button>
-                <Button size="sm" variant="outline" onClick={() => navigate('/contracts')}>Open Contracts</Button>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant={tradeListing?.availability === 'available' ? 'default' : 'outline'}
-                  onClick={() => handleSetAvailability('available')}
-                >
-                  Trade: Available
-                </Button>
-                <Button
-                  size="sm"
-                  variant={tradeListing?.availability === 'reluctant' ? 'default' : 'outline'}
-                  onClick={() => handleSetAvailability('reluctant')}
-                >
-                  Trade: Reluctant
-                </Button>
-                <Button
-                  size="sm"
-                  variant={tradeListing?.availability === 'salary-dump' ? 'default' : 'outline'}
-                  onClick={() => handleSetAvailability('salary-dump')}
-                >
-                  Trade: Salary Dump
-                </Button>
-                {tradeListing ? (
-                  <Button size="sm" variant="ghost" onClick={() => { clearPlayerTradeAvailability(player.id); setSuccess('Player removed from trade block.') }}>
-                    Remove Trade Listing
-                  </Button>
-                ) : null}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button size="sm" variant="destructive" onClick={handleDelist}>
-                  Delist Player
-                </Button>
-                <span className="text-xs text-muted-foreground">
-                  {inDelistingsPhase ? 'Delistings phase active.' : 'Delistings available only during offseason delistings.'}
-                </span>
-              </div>
-              {actionError ? <p className="text-sm text-red-500">{actionError}</p> : null}
-              {actionSuccess ? <p className="text-sm text-green-600">{actionSuccess}</p> : null}
-            </>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <ShortlistAssignMenu targetType="player" targetId={player.id} buttonLabel="Add to Shortlist" buttonVariant="outline" />
-              <p className="text-sm text-muted-foreground">Club actions are only available for players at your club.</p>
+        {/* Injury / suspension alert — prominent above tabs */}
+        {(player.suspension?.weeksRemaining ?? 0) > 0 ? (
+          <div className="rounded-md border border-orange-500/40 bg-orange-500/10 px-3 py-2.5 text-xs space-y-0.5">
+            <div className="flex items-center gap-1.5 font-semibold text-orange-600">
+              <Shield className="h-3.5 w-3.5" />
+              Suspended — {player.suspension?.weeksRemaining ?? 0}w remaining
             </div>
-          )}
-        </CardContent>
-      </Card>
+            {player.suspension?.reason && (
+              <p className="text-muted-foreground">{player.suspension.reason}</p>
+            )}
+          </div>
+        ) : player.injury ? (
+          <div className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2.5 text-xs space-y-0.5">
+            <div className="flex items-center gap-1.5 font-semibold text-red-600">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {player.injury.type} — {player.injury.weeksRemaining}w
+            </div>
+            {player.injury.severity && (
+              <p className="text-muted-foreground capitalize">
+                {player.injury.severity}{player.injury.recurring ? ' · recurring' : ''}
+                {player.injury.recoveryProgress !== undefined ? ` · ${Math.round(player.injury.recoveryProgress)}% recovered` : ''}
+              </p>
+            )}
+          </div>
+        ) : null}
 
-      <Tabs defaultValue="stats" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-2 md:grid-cols-7">
-          <TabsTrigger value="stats">Stats</TabsTrigger>
-          <TabsTrigger value="ratings">Ratings</TabsTrigger>
-          <TabsTrigger value="development">Development</TabsTrigger>
-          <TabsTrigger value="contract">Contract</TabsTrigger>
-          <TabsTrigger value="history">History</TabsTrigger>
-          <TabsTrigger value="awards">Awards</TabsTrigger>
-          <TabsTrigger value="personality">Personality</TabsTrigger>
-        </TabsList>
+        <Tabs defaultValue="overview" className="space-y-4">
+          <TabsList className="grid w-full grid-cols-4">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="attributes">Attributes</TabsTrigger>
+            <TabsTrigger value="development">Development</TabsTrigger>
+            <TabsTrigger value="history">History</TabsTrigger>
+          </TabsList>
 
-        <TabsContent value="stats" className="space-y-4">
-          {/* Last 10 games table */}
-          {recentGames.length > 0 && (
-            <Card>
-              <CardHeader className="py-3">
-                <CardTitle className="text-sm flex items-center gap-3">
-                  Last {recentGames.length} Games
-                  <FormDots ratings={player.matchRatingHistory} />
-                  {player.lastMatchRating !== undefined && (
-                    <span className={`text-base font-mono font-bold tabular-nums ${matchRatingColorClass(player.lastMatchRating)}`}>
-                      {player.lastMatchRating.toFixed(1)}
-                    </span>
-                  )}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-xs space-y-0">
-                  <div className="grid grid-cols-[3.5rem_3.5rem_2rem_3rem_2.5rem_2.5rem_2.5rem_2.5rem_2.5rem_3rem] gap-x-2 text-muted-foreground font-medium pb-1 border-b border-border/50">
-                    <span>Round</span>
-                    <span>Opp</span>
-                    <span></span>
-                    <span className="text-right">Disp</span>
-                    <span className="text-right">G</span>
-                    <span className="text-right">M</span>
-                    <span className="text-right">T</span>
-                    <span className="text-right">HO</span>
-                    <span className="text-right">CL</span>
-                    <span className="text-right">Rating</span>
+          {/* ── TAB: OVERVIEW ─────────────────────────────────────────── */}
+          <TabsContent value="overview" className="space-y-4">
+
+            {/* ── Row A: compact hero tiles ────────────────────────────── */}
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+              <div className="rounded-xl border border-border bg-card p-2.5 text-center">
+                <div className="text-2xl font-bold tabular-nums">{gp}</div>
+                <div className="text-[10px] text-muted-foreground mt-1 uppercase tracking-wide">Games</div>
+              </div>
+              {(
+                [
+                  { label: 'Disp/G',    value: gp ? ss.disposals / gp : 0 },
+                  { label: 'Goals/G',   value: gp ? ss.goals / gp     : 0 },
+                  { label: 'Marks/G',   value: gp ? ss.marks / gp     : 0 },
+                  { label: 'Tackles/G', value: gp ? ss.tackles / gp   : 0 },
+                ] as { label: string; value: number }[]
+              ).map((stat) => (
+                <div key={stat.label} className="rounded-xl border border-border bg-card p-2.5 text-center">
+                  <div className="text-2xl font-bold font-mono tabular-nums">
+                    {gp > 0 ? stat.value.toFixed(1) : '—'}
                   </div>
-                  {recentGames.map((g) => {
+                  <div className="text-[10px] text-muted-foreground mt-1 uppercase tracking-wide">{stat.label}</div>
+                </div>
+              ))}
+              <div className="rounded-xl border border-border bg-card p-2.5 text-center">
+                <div className={cn('text-2xl font-bold font-mono tabular-nums', matchRatingColorClass(player.lastMatchRating ?? 0))}>
+                  {player.lastMatchRating != null && player.lastMatchRating > 0
+                    ? player.lastMatchRating.toFixed(1)
+                    : '—'}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-1 uppercase tracking-wide">Last Rating</div>
+              </div>
+            </div>
+
+            {/* ── Row B: 3-column snapshot cards ──────────────────────── */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+
+              {/* Key Overall Stats */}
+              <Card>
+                <CardHeader className="py-2.5 px-3">
+                  <CardTitle className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Key Attributes</CardTitle>
+                </CardHeader>
+                <CardContent className="px-3 pb-3">
+                  {(() => {
+                    const catDataMap = Object.fromEntries(
+                      ATTR_CATEGORIES.map((cat) => [cat.label, cat])
+                    )
+                    const catMap = Object.fromEntries(
+                      ATTR_CATEGORIES.map((cat) => [
+                        cat.label,
+                        Math.round(cat.attrs.reduce((s, a) => s + (player.attributes[a.key] ?? 0), 0) / cat.attrs.length),
+                      ])
+                    )
+                    const groups: { label: string; cats: string[] }[] = [
+                      { label: 'Ball Skills',        cats: ['Kicking', 'Handball', 'Marking'] },
+                      { label: 'Physical',           cats: ['Physical'] },
+                      { label: 'Contest & Midfield', cats: ['Contested', 'Game Sense', 'Set Pieces'] },
+                      { label: 'Attack & Defence',   cats: ['Offensive', 'Defensive'] },
+                      { label: 'Character',          cats: ['Mental', 'Ruck'] },
+                    ]
+                    return (
+                      <TooltipProvider delayDuration={100}>
+                        <div className="space-y-3">
+                          {groups.map((group) => (
+                            <div key={group.label}>
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-foreground/70 mb-1.5">
+                                {group.label}
+                              </p>
+                              <div className="space-y-1">
+                                {group.cats.map((catLabel) => {
+                                  const avg = catMap[catLabel] ?? 0
+                                  const catData = catDataMap[catLabel]
+                                  return (
+                                    <Tooltip key={catLabel}>
+                                      <TooltipTrigger asChild>
+                                        <div className="flex items-center gap-2 cursor-pointer rounded hover:bg-muted/50 -mx-1 px-1 py-0.5 transition-colors">
+                                          <span className="w-20 shrink-0 text-[10px] text-muted-foreground">{catLabel}</span>
+                                          <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                                            <div
+                                              className={cn('h-full rounded-full', attrBgColor(avg))}
+                                              style={{ width: `${avg}%` }}
+                                            />
+                                          </div>
+                                          <span className={cn('w-6 shrink-0 text-right text-[11px] font-mono font-semibold tabular-nums', attrColor(avg))}>
+                                            {avg}
+                                          </span>
+                                        </div>
+                                      </TooltipTrigger>
+                                      {catData && (
+                                        <TooltipContent side="left" className="p-2 space-y-1 min-w-[140px]">
+                                          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">{catLabel}</p>
+                                          {catData.attrs.map(({ key, label }) => {
+                                            const val = player.attributes[key] ?? 0
+                                            return (
+                                              <div key={key} className="flex items-center justify-between gap-3">
+                                                <span className="text-xs text-muted-foreground">{label}</span>
+                                                <span className={cn('text-xs font-mono font-bold tabular-nums', attrColor(val))}>{val}</span>
+                                              </div>
+                                            )
+                                          })}
+                                        </TooltipContent>
+                                      )}
+                                    </Tooltip>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </TooltipProvider>
+                    )
+                  })()}
+                </CardContent>
+              </Card>
+
+              {/* Player Snapshot — position map */}
+              <Card>
+                <CardHeader className="py-2.5 px-3">
+                  <CardTitle className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Position Map</CardTitle>
+                </CardHeader>
+                <CardContent className="px-3 pb-3 space-y-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge variant="outline" className={cn('text-xs', getPositionBadgeClass(player.position.primary))}>
+                      {player.position.primary}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground font-mono">
+                      {getPlayerPositionRating(player, player.position.primary)} rating
+                    </span>
+                  </div>
+                  <div className="w-full aspect-[35/27] relative">
+                    <FieldSvg idPrefix="player-overview-heatmap" landscape />
+                    {(Object.keys(FIELD_POSITION_COORDS) as PlayerPositionType[])
+                      .filter((pos) => eligiblePositions.has(pos))
+                      .map((pos) => {
+                        const coords = FIELD_POSITION_COORDS[pos]
+                        const rating = player.position.ratings[pos] ?? getPlayerPositionRating(player, pos)
+                        return (
+                          <div
+                            key={pos}
+                            className={`absolute -translate-x-1/2 -translate-y-1/2 rounded border px-1 py-0.5 text-[8px] font-bold shadow leading-none ${getChipStyle(pos)}`}
+                            style={{ left: `${coords.x}%`, top: `${coords.y}%` }}
+                          >
+                            <div className="tracking-wide">{pos}</div>
+                            <div className="text-center font-mono opacity-90">{rating}</div>
+                          </div>
+                        )
+                      })}
+                  </div>
+                  <div className="flex flex-wrap gap-1 text-[10px]">
+                    <span className={`rounded border px-1.5 py-0.5 ${getPositionBadgeClass('DEF')}`}>DEF</span>
+                    <span className={`rounded border px-1.5 py-0.5 ${getPositionBadgeClass('MID')}`}>MID</span>
+                    <span className={`rounded border px-1.5 py-0.5 ${getPositionBadgeClass('FWD')}`}>FWD</span>
+                    <span className={`rounded border px-1.5 py-0.5 ${getPositionBadgeClass('RK')}`}>RK</span>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Season & Career Key Stats */}
+              <Card>
+                <CardHeader className="py-2.5 px-3">
+                  <CardTitle className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Season &amp; Career</CardTitle>
+                </CardHeader>
+                <CardContent className="px-3 pb-3">
+                  <div className="space-y-1 text-xs">
+                    <div className="grid grid-cols-3 gap-1 pb-1 border-b border-border/40">
+                      <span className="text-muted-foreground" />
+                      <span className="text-center text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Season</span>
+                      <span className="text-center text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Career</span>
+                    </div>
+                    {([
+                      { label: 'Games',    season: gp,                                         career: cs.gamesPlayed },
+                      { label: 'Disp/G',   season: gp ? ss.disposals / gp : null,              career: cs.gamesPlayed ? cs.disposals / cs.gamesPlayed : null },
+                      { label: 'Goals/G',  season: gp ? ss.goals / gp : null,                 career: cs.gamesPlayed ? cs.goals / cs.gamesPlayed : null },
+                      { label: 'Marks/G',  season: gp ? ss.marks / gp : null,                 career: cs.gamesPlayed ? cs.marks / cs.gamesPlayed : null },
+                      { label: 'Tackles/G',season: gp ? ss.tackles / gp : null,               career: cs.gamesPlayed ? cs.tackles / cs.gamesPlayed : null },
+                      { label: 'AF/G',     season: gp ? ss.aflFantasyPoints / gp : null,       career: cs.gamesPlayed ? cs.aflFantasyPoints / cs.gamesPlayed : null },
+                      { label: 'SC/G',     season: gp ? ss.superCoachPoints / gp : null,       career: cs.gamesPlayed ? cs.superCoachPoints / cs.gamesPlayed : null },
+                    ] as { label: string; season: number | null; career: number | null }[]).map(({ label, season, career }) => (
+                      <div key={label} className="grid grid-cols-3 gap-1">
+                        <span className="text-muted-foreground">{label}</span>
+                        <span className="text-center font-mono font-semibold tabular-nums">
+                          {season === null ? '—' : label === 'Games' ? season : season.toFixed(1)}
+                        </span>
+                        <span className="text-center font-mono tabular-nums text-muted-foreground">
+                          {career === null ? '—' : label === 'Games' ? career : career.toFixed(1)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+            </div>
+
+            {/* ── Career Moments feed ──────────────────────────────────── */}
+            {(player.moments && player.moments.length > 0) && (
+              <div className="space-y-2">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold px-0.5">
+                  Career Moments
+                </p>
+                <MomentsFeed moments={player.moments} clubs={clubs} />
+              </div>
+            )}
+
+            {/* ── Row C: Last 5 games ──────────────────────────────────── */}
+            {recentGames.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold px-0.5">
+                  Last 5 Games
+                </p>
+                <div className="space-y-1">
+                  {recentGames.slice(0, 5).map((g) => {
                     const opp = clubs[g.opponentClubId]
                     const rating = g.stats.matchRating
                     return (
                       <div
                         key={g.matchId}
-                        className="grid grid-cols-[3.5rem_3.5rem_2rem_3rem_2.5rem_2.5rem_2.5rem_2.5rem_2.5rem_3rem] gap-x-2 items-center py-1 border-b border-border/30 last:border-0 hover:bg-muted/30"
+                        className="flex items-center gap-3 rounded-lg border border-border/50 bg-muted/20 px-3 py-2"
                       >
-                        <span className="text-muted-foreground">
+                        <span className="w-10 shrink-0 text-xs text-muted-foreground">
                           {g.isFinal ? 'Final' : `Rd ${g.round + 1}`}
                         </span>
-                        <span className="font-medium truncate">{opp?.abbreviation ?? '???'}</span>
-                        <span>
-                          {g.won === true
-                            ? <span className="font-bold text-green-500">W</span>
-                            : g.won === false
-                              ? <span className="font-bold text-red-500">L</span>
-                              : <span className="font-bold text-zinc-500">D</span>}
+                        <span className={cn(
+                          'w-4 shrink-0 text-xs font-bold',
+                          g.won === true ? 'text-green-500' : g.won === false ? 'text-red-500' : 'text-zinc-400',
+                        )}>
+                          {g.won === true ? 'W' : g.won === false ? 'L' : 'D'}
                         </span>
-                        <span className="text-right tabular-nums font-mono">{g.stats.disposals}</span>
-                        <span className="text-right tabular-nums font-mono">{g.stats.goals}</span>
-                        <span className="text-right tabular-nums font-mono">{g.stats.marks}</span>
-                        <span className="text-right tabular-nums font-mono">{g.stats.tackles}</span>
-                        <span className="text-right tabular-nums font-mono">{g.stats.hitouts}</span>
-                        <span className="text-right tabular-nums font-mono">{g.stats.clearances}</span>
-                        <span className={`text-right tabular-nums font-mono font-bold ${matchRatingColorClass(rating)}`}>
+                        <span className="w-10 shrink-0 text-xs font-semibold">{opp?.abbreviation ?? '???'}</span>
+                        <div className="flex flex-1 gap-4">
+                          {(
+                            [
+                              { code: 'D', v: g.stats.disposals },
+                              { code: 'G', v: g.stats.goals },
+                              { code: 'M', v: g.stats.marks },
+                              { code: 'T', v: g.stats.tackles },
+                            ] as { code: string; v: number }[]
+                          ).map(({ code, v }) => (
+                            <span key={code} className="text-xs">
+                              <span className="text-muted-foreground">{code} </span>
+                              <span className="font-mono font-semibold tabular-nums">{v}</span>
+                            </span>
+                          ))}
+                        </div>
+                        <span className={cn('shrink-0 font-mono font-bold text-sm tabular-nums', matchRatingColorClass(rating ?? 0))}>
                           {rating !== undefined ? rating.toFixed(1) : '—'}
                         </span>
                       </div>
                     )
                   })}
                 </div>
-              </CardContent>
-            </Card>
-          )}
-          <div className="grid gap-4 md:grid-cols-2">
-            <Card>
-              <CardHeader className="py-3">
-                <CardTitle className="text-sm">Season Stats</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <StatsTable stats={ss} gamesPlayed={ss.gamesPlayed} />
-              </CardContent>
-            </Card>
+              </div>
+            )}
 
-            <Card>
-              <CardHeader className="py-3">
-                <CardTitle className="text-sm">Career Stats</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <StatsTable stats={cs} gamesPlayed={cs.gamesPlayed} />
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
+          </TabsContent>
 
-        <TabsContent value="ratings" className="space-y-4">
-          <PositionHeatMapCard player={player} />
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {ATTR_CATEGORIES.map((cat) => (
-              <Card key={cat.label}>
-                <CardHeader className="py-3">
-                  <CardTitle className="text-sm">{cat.label}</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-1.5">
-                  {cat.attrs.map(({ key, label }) => {
-                    const val = player.attributes[key]
-                    return (
-                      <div key={key} className="flex items-center gap-2">
-                        <span className="w-28 text-xs text-muted-foreground truncate">{label}</span>
-                        <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
-                          <div
-                            className={`h-full rounded-full ${attrBgColor(val)}`}
-                            style={{ width: `${val}%` }}
-                          />
-                        </div>
-                        <span className={`w-7 text-right text-xs font-mono font-bold ${attrColor(val)}`}>
-                          {val}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="development" className="space-y-4">
-          {projCtx ? (
-            <div className="grid gap-4 md:grid-cols-2">
-              {/* Focus selector */}
-              <Card>
-                <CardHeader className="py-3">
-                  <CardTitle className="text-sm">Development Focus</CardTitle>
-                  <CardDescription className="text-xs">
-                    {isUserClubPlayer
-                      ? 'Assign a focus to prioritise growth in specific skill areas.'
-                      : 'Preview what this player\'s development would look like under different focuses.'}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-muted-foreground font-medium">
-                      {isUserClubPlayer ? 'Assigned Focus' : 'Preview Focus'}
-                    </label>
-                    {isUserClubPlayer ? (
-                      <Select
-                        value={player.trainingFocus ?? '__none__'}
-                        onValueChange={(v) => {
-                          const nextFocus = v === '__none__' ? null : (v as PlayerTrainingFocus)
-                          setPlayerTrainingFocus(player.id, nextFocus)
-                        }}
-                      >
-                        <SelectTrigger className="h-8 text-xs">
-                          <SelectValue placeholder="Select focus..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">No assigned focus</SelectItem>
-                          {PLAYER_TRAINING_FOCUS_OPTIONS.map((option) => (
-                            <SelectItem key={option} value={option}>
-                              {PLAYER_TRAINING_FOCUS_LABELS[option]}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Select
-                        value={
-                          previewFocus === '__current__'
-                            ? (player.trainingFocus ?? '__none__')
-                            : (previewFocus ?? '__none__')
-                        }
-                        onValueChange={(v) => {
-                          setPreviewFocus(v === '__none__' ? null : (v as PlayerTrainingFocus))
-                        }}
-                      >
-                        <SelectTrigger className="h-8 text-xs">
-                          <SelectValue placeholder="Select focus to preview..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">No focus</SelectItem>
-                          {PLAYER_TRAINING_FOCUS_OPTIONS.map((option) => (
-                            <SelectItem key={option} value={option}>
-                              {PLAYER_TRAINING_FOCUS_LABELS[option]}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+          {/* ── TAB: ATTRIBUTES ───────────────────────────────────────── */}
+          <TabsContent value="attributes" className="space-y-3">
+            {/* Trend window selector + legend */}
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] text-muted-foreground">Compare to:</span>
+                {([1, 2, 3] as const).map((w) => (
+                  <button
+                    key={w}
+                    onClick={() => setTrendWindow(w)}
+                    className={cn(
+                      'px-2 py-0.5 text-[11px] rounded-full border transition-colors',
+                      trendWindow === w
+                        ? 'bg-primary text-primary-foreground border-primary'
+                        : 'border-border text-muted-foreground hover:bg-muted',
                     )}
-                  </div>
-
-                  {/* Current focus badge */}
-                  {player.trainingFocus && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">Current:</span>
-                      <Badge className="bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30 text-xs">
-                        {PLAYER_TRAINING_FOCUS_LABELS[player.trainingFocus]}
-                      </Badge>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Projection panel */}
-              <Card>
-                <CardHeader className="py-3">
-                  <CardTitle className="text-sm">Offseason Projection</CardTitle>
-                  <CardDescription className="text-xs">
-                    Expected attribute changes after one offseason cycle.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <TrainingProjectionPanel
-                    player={player}
-                    selectedFocus={
-                      isUserClubPlayer
-                        ? (player.trainingFocus ?? null)
-                        : (previewFocus === '__current__' ? (player.trainingFocus ?? null) : previewFocus)
-                    }
-                    ctx={projCtx}
-                  />
-                </CardContent>
-              </Card>
+                  >
+                    {w === 1 ? '1 season' : `${w} seasons`}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2 text-[10px] text-muted-foreground/60 ml-auto">
+                <span className="flex items-center gap-0.5 text-green-500"><TrendingUp className="h-3 w-3" /> actual change</span>
+                <span className="flex items-center gap-0.5 text-blue-400"><ArrowUp className="h-2.5 w-2.5" /><span>P</span> staff projection</span>
+              </div>
             </div>
-          ) : (
-            <Card>
-              <CardContent className="py-6 text-center text-muted-foreground text-sm">
-                Development projection unavailable — club data not found.
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
 
-        <TabsContent value="contract">
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-sm">Contract Overview</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Years Remaining</span>
-                <span className="font-medium">{player.contract.yearsRemaining}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">AAV</span>
-                <span className="font-medium">${(player.contract.aav / 1000).toFixed(0)}k</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Year-by-Year</span>
-                <span className="font-medium font-mono text-xs">
-                  {player.contract.yearByYear.map((y) => `$${(y / 1000).toFixed(0)}k`).join(', ')}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">FA Status</span>
-                {player.contract.yearsRemaining > 0 ? (
-                  <Badge variant="outline">Under Contract</Badge>
-                ) : isPlayerRFA(player, currentYear) ? (
-                  <Badge variant="secondary">Restricted FA</Badge>
-                ) : (
-                  <Badge variant="outline">Unrestricted FA</Badge>
-                )}
-              </div>
-              {(() => {
-                const matchingRight = offseasonState?.rfaMatchingRights?.find(
-                  (r) => r.playerId === player.id && r.status === 'pending'
-                )
-                if (!matchingRight) return null
-                const holdingClub = clubs[matchingRight.holdingClubId]?.name ?? matchingRight.holdingClubId
-                const offeringClub = clubs[matchingRight.offeringClubId]?.name ?? matchingRight.offeringClubId
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {ATTR_CATEGORIES.map((cat) => {
+                const catAvg = Math.round(cat.attrs.reduce((s, a) => s + (player.attributes[a.key] ?? 0), 0) / cat.attrs.length)
                 return (
-                  <div className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs">
-                    <p className="font-medium text-amber-700 dark:text-amber-400">Matching Rights Pending</p>
-                    <p className="text-muted-foreground mt-0.5">
-                      {holdingClub} holds matching rights on a {matchingRight.years}-yr offer from {offeringClub} at ${(matchingRight.aav / 1000).toFixed(0)}k/yr
-                    </p>
-                    {matchingRight.holdingClubId === playerClubId && (
-                      <p className="text-amber-600 dark:text-amber-500 mt-0.5 font-medium">
-                        Go to Contracts → RFA Matching to respond
-                      </p>
-                    )}
+                  <div key={cat.label} className="rounded-lg border border-border bg-card overflow-hidden">
+                    {/* Category header */}
+                    <div className="flex items-center justify-between px-3 py-2 border-b border-border/60 bg-muted/30">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-foreground/70">{cat.label}</p>
+                      <span className={cn('text-xs font-mono font-bold tabular-nums', attrColor(catAvg))}>{catAvg}</span>
+                    </div>
+                    {/* Attribute rows */}
+                    <div className="px-3 py-2 space-y-2">
+                      {cat.attrs.map(({ key, label }) => {
+                        const val = player.attributes[key] ?? 0
+                        const trendData: AttributeTrendData | undefined = allTrends?.[key]
+                        return (
+                          <div key={key} className="flex items-center gap-2">
+                            <span className="w-28 shrink-0 text-[11px] text-muted-foreground truncate">{label}</span>
+                            <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                              <div className={cn('h-full rounded-full transition-all', attrBgColor(val))} style={{ width: `${val}%` }} />
+                            </div>
+                            <span className={cn('w-7 shrink-0 text-right text-[11px] font-mono font-bold tabular-nums', attrColor(val))}>
+                              {val}
+                            </span>
+                            {trendData && <AttributeTrendBadge trend={trendData} />}
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
                 )
-              })()}
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">List</span>
-                <Badge variant={player.isRookie ? 'secondary' : 'default'}>
-                  {player.isRookie ? 'Rookie' : 'Senior'}
-                </Badge>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Durability</span>
-                <span className={`font-mono font-medium ${attrColor(player.hiddenAttributes.durability)}`}>
-                  {player.hiddenAttributes.durability}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Injury Proneness</span>
-                <span className={`font-mono font-medium ${attrColor(100 - player.hiddenAttributes.injuryProneness)}`}>
-                  {player.hiddenAttributes.injuryProneness}
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+              })}
 
-        <TabsContent value="history" className="space-y-4">
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-sm">Year-by-Year Stats</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              {yearByYearRows.length === 0 ? (
-                <p className="text-muted-foreground">No season history recorded yet.</p>
-              ) : (
-                yearByYearRows.map((entry) => (
-                  <div key={`${entry.year}-${entry.playerId}`} className="rounded border border-border/60 p-2">
-                    <div className="mb-1 flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold">{entry.year}</span>
-                        <Badge variant="outline">{clubs[entry.clubId]?.abbreviation ?? entry.clubId}</Badge>
-                        {entry.inProgress ? <Badge variant="secondary">In Progress</Badge> : null}
+              {/* Hidden attributes card — commish mode only */}
+              {commissionerMode && <div className="rounded-lg border border-border bg-card overflow-hidden">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-border/60 bg-muted/30">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-foreground/70">Hidden / Estimated</p>
+                </div>
+                <div className="px-3 py-2 space-y-2">
+                  {([
+                    { label: 'Durability', val: player.hiddenAttributes.durability, display: player.hiddenAttributes.durability },
+                    { label: 'Inj. Proneness', val: 100 - player.hiddenAttributes.injuryProneness, display: player.hiddenAttributes.injuryProneness },
+                    { label: 'Consistency', val: player.attributes.consistency, display: player.attributes.consistency },
+                  ] as { label: string; val: number; display: number }[]).map(({ label, val, display }) => (
+                    <div key={label} className="flex items-center gap-2">
+                      <span className="w-28 shrink-0 text-[11px] text-muted-foreground truncate">{label}</span>
+                      <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                        <div className={cn('h-full rounded-full', attrBgColor(val))} style={{ width: `${val}%` }} />
                       </div>
-                      <span className="font-mono text-xs">OVR {entry.overall}</span>
-                    </div>
-                    <div className="grid grid-cols-5 gap-2 text-xs">
-                      <span className="text-muted-foreground">GP: <span className="font-mono text-foreground">{entry.stats.gamesPlayed}</span></span>
-                      <span className="text-muted-foreground">G: <span className="font-mono text-foreground">{entry.stats.goals}</span></span>
-                      <span className="text-muted-foreground">D: <span className="font-mono text-foreground">{entry.stats.disposals}</span></span>
-                      <span className="text-muted-foreground">M: <span className="font-mono text-foreground">{entry.stats.marks}</span></span>
-                      <span className="text-muted-foreground">T: <span className="font-mono text-foreground">{entry.stats.tackles}</span></span>
-                    </div>
-                  </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-sm">Rating Progression</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              {ratingProgressionRows.length === 0 ? (
-                <p className="text-muted-foreground">No rating progression recorded yet.</p>
-              ) : (
-                ratingProgressionRows.map((entry) => (
-                  <div key={`rating-${entry.year}-${entry.playerId}`} className="flex items-center justify-between border-b border-border/40 pb-1 last:border-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{entry.year}</span>
-                      {entry.inProgress ? <Badge variant="secondary">In Progress</Badge> : null}
-                    </div>
-                    <div className="text-right">
-                      <p className="font-mono font-medium">{entry.overall}</p>
-                      <p className={`text-xs ${entry.overallDelta == null ? 'text-muted-foreground' : entry.overallDelta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                        {entry.overallDelta == null ? 'Baseline' : formatSignedDelta(entry.overallDelta)}
-                      </p>
-                    </div>
-                  </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
-
-          {(draftInfo || cs.gamesPlayed > 0) ? (
-            <Card>
-              <CardHeader className="py-3">
-                <CardTitle className="text-sm">Career</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                {draftInfo && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Draft</span>
-                    <span className="font-medium">
-                      Drafted by {clubs[draftInfo.clubId]?.name ?? draftInfo.clubId} in {draftInfo.year}, Pick #{draftInfo.pickNumber}
-                    </span>
-                  </div>
-                )}
-                {cs.gamesPlayed > 0 && (
-                  <>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Career Games</span>
-                      <span className="font-mono font-medium">{cs.gamesPlayed}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Career Goals</span>
-                      <span className="font-mono font-medium">{cs.goals}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Career Disposals</span>
-                      <span className="font-mono font-medium">{cs.disposals}</span>
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          ) : null}
-
-          {(() => {
-            const playerMilestones = (history.milestones ?? [])
-              .filter((m) => m.playerId === playerId)
-              .sort((a, b) => b.year - a.year || b.round - a.round)
-            return playerMilestones.length > 0 ? (
-              <Card>
-                <CardHeader className="py-3">
-                  <CardTitle className="text-sm">Milestones</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2 text-sm">
-                  {playerMilestones.map((m) => (
-                    <div key={m.id} className="flex items-center justify-between border-b border-border/40 pb-1 last:border-0">
-                      <div>
-                        <p className="font-medium">{m.threshold} {m.type === 'games-played' ? 'Games' : m.type === 'career-goals' ? 'Goals' : m.type === 'career-disposals' ? 'Disposals' : m.type === 'career-marks' ? 'Marks' : m.type === 'career-tackles' ? 'Tackles' : m.type}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {m.year}, Round {m.round}
-                        </p>
-                      </div>
-                      <span className="font-mono text-xs">{m.value}</span>
+                      <span className={cn('w-7 shrink-0 text-right text-[11px] font-mono font-bold tabular-nums', attrColor(val))}>
+                        {display}
+                      </span>
                     </div>
                   ))}
+                </div>
+              </div>}
+            </div>
+          </TabsContent>
+
+          {/* ── TAB: DEVELOPMENT ──────────────────────────────────────── */}
+          <TabsContent value="development" className="space-y-4">
+            {projCtx ? (
+              <div className="grid gap-4 md:grid-cols-2">
+                {/* Focus selector */}
+                <Card>
+                  <CardHeader className="py-3">
+                    <CardTitle className="text-sm">Development Focus</CardTitle>
+                    <CardDescription className="text-xs">
+                      {isUserClubPlayer
+                        ? 'Assign a focus to prioritise growth in specific skill areas.'
+                        : "Preview what this player's development would look like under different focuses."}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-muted-foreground font-medium">
+                        {isUserClubPlayer ? 'Assigned Focus' : 'Preview Focus'}
+                      </label>
+                      {isUserClubPlayer ? (
+                        <Select
+                          value={player.trainingFocus ?? '__none__'}
+                          onValueChange={(v) => {
+                            const nextFocus = v === '__none__' ? null : (v as PlayerTrainingFocus)
+                            setPlayerTrainingFocus(player.id, nextFocus)
+                          }}
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder="Select focus..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">No assigned focus</SelectItem>
+                            {PLAYER_TRAINING_FOCUS_OPTIONS.map((option) => (
+                              <SelectItem key={option} value={option}>
+                                {PLAYER_TRAINING_FOCUS_LABELS[option]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Select
+                          value={
+                            previewFocus === '__current__'
+                              ? (player.trainingFocus ?? '__none__')
+                              : (previewFocus ?? '__none__')
+                          }
+                          onValueChange={(v) => {
+                            setPreviewFocus(v === '__none__' ? null : (v as PlayerTrainingFocus))
+                          }}
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder="Select focus to preview..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">No focus</SelectItem>
+                            {PLAYER_TRAINING_FOCUS_OPTIONS.map((option) => (
+                              <SelectItem key={option} value={option}>
+                                {PLAYER_TRAINING_FOCUS_LABELS[option]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+
+                    {/* Current focus badge */}
+                    {player.trainingFocus && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">Current:</span>
+                        <Badge className="bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30 text-xs">
+                          {PLAYER_TRAINING_FOCUS_LABELS[player.trainingFocus]}
+                        </Badge>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Projection panel */}
+                <Card>
+                  <CardHeader className="py-3">
+                    <CardTitle className="text-sm">Offseason Projection</CardTitle>
+                    <CardDescription className="text-xs">
+                      Expected attribute changes after one offseason cycle.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <TrainingProjectionPanel
+                      player={player}
+                      selectedFocus={
+                        isUserClubPlayer
+                          ? (player.trainingFocus ?? null)
+                          : (previewFocus === '__current__' ? (player.trainingFocus ?? null) : previewFocus)
+                      }
+                      ctx={projCtx}
+                    />
+                  </CardContent>
+                </Card>
+              </div>
+            ) : (
+              <Card>
+                <CardContent className="py-6 text-center text-muted-foreground text-sm">
+                  Development projection unavailable — club data not found.
                 </CardContent>
               </Card>
-            ) : null
-          })()}
+            )}
 
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-sm">Injury History</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              {player.injuryHistory.length === 0 ? (
-                <p className="text-muted-foreground">No recorded injuries.</p>
-              ) : (
-                [...player.injuryHistory]
-                  .slice(-8)
-                  .reverse()
-                  .map((h, idx) => (
-                    <div key={`${h.occurredOn}-${h.type}-${idx}`} className="flex items-center justify-between border-b border-border/40 pb-1 last:border-0">
-                      <div>
-                        <p className="font-medium">
-                          {h.type}
-                          {h.recurring ? <span className="text-red-500"> (recurring)</span> : null}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {h.occurredOn}
-                          {h.recoveredOn ? ` to ${h.recoveredOn}` : ' to present'}
-                        </p>
-                      </div>
-                      <div className="text-right text-xs">
-                        <p className="font-mono">{h.initialWeeks}w</p>
-                        <p className="text-muted-foreground">{h.gamesMissed} games missed</p>
-                      </div>
-                    </div>
-                  ))
-              )}
-            </CardContent>
-          </Card>
+            {/* Personality */}
+            <div className="rounded-lg border border-border p-3 space-y-2">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Personality</p>
+              {(
+                [
+                  { label: 'Ambition', value: player.personality.ambition },
+                  { label: 'Loyalty', value: player.personality.loyalty },
+                  { label: 'Professionalism', value: player.personality.professionalism },
+                  { label: 'Temperament', value: player.personality.temperament },
+                ] as { label: string; value: number }[]
+              ).map(({ label, value }) => (
+                <div key={label} className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">{label}</span>
+                  <span className={cn('text-sm font-bold font-mono tabular-nums', attrColor(value))}>
+                    {value}
+                  </span>
+                </div>
+              ))}
+            </div>
 
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-sm">Jumper Number History</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              {jumperHistory.length === 0 ? (
-                <p className="text-muted-foreground">No jumper history recorded yet.</p>
-              ) : (
-                jumperHistory.map((entry, idx) => (
-                  <div key={`${entry.year}-${entry.clubId}-${idx}`} className="flex items-center justify-between border-b border-border/40 pb-1 last:border-0">
-                    <div>
-                      <p className="font-medium">{entry.year}</p>
-                      <p className="text-xs text-muted-foreground">{clubs[entry.clubId]?.name ?? entry.clubId}</p>
-                    </div>
-                    <Badge variant="outline" className="font-mono">#{entry.jumperNumber}</Badge>
-                  </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="awards">
-          {(honours.brownlowVotes > 0 || honours.brownlowWins > 0 || honours.colemanWins > 0 || honours.risingStarWins > 0 || honours.allAustralianCount > 0 || honours.bnfWins > 0) ? (
-            <Card>
-              <CardHeader className="py-3">
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <Trophy className="h-4 w-4 text-yellow-500" />
-                  Honours
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                {honours.brownlowWins > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Brownlow Medals</span>
-                    <span className="font-mono font-bold text-yellow-500">{honours.brownlowWins}</span>
-                  </div>
-                )}
-                {honours.brownlowVotes > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Brownlow Votes (current season)</span>
-                    <span className="font-mono font-medium">{honours.brownlowVotes}</span>
-                  </div>
-                )}
-                {honours.colemanWins > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Coleman Medals</span>
-                    <span className="font-mono font-bold text-yellow-500">{honours.colemanWins}</span>
-                  </div>
-                )}
-                {honours.risingStarWins > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Rising Star Awards</span>
-                    <span className="font-mono font-bold">{honours.risingStarWins}</span>
-                  </div>
-                )}
-                {honours.allAustralianCount > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">All-Australian Selections</span>
-                    <span className="font-mono font-bold">{honours.allAustralianCount}</span>
-                  </div>
-                )}
-                {honours.bnfWins > 0 && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Club Best & Fairest</span>
-                    <span className="font-mono font-bold">{honours.bnfWins}</span>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          ) : (
-            <Card>
-              <CardContent className="py-6 text-sm text-muted-foreground">No major awards recorded yet.</CardContent>
-            </Card>
-          )}
-        </TabsContent>
-
-        <TabsContent value="personality" className="space-y-4">
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-sm">Jumper Number Preference</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Preference</span>
-                <span className="font-medium">{jumperPreferenceLabel(player.jumperPreference?.level)}</span>
+            {/* Jumper preference details */}
+            <div className="rounded-lg border border-border p-3 space-y-2">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Jumper Preference</p>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">Preference</span>
+                <span className="text-xs font-medium">{jumperPreferenceLabel(player.jumperPreference?.level)}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Preferred Numbers</span>
-                <span className="font-medium font-mono">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">Preferred Numbers</span>
+                <span className="text-xs font-medium font-mono">
                   {player.jumperPreference?.preferredNumbers?.length
                     ? player.jumperPreference.preferredNumbers.map((n) => `#${n}`).join(', ')
                     : 'None'}
                 </span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Current Number</span>
-                <span className="font-medium font-mono">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">Current Number</span>
+                <span className="text-xs font-medium font-mono">
                   {player.jerseyNumber > 0 ? `#${player.jerseyNumber}` : 'Unassigned'}
                 </span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Current Morale Impact</span>
-                <span className={`font-medium ${attrColor(50 + jumperPreferenceImpact * 15)}`}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">Morale Impact</span>
+                <span className={cn('text-xs font-medium', attrColor(50 + jumperPreferenceImpact * 15))}>
                   {jumperPreferenceImpact === 0
                     ? 'Neutral'
                     : `${jumperPreferenceImpact > 0 ? '+' : ''}${jumperPreferenceImpact}`}
                 </span>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </TabsContent>
 
-          <Card>
-            <CardHeader className="py-3">
-              <CardTitle className="text-sm">Personality Profile</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <PersonalityBar label="Ambition" value={player.personality.ambition} />
-              <PersonalityBar label="Loyalty" value={player.personality.loyalty} />
-              <PersonalityBar label="Professionalism" value={player.personality.professionalism} />
-              <PersonalityBar label="Temperament" value={player.personality.temperament} />
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+          {/* ── TAB: HISTORY ──────────────────────────────────────────── */}
+          <TabsContent value="history" className="space-y-4">
+
+            {/* Season + Career stat summaries */}
+            <div className="grid gap-4 md:grid-cols-2">
+              <OverviewStatsPanel title={`${currentYear} Season`} stats={ss} />
+              <OverviewStatsPanel title="Career" stats={cs} />
+            </div>
+
+            {/* Year-by-year stats */}
+            <Card>
+              <CardHeader className="py-3">
+                <CardTitle className="text-sm">Year-by-Year Stats</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                {yearByYearRows.length === 0 ? (
+                  <p className="text-muted-foreground">No season history recorded yet.</p>
+                ) : (
+                  yearByYearRows.map((entry) => (
+                    <div key={`${entry.year}-${entry.playerId}`} className="rounded border border-border/60 p-2">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold">{entry.year}</span>
+                          <Badge variant="outline">{clubs[entry.clubId]?.abbreviation ?? entry.clubId}</Badge>
+                          {entry.inProgress ? <Badge variant="secondary">In Progress</Badge> : null}
+                        </div>
+                        <span className="font-mono text-xs">OVR {entry.overall}</span>
+                      </div>
+                      <div className="grid grid-cols-5 gap-2 text-xs">
+                        <span className="text-muted-foreground">GP: <span className="font-mono text-foreground">{entry.stats.gamesPlayed}</span></span>
+                        <span className="text-muted-foreground">G: <span className="font-mono text-foreground">{entry.stats.goals}</span></span>
+                        <span className="text-muted-foreground">D: <span className="font-mono text-foreground">{entry.stats.disposals}</span></span>
+                        <span className="text-muted-foreground">M: <span className="font-mono text-foreground">{entry.stats.marks}</span></span>
+                        <span className="text-muted-foreground">T: <span className="font-mono text-foreground">{entry.stats.tackles}</span></span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Rating progression */}
+            <Card>
+              <CardHeader className="py-3">
+                <CardTitle className="text-sm">Rating Progression</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                {ratingProgressionRows.length === 0 ? (
+                  <p className="text-muted-foreground">No rating progression recorded yet.</p>
+                ) : (
+                  ratingProgressionRows.map((entry) => (
+                    <div key={`rating-${entry.year}-${entry.playerId}`} className="flex items-center justify-between border-b border-border/40 pb-1 last:border-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{entry.year}</span>
+                        {entry.inProgress ? <Badge variant="secondary">In Progress</Badge> : null}
+                      </div>
+                      <div className="text-right">
+                        <p className="font-mono font-medium">{entry.overall}</p>
+                        <p className={cn('text-xs', entry.overallDelta == null ? 'text-muted-foreground' : entry.overallDelta >= 0 ? 'text-green-600' : 'text-red-500')}>
+                          {entry.overallDelta == null ? 'Baseline' : formatSignedDelta(entry.overallDelta)}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Honours / Awards */}
+            {(honours.brownlowVotes > 0 || honours.brownlowWins > 0 || honours.colemanWins > 0 || honours.risingStarWins > 0 || honours.allAustralianCount > 0 || honours.bnfWins > 0) && (
+              <Card>
+                <CardHeader className="py-3">
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    <Trophy className="h-4 w-4 text-yellow-500" />
+                    Honours
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  {honours.brownlowWins > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Brownlow Medals</span>
+                      <span className="font-mono font-bold text-yellow-500">{honours.brownlowWins}</span>
+                    </div>
+                  )}
+                  {honours.brownlowVotes > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Brownlow Votes (current season)</span>
+                      <span className="font-mono font-medium">{honours.brownlowVotes}</span>
+                    </div>
+                  )}
+                  {honours.colemanWins > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Coleman Medals</span>
+                      <span className="font-mono font-bold text-yellow-500">{honours.colemanWins}</span>
+                    </div>
+                  )}
+                  {honours.risingStarWins > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Rising Star Awards</span>
+                      <span className="font-mono font-bold">{honours.risingStarWins}</span>
+                    </div>
+                  )}
+                  {honours.allAustralianCount > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">All-Australian Selections</span>
+                      <span className="font-mono font-bold">{honours.allAustralianCount}</span>
+                    </div>
+                  )}
+                  {honours.bnfWins > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Club Best &amp; Fairest</span>
+                      <span className="font-mono font-bold">{honours.bnfWins}</span>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Injury history */}
+            <Card>
+              <CardHeader className="py-3">
+                <CardTitle className="text-sm">Injury History</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                {player.injuryHistory.length === 0 ? (
+                  <p className="text-muted-foreground">No recorded injuries.</p>
+                ) : (() => {
+                  const totalMissed = getTotalGamesMissed(player)
+                  const recurringRegions = getRecurringBodyRegions(player)
+                  const riskLevel = getInjuryRiskLevel(player)
+                  const { label: riskLabel, bgClass } = injuryRiskDisplay(riskLevel)
+                  return (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={cn('inline-flex items-center rounded border px-1.5 py-0.5 text-[11px] font-medium', bgClass)}>
+                          {riskLabel}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {player.injuryHistory.length} career injur{player.injuryHistory.length === 1 ? 'y' : 'ies'}
+                          {totalMissed > 0 && ` · ${totalMissed} game${totalMissed !== 1 ? 's' : ''} missed`}
+                        </span>
+                      </div>
+                      {recurringRegions.length > 0 && (
+                        <div className="flex items-center gap-1.5 text-xs text-amber-600">
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                          <span>Recurring {recurringRegions.map(bodyRegionLabel).join(' & ')} issues</span>
+                        </div>
+                      )}
+                      {[...player.injuryHistory].slice(-8).reverse().map((h, idx) => (
+                        <div key={`${h.occurredOn}-${h.type}-${idx}`} className="flex items-center justify-between border-b border-border/40 pb-1 last:border-0">
+                          <div>
+                            <p className="font-medium">
+                              {h.type}
+                              {h.recurring ? <span className="text-red-500"> (recurring)</span> : null}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {h.occurredOn}{h.recoveredOn ? ` to ${h.recoveredOn}` : ' to present'}
+                            </p>
+                          </div>
+                          <div className="text-right text-xs">
+                            <p className="font-mono">{h.initialWeeks}w</p>
+                            <p className="text-muted-foreground">{h.gamesMissed} games missed</p>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )
+                })()}
+              </CardContent>
+            </Card>
+
+            {/* Milestones */}
+            {(() => {
+              const playerMilestones = (history.milestones ?? [])
+                .filter((m) => m.playerId === playerId)
+                .sort((a, b) => b.year - a.year || b.round - a.round)
+              return playerMilestones.length > 0 ? (
+                <Card>
+                  <CardHeader className="py-3">
+                    <CardTitle className="text-sm">Milestones</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2 text-sm">
+                    {playerMilestones.map((m) => (
+                      <div key={m.id} className="flex items-center justify-between border-b border-border/40 pb-1 last:border-0">
+                        <div>
+                          <p className="font-medium">{m.threshold} {m.type === 'games-played' ? 'Games' : m.type === 'career-goals' ? 'Goals' : m.type === 'career-disposals' ? 'Disposals' : m.type === 'career-marks' ? 'Marks' : m.type === 'career-tackles' ? 'Tackles' : m.type}</p>
+                          <p className="text-xs text-muted-foreground">{m.year}, Round {m.round}</p>
+                        </div>
+                        <span className="font-mono text-xs">{m.value}</span>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              ) : null
+            })()}
+
+            {/* Contract history */}
+            {(player.contractHistory && player.contractHistory.length > 0) && (
+              <Card>
+                <CardHeader className="py-3">
+                  <CardTitle className="text-sm">Contract History</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  {[...player.contractHistory].reverse().map((entry, idx) => (
+                    <div key={idx} className="flex items-center justify-between border-b border-border/40 pb-1 last:border-0">
+                      <div>
+                        <p className="font-medium capitalize">{entry.type.replace(/-/g, ' ')}</p>
+                        <p className="text-xs text-muted-foreground">{entry.note}</p>
+                      </div>
+                      <span className="text-xs text-muted-foreground font-mono">{entry.date}</span>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Jumper number history */}
+            <Card>
+              <CardHeader className="py-3">
+                <CardTitle className="text-sm">Jumper Number History</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                {jumperHistory.length === 0 ? (
+                  <p className="text-muted-foreground">No jumper history recorded yet.</p>
+                ) : (
+                  jumperHistory.map((entry, idx) => (
+                    <div key={`${entry.year}-${entry.clubId}-${idx}`} className="flex items-center justify-between border-b border-border/40 pb-1 last:border-0">
+                      <div>
+                        <p className="font-medium">{entry.year}</p>
+                        <p className="text-xs text-muted-foreground">{clubs[entry.clubId]?.name ?? entry.clubId}</p>
+                      </div>
+                      <Badge variant="outline" className="font-mono">#{entry.jumperNumber}</Badge>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Draft + career milestones */}
+            {(draftInfo || cs.gamesPlayed > 0) && (
+              <Card>
+                <CardHeader className="py-3">
+                  <CardTitle className="text-sm">Career</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  {draftInfo && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Draft</span>
+                      <span className="font-medium">
+                        Drafted by {clubs[draftInfo.clubId]?.name ?? draftInfo.clubId} in {draftInfo.year}, Pick #{draftInfo.pickNumber}
+                      </span>
+                    </div>
+                  )}
+                  {cs.gamesPlayed > 0 && (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Career Games</span>
+                        <span className="font-mono font-medium">{cs.gamesPlayed}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Career Goals</span>
+                        <span className="font-mono font-medium">{cs.goals}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Career Disposals</span>
+                        <span className="font-mono font-medium">{cs.disposals}</span>
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+        </Tabs>
+      </div>
     </div>
   )
 }
 
-function StatusCard({
-  icon: Icon,
-  label,
-  value,
-  sub,
-  inverted,
+function OverviewStatsPanel({
+  title,
+  stats,
 }: {
-  icon: React.ComponentType<{ className?: string }>
-  label: string
-  value: number
-  sub?: string
-  inverted?: boolean
+  title: string
+  stats: import('@/types/player').PlayerCareerStats
 }) {
+  const gp = stats.gamesPlayed
+  const avg = (v: number) => (gp > 0 ? (v / gp).toFixed(1) : '—')
+
+  if (gp === 0) {
+    return (
+      <Card>
+        <CardHeader className="py-3">
+          <CardTitle className="text-sm">{title}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">No stats recorded yet.</p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  const groups: { label: string; rows: { label: string; total: number }[] }[] = [
+    {
+      label: 'Scoring',
+      rows: [
+        { label: 'Goals',              total: stats.goals },
+        { label: 'Behinds',            total: stats.behinds },
+        { label: 'Goal Assists',        total: stats.goalAssists },
+        { label: 'Score Involvements', total: stats.scoreInvolvements },
+        { label: 'Inside 50s',         total: stats.insideFifties },
+      ],
+    },
+    {
+      label: 'Possession',
+      rows: [
+        { label: 'Disposals',          total: stats.disposals },
+        { label: 'Kicks',              total: stats.kicks },
+        { label: 'Handballs',          total: stats.handballs },
+        { label: 'Marks',              total: stats.marks },
+        { label: 'Contested Marks',    total: stats.contestedMarks },
+        { label: 'Clearances',         total: stats.clearances },
+        { label: 'Hitouts',            total: stats.hitouts },
+      ],
+    },
+    {
+      label: 'Pressure & Defence',
+      rows: [
+        { label: 'Tackles',            total: stats.tackles },
+        { label: 'Contested Poss',     total: stats.contestedPossessions },
+        { label: 'Intercepts',         total: stats.intercepts },
+        { label: 'Rebound 50s',        total: stats.rebound50s },
+        { label: 'One Percenters',     total: stats.onePercenters },
+        { label: 'Turnovers',          total: stats.turnovers },
+        { label: 'Clangers',           total: stats.clangers },
+      ],
+    },
+    {
+      label: 'Fantasy & Metres',
+      rows: [
+        { label: 'AFL Fantasy',        total: stats.aflFantasyPoints },
+        { label: 'SuperCoach',         total: stats.superCoachPoints },
+        { label: 'Metres Gained',      total: stats.metresGained },
+      ],
+    },
+  ]
+
+  // Filter out rows with no recorded value and groups that become empty
+  const activeGroups = groups
+    .map((g) => ({ ...g, rows: g.rows.filter((r) => r.total > 0) }))
+    .filter((g) => g.rows.length > 0)
+
   return (
     <Card>
-      <CardContent className="py-3 text-center">
-        <Icon className={`mx-auto h-5 w-5 mb-1 ${attrColor(inverted ? 100 - value : value)}`} />
-        <p className={`text-2xl font-bold ${attrColor(inverted ? 100 - value : value)}`}>{value}</p>
-        <p className="text-xs text-muted-foreground">{label}</p>
-        {sub && <p className="text-xs font-medium mt-0.5">{sub}</p>}
+      <CardHeader className="py-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm">{title}</CardTitle>
+          <span className="text-xs text-muted-foreground">{gp} games</span>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {activeGroups.map((group) => (
+          <div key={group.label}>
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1.5">
+              {group.label}
+            </p>
+            <div className="space-y-1">
+              {group.rows.map((row) => (
+                <div key={row.label} className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">{row.label}</span>
+                  <div className="flex items-center gap-3 font-mono tabular-nums">
+                    <span className="text-muted-foreground/50">{row.total}</span>
+                    <span className="font-semibold w-10 text-right">
+                      {avg(row.total)}
+                      <span className="text-muted-foreground/40 font-normal">/g</span>
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
       </CardContent>
     </Card>
-  )
-}
-
-function PersonalityBar({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="w-28 text-xs text-muted-foreground">{label}</span>
-      <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-        <div
-          className="h-full rounded-full bg-primary/60"
-          style={{ width: `${value}%` }}
-        />
-      </div>
-      <span className="w-6 text-right text-xs font-mono">{value}</span>
-    </div>
   )
 }
 

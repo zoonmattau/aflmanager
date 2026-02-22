@@ -1,4 +1,5 @@
 import type { UnlockedAchievement, CareerObjective } from './achievements'
+import type { AICoachProfile, CoachKnowledgeEntry } from './coach'
 import type { Club } from './club'
 import type { LineupSlot, Player } from './player'
 import type { Season, LadderEntry, MatchDay, PowerRankingSnapshot } from './season'
@@ -15,7 +16,7 @@ import type { OffseasonState } from '@/engine/season/offseasonFlow'
 import type { FinalsFormat } from './finals'
 import type { SeasonVenueState } from './venue'
 import type { NegotiationTracker } from './contract'
-import type { TradeBlockState, TradeInboxItem, TradePlayerMove } from './trade'
+import type { TradeBlockState, TradeInboxItem, TradePlayerMove, TradeDramaState } from './trade'
 import type { TribunalCase } from './discipline'
 import type { ClubGameplan } from './club'
 import type { LadderPrimarySort, LadderTieBreaker } from './customLeague'
@@ -26,6 +27,8 @@ import type { BoardApprovalTracker } from './boardApproval'
 import type { AgentRelationship } from './agent'
 import type { YouthPathwayState } from './youthPathway'
 import type { AllAustralianState } from './allAustralian'
+import type { LegacyState } from './legacy'
+import type { NegotiationThread } from './negotiation'
 
 export type GamePhase =
   | 'setup'           // Choosing club
@@ -353,6 +356,12 @@ export interface GameSettings {
   injuriesEnabled?: boolean
   /** Custom stadiums for League Customiser */
   customStadiums?: import('@/types/stadium').CustomStadium[]
+  /**
+   * Custom venue rule overrides (merged onto DEFAULT_AFL_VENUE_RULES at runtime).
+   * Provide clubQuotaRules / matchupRules to add or replace individual entries.
+   * Only set for fictional/custom leagues; real-league mode always uses defaults.
+   */
+  venueRules?: import('@/types/venue').VenueRuleSet
 }
 
 export interface SigningNotificationPreferences {
@@ -397,7 +406,7 @@ export interface NewsItem {
   date: string          // In-game date ISO
   headline: string
   body: string
-  category: 'match' | 'trade' | 'injury' | 'discipline' | 'draft' | 'contract' | 'general' | 'milestone'
+  category: 'match' | 'trade' | 'injury' | 'discipline' | 'draft' | 'contract' | 'general' | 'milestone' | 'leadership'
   clubIds: string[]     // Related clubs
   playerIds: string[]   // Related players
   read?: boolean        // Undefined = unread (backward-compatible with old saves)
@@ -409,6 +418,35 @@ export interface NewsItem {
     factBasis: string
     sourceNewsId?: string
   }
+}
+
+export interface TrainingWeekReport {
+  round: number
+  date: string
+  sessionCount: number
+  topImprovers: Array<{
+    playerId: string
+    name: string
+    totalGain: number
+    topAttr: string
+    topGain: number
+  }>
+  avgFatigueChange: number
+  avgFitnessChange: number
+  injuryScarePlayers: string[]
+  upskillCompletions: Array<{
+    playerName: string
+    targetLabel: string
+    type: 'position' | 'skill'
+  }>
+  /** Players whose fatigue crossed the overtraining threshold after this week's sessions. */
+  overtrained: Array<{
+    playerId: string
+    name: string
+    fatigue: number
+  }>
+  /** Overall squad training load level for this week. */
+  loadLevel: 'light' | 'moderate' | 'heavy' | 'excessive'
 }
 
 export interface GameState {
@@ -470,6 +508,9 @@ export interface GameState {
   // Enhanced training week plan (from Training Page week planner)
   trainingWeekPlan: TrainingWeekPlan | null
 
+  // Report generated after each week's training is applied
+  lastTrainingReport: TrainingWeekReport | null
+
   // Awards
   awards: SeasonAwards[]
   brownlowTracker: BrownlowRound[]
@@ -506,6 +547,10 @@ export interface GameState {
   // Trade inbox / negotiation
   tradeInbox: TradeInboxItem[]
   tradeBlock: TradeBlockState
+  tradeDrama: TradeDramaState
+
+  // Negotiation threads (poker-style multi-round trade negotiations)
+  negotiationThreads: NegotiationThread[]
 
   // Tribunal / suspensions
   tribunalInbox: TribunalCase[]
@@ -541,18 +586,125 @@ export interface GameState {
   /** Year-by-year history of inflation index and actual rate applied. */
   inflationHistory: import('@/engine/inflation/inflationEngine').InflationYearRecord[]
 
+  /** AI coach profiles keyed by coachId */
+  coaches: Record<string, AICoachProfile>
+  /** Player's familiarity with each rival coach */
+  coachKnowledge: Record<string, CoachKnowledgeEntry>
+
   /** Agent relationship scores keyed by agentId */
   agentRelationships?: Record<string, AgentRelationship>
 
   // Achievements & career objectives
   achievements: UnlockedAchievement[]
   careerObjectives: CareerObjective[]
+  dynastyQuests: CareerObjective[]
 
   // Pending sponsorship offers for the player's club (generated at season end)
   sponsorshipOffers: import('@/types/club').SponsorshipOffer[]
 
   /** Simulated betting market state — null when feature is disabled */
   bettingMarkets: import('@/types/betting').BettingMarketsState | null
+
+  // Injury replacement puzzles (triggered when a key user-club player is injured)
+  injuryReplacementPuzzles: InjuryReplacementPuzzle[]
+  /** Emergency position eligibility grants: playerId → extra allowed positions */
+  emergencyEligibility: Record<string, import('@/types/player').PlayerPositionType[]>
+
+  // Legacy & dynasty tracking
+  legacyState: LegacyState
+
+  /**
+   * Active leadership disruptions keyed by clubId.
+   * Cleared when roundsRemaining reaches 0.
+   */
+  leadershipDisruptions: Record<string, LeadershipDisruption>
+
+  /** True when the player's club must appoint leadership before Round 1. */
+  leadershipPending: boolean
+}
+
+// ── Leadership Disruption ────────────────────────────────────────────────────
+
+/**
+ * Tracks an active leadership change disruption for a club.
+ * Decays one round per advance; when roundsRemaining reaches 0 the disruption
+ * is cleared and on-field penalties no longer apply.
+ */
+export interface LeadershipDisruption {
+  id: string
+  clubId: string
+  date: string
+  round: number
+  changeType: 'captain' | 'vice-captain' | 'both' | 'group-only'
+  disruptionLevel: number       // 0-100, initial severity
+  roundsRemaining: number       // decrements each round; 0 = fully recovered
+  roundsToRecover: number       // total recovery duration (for % calculation)
+  wasPreseason: boolean
+  outgoingCaptainName: string | null
+  incomingCaptainName: string | null
+}
+
+// ── Injury Replacement Puzzle ─────────────────────────────────────────────────
+
+export type ReplacementPathwayType =
+  | 'like-for-like'      // Most attribute-similar available player
+  | 'structure-shift'    // Move a player from a different role
+  | 'youth-promotion'    // Bring in a developing player for experience
+  | 'emergency-coverage' // Grant a player emergency position eligibility
+
+export interface ReplacementPathwayConsequences {
+  /** Form delta applied immediately to the replacement player on resolve */
+  formDelta: number
+  /** Fatigue delta applied to the replacement player */
+  fatigueDelta: number
+  /** Performance cohesion penalty (0.0 = none, 0.15 = heavy disruption) */
+  cohesionPenalty: number
+  /** For youth pathway: upside boost to their availability modifier */
+  upsidePotential: number
+  /** Short readable note shown in the UI */
+  roleNote: string
+}
+
+export interface ReplacementPathway {
+  type: ReplacementPathwayType
+  label: string
+  description: string
+  /** Suggested replacement player (null if no suitable candidate found) */
+  suggestedPlayerId: string | null
+  consequences: ReplacementPathwayConsequences
+  /** For emergency-coverage: positions to grant the suggested player */
+  emergencyPositions?: import('@/types/player').PlayerPositionType[]
+}
+
+export interface InjuryReplacementPuzzle {
+  id: string
+  round: number
+  date: string
+  injuredPlayerId: string
+  injuredPlayerName: string
+  injuredPlayerPosition: import('@/types/player').PlayerPositionType
+  injuredPlayerRole: string
+  weeksOut: number
+  roleImpact: {
+    positionGroup: string
+    keyAttributes: Array<{ attr: string; label: string; value: number }>
+    matchupValue: number   // 0–100
+    statusLabel: string    // e.g. "First-choice CHF"
+  }
+  pathways: ReplacementPathway[]
+  chosenPathwayType: ReplacementPathwayType | null
+  resolved: boolean
+  dismissed: boolean
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface RotationEvent {
+  id: string
+  quarter: 1 | 2 | 3 | 4
+  minute: number        // 1–29 (within the quarter)
+  playerOffId: string   // on-field player to rest
+  playerOnId: string    // bench/interchange player to bring on
 }
 
 export interface WeeklyGameplan {
@@ -560,6 +712,9 @@ export interface WeeklyGameplan {
   opponentClubId: string
   overrides: Partial<ClubGameplan>
   matchupTactics?: WeeklyMatchupTactics
+  rotationPlan?: RotationEvent[]
+  /** Selected rival scout counter ID — applied to the match sim when set */
+  scoutCounterId?: string | null
   source: 'user' | 'ai-auto'
 }
 

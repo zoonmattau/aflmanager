@@ -1,5 +1,6 @@
 import { simulateMatch } from '@/engine/match/simulateMatch'
-import type { MatchRulesSettings, RealismSettings, WeeklyMatchupTactics } from '@/types/game'
+import type { MatchRulesSettings, RealismSettings, WeeklyMatchupTactics, RotationEvent } from '@/types/game'
+import type { TrainingFocus } from '@/engine/training/trainingEngine'
 import type { Match } from '@/types/match'
 import type { MatchPlayerStats } from '@/types/match'
 import type { LadderEntry, Round } from '@/types/season'
@@ -31,8 +32,23 @@ interface SimRoundInput {
   ladder?: LadderEntry[]
   lineupsByClub?: Record<string, Record<string, string>>
   substitutesByClub?: Record<string, string | null | undefined>
+  rotationPlanByClub?: Record<string, RotationEvent[]>
   matchResults?: Match[]
   excludeClubIds?: string[]
+  /** Calendar month (1–12) for seasonal weather modelling. */
+  month?: number
+  /** Scout counter ID selected by the user club for this round */
+  scoutCounterByClub?: Record<string, string | null | undefined>
+  /**
+   * Training focuses the user ran this week, keyed by club ID.
+   * Only the user's club entry is used — passed to the match sim for impact analysis.
+   */
+  trainingFocusesByClub?: Record<string, TrainingFocus[]>
+  /**
+   * Leadership disruption multiplier (0.95-1.0) per club.
+   * Values < 1 reduce effective team rating during the adjustment period.
+   */
+  leadershipDisruptionMultByClub?: Record<string, number>
 }
 
 export interface SimRoundResult {
@@ -109,6 +125,7 @@ export function simulateRound(input: SimRoundInput): SimRoundResult {
       injuryFrequency: input.injuryFrequency,
       venueId: resolvedVenueId,
       matchDay: fixture.matchDay,
+      month: input.month,
       venueHGA,
       travelFatigue,
       ladder: input.ladder,
@@ -116,8 +133,19 @@ export function simulateRound(input: SimRoundInput): SimRoundResult {
       isRivalry,
       homeLineupPlayerIds: Object.values(input.lineupsByClub?.[fixture.homeClubId] ?? {}),
       awayLineupPlayerIds: Object.values(input.lineupsByClub?.[fixture.awayClubId] ?? {}),
+      homeLineupSlots: input.lineupsByClub?.[fixture.homeClubId],
+      awayLineupSlots: input.lineupsByClub?.[fixture.awayClubId],
       homeSubstituteId: input.substitutesByClub?.[fixture.homeClubId] ?? null,
       awaySubstituteId: input.substitutesByClub?.[fixture.awayClubId] ?? null,
+      homeRotationPlan: input.rotationPlanByClub?.[fixture.homeClubId],
+      homeScoutCounterId: input.scoutCounterByClub?.[fixture.homeClubId] ?? null,
+      awayScoutCounterId: input.scoutCounterByClub?.[fixture.awayClubId] ?? null,
+      homeLeadershipDisruptionMult: input.leadershipDisruptionMultByClub?.[fixture.homeClubId],
+      awayLeadershipDisruptionMult: input.leadershipDisruptionMultByClub?.[fixture.awayClubId],
+      trainingFocuses: input.trainingFocusesByClub?.[input.playerClubId],
+      playerClubId: (fixture.homeClubId === input.playerClubId || fixture.awayClubId === input.playerClubId)
+        ? input.playerClubId
+        : undefined,
     })
   })
 

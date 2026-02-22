@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Sun, Moon, Calendar, Hash, Save, Home, Menu, Settings } from 'lucide-react'
+import { Sun, Moon, Calendar, Save, Home, Menu, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTheme } from '@/components/layout/ThemeProvider'
 import { useGameStore } from '@/stores/gameStore'
@@ -91,12 +91,6 @@ export function TopBar() {
             <Calendar className="h-3 w-3" />
             {displayDate || currentYear}
           </Badge>
-          {phase === 'regular-season' && (
-            <Badge variant="outline" className="flex items-center gap-1">
-              <Hash className="h-3 w-3" />
-              Round {currentRound + 1}
-            </Badge>
-          )}
           <Badge variant="outline">{phaseLabel}</Badge>
           {isMatchDay && (
             <button

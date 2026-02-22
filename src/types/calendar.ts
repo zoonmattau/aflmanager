@@ -21,6 +21,7 @@ export type GameEventType =
   | 'milestone'
   | 'special-event'
   | 'tribunal'
+  | 'jumper-management'
 
 export interface GameEvent {
   id: string

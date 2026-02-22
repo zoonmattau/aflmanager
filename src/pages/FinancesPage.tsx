@@ -1227,30 +1227,37 @@ export function FinancesPage() {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4 mt-4">
+          <p className="text-sm text-muted-foreground pb-2">Current season financial snapshot — income, spending, and cash position at a glance.</p>
           <OverviewTab clubId={playerClubId} />
         </TabsContent>
 
         <TabsContent value="revenue" className="space-y-3 mt-4">
+          <p className="text-sm text-muted-foreground pb-2">Gate receipts, broadcast rights, sponsorship deals, and all other income sources.</p>
           <RevenueTab clubId={playerClubId} />
         </TabsContent>
 
         <TabsContent value="expenses" className="space-y-3 mt-4">
+          <p className="text-sm text-muted-foreground pb-2">Player wages, staff costs, facility running costs, and other outgoings.</p>
           <ExpensesTab clubId={playerClubId} />
         </TabsContent>
 
         <TabsContent value="membership" className="space-y-4 mt-4">
+          <p className="text-sm text-muted-foreground pb-2">Member count, tier pricing, renewal rates, and projected membership revenue.</p>
           <MembershipTab clubId={playerClubId} />
         </TabsContent>
 
         <TabsContent value="budget" className="space-y-4 mt-4">
+          <p className="text-sm text-muted-foreground pb-2">Set spending limits and allocate budget across the club's cost centres for the season.</p>
           <BudgetTab clubId={playerClubId} />
         </TabsContent>
 
         <TabsContent value="forecast" className="space-y-4 mt-4">
+          <p className="text-sm text-muted-foreground pb-2">Multi-year financial projections — see where the club is headed under different scenarios.</p>
           <ForecastTab clubId={playerClubId} />
         </TabsContent>
 
         <TabsContent value="loans" className="space-y-4 mt-4">
+          <p className="text-sm text-muted-foreground pb-2">Club borrowings, repayment schedule, interest charges, and available credit.</p>
           <LoansTab clubId={playerClubId} />
         </TabsContent>
       </Tabs>

@@ -4,6 +4,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import { Slider } from '@/components/ui/slider'
 import {
   Select,
   SelectContent,
@@ -161,6 +162,200 @@ export function StadiumEditorPanel({ stadium, onChange, onDelete }: StadiumEdito
               </div>
             </div>
 
+            {/* Dimensions */}
+            <div>
+              <p className="text-xs font-medium text-zinc-300 mb-2">Dimensions</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-zinc-400">Length (m) — goal-to-goal</Label>
+                  <Input
+                    type="number"
+                    value={stadium.length}
+                    onChange={(e) => onChange({ length: Math.max(100, Math.min(220, parseInt(e.target.value, 10) || 160)) })}
+                    min={100}
+                    max={220}
+                    placeholder="e.g. 165"
+                    className="border-zinc-700 bg-zinc-800 text-zinc-100"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-zinc-400">Width (m) — centre</Label>
+                  <Input
+                    type="number"
+                    value={stadium.width}
+                    onChange={(e) => onChange({ width: Math.max(80, Math.min(180, parseInt(e.target.value, 10) || 130)) })}
+                    min={80}
+                    max={180}
+                    placeholder="e.g. 130"
+                    className="border-zinc-700 bg-zinc-800 text-zinc-100"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Ground characteristics */}
+            <div>
+              <p className="text-xs font-medium text-zinc-300 mb-3">Ground Characteristics</p>
+              <div className="space-y-4">
+                {/* Scoring coefficient */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs text-zinc-400">Scoring Coefficient</Label>
+                    <span className="text-xs font-mono text-zinc-300">
+                      {stadium.scoringCoefficient.toFixed(2)}
+                      {stadium.scoringCoefficient > 1.05
+                        ? ' — high-scoring'
+                        : stadium.scoringCoefficient < 0.95
+                          ? ' — low-scoring'
+                          : ' — neutral'}
+                    </span>
+                  </div>
+                  <Slider
+                    min={70} max={130} step={1}
+                    value={[Math.round(stadium.scoringCoefficient * 100)]}
+                    onValueChange={([v]) => onChange({ scoringCoefficient: v / 100 })}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-zinc-500">
+                    Multiplier on goal conversion. Compact grounds (&gt;1.0) create more goals per scoring shot; vast open ovals (&lt;1.0) reduce accuracy.
+                  </p>
+                </div>
+
+                {/* Kick-to-handball ratio */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs text-zinc-400">Kick-to-Handball Ratio</Label>
+                    <span className="text-xs font-mono text-zinc-300">
+                      {stadium.kickToHandballRatio.toFixed(2)}
+                      {stadium.kickToHandballRatio > 1.08
+                        ? ' — kick-dominant'
+                        : stadium.kickToHandballRatio < 0.93
+                          ? ' — handball-heavy'
+                          : ' — balanced'}
+                    </span>
+                  </div>
+                  <Slider
+                    min={60} max={140} step={1}
+                    value={[Math.round(stadium.kickToHandballRatio * 100)]}
+                    onValueChange={([v]) => onChange({ kickToHandballRatio: v / 100 })}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-zinc-500">
+                    Large open ovals reward long kicking (&gt;1.0); rectangular or compact venues push teams towards handballs (&lt;1.0).
+                  </p>
+                </div>
+
+                {/* Disposal coefficient */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs text-zinc-400">Disposal Volume</Label>
+                    <span className="text-xs font-mono text-zinc-300">
+                      {stadium.disposalCoefficient.toFixed(2)}
+                      {stadium.disposalCoefficient > 1.04
+                        ? ' — high disposals'
+                        : stadium.disposalCoefficient < 0.96
+                          ? ' — low disposals'
+                          : ' — average'}
+                    </span>
+                  </div>
+                  <Slider
+                    min={82} max={118} step={1}
+                    value={[Math.round(stadium.disposalCoefficient * 100)]}
+                    onValueChange={([v]) => onChange({ disposalCoefficient: v / 100 })}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-zinc-500">
+                    Big open grounds tend to produce more total disposals per game. Compact or hot/humid grounds suppress disposal counts.
+                  </p>
+                </div>
+
+                {/* Mark coefficient */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs text-zinc-400">Marking Rate</Label>
+                    <span className="text-xs font-mono text-zinc-300">
+                      {stadium.markCoefficient.toFixed(2)}
+                      {stadium.markCoefficient > 1.06
+                        ? ' — marking ground'
+                        : stadium.markCoefficient < 0.93
+                          ? ' — congested, few marks'
+                          : ' — average'}
+                    </span>
+                  </div>
+                  <Slider
+                    min={75} max={125} step={1}
+                    value={[Math.round(stadium.markCoefficient * 100)]}
+                    onValueChange={([v]) => onChange({ markCoefficient: v / 100 })}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-zinc-500">
+                    Open ovals with wide corridors allow more marking. Compact or indoor grounds produce a more handball-based, low-marking game.
+                  </p>
+                </div>
+
+                {/* Contested coefficient */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs text-zinc-400">Contested Rate</Label>
+                    <span className="text-xs font-mono text-zinc-300">
+                      {stadium.contestedCoefficient.toFixed(2)}
+                      {stadium.contestedCoefficient > 1.08
+                        ? ' — congested, physical'
+                        : stadium.contestedCoefficient < 0.93
+                          ? ' — open, spread'
+                          : ' — balanced'}
+                    </span>
+                  </div>
+                  <Slider
+                    min={78} max={125} step={1}
+                    value={[Math.round(stadium.contestedCoefficient * 100)]}
+                    onValueChange={([v]) => onChange({ contestedCoefficient: v / 100 })}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-zinc-500">
+                    Compact grounds amplify contested possessions and tackle counts. Vast ovals like the MCG spread the game and reduce congestion.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Weather tendencies */}
+            <div>
+              <p className="text-xs font-medium text-zinc-300 mb-1">Weather Tendencies</p>
+              <p className="text-xs text-zinc-500 mb-3">
+                Additive bias on top of regional baselines. Positive = more likely; negative = less likely.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {(
+                  [
+                    { key: 'windBias', label: 'Wind tendency', hint: 'Exposed / coastal' },
+                    { key: 'wetBias',  label: 'Rain tendency', hint: 'Wet climate / open roof' },
+                    { key: 'hotBias',  label: 'Heat tendency', hint: 'Northern / inland' },
+                    { key: 'humidBias',label: 'Humidity tendency', hint: 'Tropical / coastal QLD/NT' },
+                  ] as { key: keyof CustomStadium; label: string; hint: string }[]
+                ).map(({ key, label, hint }) => {
+                  const rawVal = stadium[key] as number
+                  return (
+                    <div key={key} className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs text-zinc-400">{label}</Label>
+                        <span className="text-xs font-mono text-zinc-300">
+                          {rawVal >= 0 ? '+' : ''}{(rawVal * 100).toFixed(0)}%
+                        </span>
+                      </div>
+                      <Slider
+                        min={-20} max={25} step={1}
+                        value={[Math.round(rawVal * 100)]}
+                        onValueChange={([v]) => onChange({ [key]: v / 100 })}
+                        className="w-full"
+                      />
+                      <p className="text-xs text-zinc-500">{hint}</p>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
             {/* Notes */}
             <div className="space-y-1.5">
               <Label className="text-xs text-zinc-400">Notes (optional)</Label>
@@ -187,5 +382,16 @@ export function createDefaultStadium(): CustomStadium {
     capacity: 30000,
     surface: 'grass',
     opened: 2026,
+    length: 160,
+    width: 130,
+    scoringCoefficient: 1.0,
+    kickToHandballRatio: 1.0,
+    disposalCoefficient: 1.0,
+    markCoefficient: 1.0,
+    contestedCoefficient: 1.0,
+    windBias: 0.0,
+    wetBias: 0.0,
+    hotBias: 0.0,
+    humidBias: 0.0,
   }
 }

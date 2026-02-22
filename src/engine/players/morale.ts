@@ -148,7 +148,7 @@ export function applyRoleDisputeMorale(
 
   if (player.position.primary === assignedPosition) return
 
-  if (player.position.secondary.includes(assignedPosition)) {
+  if ((player.position.secondary ?? []).includes(assignedPosition)) {
     let penalty = 1
     if (assignedSlot) {
       const roleFit = getRoleFitMultiplierForSlot(player.preferredRole, assignedSlot)

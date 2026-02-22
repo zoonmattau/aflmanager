@@ -83,7 +83,7 @@ function clubHasPositionalNeed(
 
   if ((counts[player.position.primary] ?? 0) < NEED_THRESHOLD) return true
 
-  for (const sec of player.position.secondary) {
+  for (const sec of (player.position.secondary ?? [])) {
     if ((counts[sec] ?? 0) < NEED_THRESHOLD) return true
   }
 

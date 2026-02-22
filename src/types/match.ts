@@ -54,6 +54,7 @@ export type PlayByPlayEventType =
   | 'goal' | 'behind' | 'miss' | 'inside50'
   | 'turnover' | 'clearance' | 'mark' | 'contested-mark'
   | 'free-kick' | 'intercept' | 'tackle' | 'quarter-break'
+  | 'training-callout'
 
 export interface PlayByPlayEvent {
   id: string
@@ -82,6 +83,7 @@ export interface MatchResult {
   midMatchAdjustments?: import('@/types/matchEvent').MidMatchAdjustment[]
   midMatchInjuredPlayerIds?: string[]
   effectiveAggressionLevel?: 'high' | 'medium' | 'low'
+  trainingImpactSummary?: TrainingImpactSummary
   simulationContext?: {
     weather: 'clear' | 'windy' | 'wet' | 'hot' | 'humid'
     groundCondition: 'firm' | 'dewy' | 'soft' | 'heavy' | 'muddy'
@@ -92,6 +94,13 @@ export interface MatchResult {
     umpiringRisk?: { home: number; away: number }
     attendance?: number
     capacityPct?: number
+    // Wind / dynamic weather
+    windDirection?: import('@/engine/match/weatherEngine').WindDirection
+    windStrength?: import('@/engine/match/weatherEngine').WindStrength
+    windAdvantageEnd?: 'home' | 'away'
+    quarterWeather?: import('@/engine/match/weatherEngine').QuarterWeatherEntry[]
+    coinTossWinner?: 'home' | 'away'
+    prepAnalysis?: import('@/engine/match/prepAnalysis').PrepAnalysis
   }
 }
 
@@ -105,4 +114,32 @@ export interface Match {
   result: MatchResult | null // null if not yet played
   isFinal: boolean
   finalType?: 'QF' | 'EF' | 'PF' | 'SF' | 'GF'
+}
+
+// ── Training Impact ───────────────────────────────────────────────────────────
+
+export interface TrainingImpactFinding {
+  /** The training focus that drove this outcome */
+  focus: string
+  /** Short stat label used in the timeline badge */
+  metric: string
+  /** Actual value recorded in the match */
+  value: number
+  /** Typical / benchmark value for comparison */
+  benchmark: number
+  /** How far above benchmark (positive = good) */
+  delta: number
+  /** Full narrative sentence for the impact card */
+  description: string
+  /** Short, punchy callout for play-by-play injection (≤ 12 words) */
+  callout: string
+}
+
+export interface TrainingImpactSummary {
+  /** Training focuses active for the week leading into this match */
+  focuses: string[]
+  /** Up to 4 concrete findings, ordered by delta descending */
+  findings: TrainingImpactFinding[]
+  /** Single sentence headline derived from the top finding */
+  headlineInsight: string
 }

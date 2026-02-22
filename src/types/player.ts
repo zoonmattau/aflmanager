@@ -285,6 +285,29 @@ export interface PlayerSuspensionHistoryEntry {
   outcome: 'upheld' | 'reduced' | 'increased' | 'dismissed' | 'expired'
 }
 
+// ── Squad Pulse ──────────────────────────────────────────────────────────────
+
+export type PulseTag =
+  | 'peaking'       // Optimal: fresh + high fitness + good form  (+0.04)
+  | 'fresh'         // Low fatigue, decent fitness               (+0.02)
+  | 'confident'     // High form / good recent match rating       (+0.03)
+  | 'breakthrough'  // Large attribute gain in training          (+0.02)
+  | 'overcooked'    // Heavy training drove fatigue very high     (-0.04)
+  | 'fatigued'      // High fatigue (match or general load)       (-0.03)
+  | 'sore'          // Moderate soreness / mid fatigue            (-0.02)
+  | 'struggling'    // Low form / poor recent performance         (-0.02)
+  | 'returning'     // Recently cleared from injury               (-0.03)
+  | 'undertrained'  // Minimal load, low base fitness             (-0.01)
+
+export interface PlayerPulseNote {
+  round: number
+  date: string
+  tag: PulseTag
+  message: string
+  /** Applied as (1 + modifier) in getAvailabilityMultiplier(). Range −0.05 to +0.05. */
+  modifier: number
+}
+
 export interface PlayerCareerStats {
   gamesPlayed: number
   aflFantasyPoints: number
@@ -326,6 +349,50 @@ export interface MoraleFactors {
   jumperPreference: number
   culture: number
   meanReversion: number
+}
+
+// ---------------------------------------------------------------------------
+// Player Moments — career-defining events stored on each player
+// ---------------------------------------------------------------------------
+
+export type PlayerMomentType =
+  | 'debut'             // First senior AFL game
+  | 'first-goal'        // First career goal
+  | 'first-bog'         // First best-on-ground (rating ≥ 9.0)
+  | 'breakout-game'     // Exceptional game (≥ 9.2) after already having first-bog
+  | 'milestone-games'   // 50, 100, 150, 200 … games played
+  | 'milestone-goals'   // 50, 100, 150, 200 … career goals
+  | 'finals-hero'       // Outstanding finals performance
+  | 'premiership'       // Member of a premiership team
+  | 'major-injury'      // Severe injury (≥ 8 weeks)
+  | 'brownlow-medal'    // Won the Brownlow Medal
+  | 'coleman-medal'     // Won the Coleman Medal
+  | 'all-australian'    // All-Australian selection
+  | 'club-bnf'          // Club Best & Fairest
+  | 'captain-appointed'     // Named captain of the club
+  | 'captain-relinquished'  // Stripped of / stepped down from captaincy
+  | 'vc-appointed'          // Named vice-captain of the club
+
+export interface PlayerMoment {
+  id: string
+  type: PlayerMomentType
+  date: string       // ISO date of the event
+  year: number
+  round: number      // -1 for off-season award events
+  isFinal: boolean
+  title: string
+  description: string
+  stats?: {
+    disposals?: number
+    goals?: number
+    marks?: number
+    tackles?: number
+    hitouts?: number
+    matchRating?: number
+    aflFantasyPoints?: number
+  }
+  value?: number          // e.g. 100 for 100-game milestone; Brownlow votes
+  opponentClubId?: string // the opposition club for match-based moments
 }
 
 export interface Player {
@@ -375,4 +442,9 @@ export interface Player {
   lastMatchRating?: number
   bio?: string
   seasonStatsHistory?: { year: number; stats: PlayerCareerStats }[]
+  moments?: PlayerMoment[]
+  /** Rolling history of weekly Squad Pulse notes (capped at 10 entries). */
+  pulseNotes?: PlayerPulseNote[]
+  /** Per-season attribute snapshots captured before offseason development. Key is the season year. Kept for last 5 seasons. */
+  attributeSnapshots?: Record<number, Partial<PlayerAttributes>>
 }

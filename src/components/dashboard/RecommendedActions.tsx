@@ -49,6 +49,13 @@ export function RecommendedActions() {
   const newsLog = useGameStore((s) => s.newsLog)
   const negotiations = useGameStore((s) => s.negotiations)
   const offseasonState = useGameStore((s) => s.offseasonState)
+  const jumperManagement = useGameStore((s) => s.jumperManagement)
+  const calendar = useGameStore((s) => s.calendar)
+
+  const jumperDeadlineDate = useMemo(() => {
+    const evt = calendar.events.find((e) => !e.resolved && e.type === 'jumper-management')
+    return evt?.date ?? null
+  }, [calendar.events])
 
   const recommendations = useMemo(
     () =>
@@ -63,8 +70,10 @@ export function RecommendedActions() {
         newsLog,
         negotiations,
         offseasonState,
+        jumperManagementPending: jumperManagement.pending,
+        jumperDeadlineDate,
       }),
-    [phase, playerClubId, players, settings, currentRound, season, selectedLineup, newsLog, negotiations, offseasonState],
+    [phase, playerClubId, players, settings, currentRound, season, selectedLineup, newsLog, negotiations, offseasonState, jumperManagement.pending, jumperDeadlineDate],
   )
 
   const criticalCount = recommendations.filter((r) => r.severity === 'critical').length

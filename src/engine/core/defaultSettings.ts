@@ -20,6 +20,8 @@ import { DEFAULT_DISTRIBUTION_CONFIG } from '@/engine/clubs/distributionEngine'
 // ---------------------------------------------------------------------------
 
 export const DEFAULT_MATCH_SLOTS: MatchTimeSlot[] = [
+  { id: 'tue-night',          day: 'Tuesday',           time: '7:20pm', enabled: false },
+  { id: 'wed-night',          day: 'Wednesday',         time: '7:20pm', enabled: false },
   { id: 'thu-night',          day: 'Thursday',          time: '7:20pm', enabled: true },
   { id: 'fri-night-early',    day: 'Friday',            time: '7:10pm', enabled: true },
   { id: 'fri-night-late',     day: 'Friday',            time: '8:10pm', enabled: true },
@@ -358,6 +360,7 @@ export const DEFAULT_SPECIAL_EVENTS: SpecialEventsSettings = {
   autoSchedule: true,
   originEligibility: 'birthplace',
   originConfig: { ...DEFAULT_ORIGIN_CONFIG, participatingStates: [...DEFAULT_ORIGIN_CONFIG.participatingStates], alliesStates: [...DEFAULT_ORIGIN_CONFIG.alliesStates] },
+  eventSchedules: {},
 }
 
 // ---------------------------------------------------------------------------

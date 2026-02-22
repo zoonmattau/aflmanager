@@ -13,10 +13,13 @@ import {
   Zap,
   BarChart3,
   Sword,
+  Sparkles,
+  Flame,
 } from 'lucide-react'
 import { ScoreWorm, QuarterMomentumBars } from '@/components/match/MatchCharts'
 import { PlayByPlayPanel } from '@/components/match/PlayByPlayPanel'
 import { PostMatchBoxScore } from '@/components/match/PostMatchBoxScore'
+import { DramaticMomentCard } from '@/components/player/MomentCard'
 import type { PostMatchReviewPayload } from '@/types/postMatch'
 import type { Club } from '@/types/club'
 import type { Player } from '@/types/player'
@@ -57,7 +60,7 @@ export function PostMatchReview({
   const [activeTab, setActiveTab] = useState<Tab>('overview')
   const [hlIdx, setHlIdx] = useState(0)
 
-  const { userMatch, matchReport, milestones, ladderSnapshot } = payload
+  const { userMatch, matchReport, milestones, ladderSnapshot, playerMoments, overtrainingImpact } = payload
   const result = userMatch.result!
   const homeClub = clubs[userMatch.homeClubId]
   const awayClub = clubs[userMatch.awayClubId]
@@ -201,13 +204,16 @@ export function PostMatchReview({
             key={tab.key}
             type="button"
             onClick={() => setActiveTab(tab.key)}
-            className={`flex-1 min-w-[80px] px-3 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
+            className={`relative flex-1 min-w-[80px] px-3 py-2.5 text-sm font-medium transition-colors whitespace-nowrap ${
               activeTab === tab.key
                 ? 'border-b-2 border-primary text-primary'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             {tab.label}
+            {tab.key === 'moments' && playerMoments && playerMoments.length > 0 && (
+              <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-amber-400" />
+            )}
           </button>
         ))}
       </div>
@@ -326,6 +332,49 @@ export function PostMatchReview({
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground">{matchReport.ladderContext.implication}</p>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Overtraining impact — cause-and-effect explanation */}
+              {overtrainingImpact && overtrainingImpact.length > 0 && (
+                <Card className="border-orange-500/25 bg-orange-500/5">
+                  <CardHeader className="py-2.5 px-4">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Flame className="h-4 w-4 text-orange-500" />
+                      Heavy Legs
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-4 pb-4 space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      The following players carried excessive fatigue into today's match and underperformed as a result.
+                    </p>
+                    <div className="space-y-1.5">
+                      {overtrainingImpact.map((entry) => (
+                        <div
+                          key={entry.playerId}
+                          className="flex items-center justify-between gap-3 rounded-md bg-muted/40 px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold">{entry.playerName}</p>
+                            <p className="text-[10px] text-muted-foreground">
+                              {entry.severity === 'heavy' ? 'Dangerously overdone' : 'Running on empty'}
+                              {' · '}Fatigue {entry.preMatchFatigue} going in
+                            </p>
+                          </div>
+                          <div className={`shrink-0 rounded border px-2 py-0.5 text-xs font-bold tabular-nums ${
+                            entry.matchRating < 6.0
+                              ? 'border-red-500/35 bg-red-500/12 text-red-600 dark:text-red-400'
+                              : 'border-orange-500/35 bg-orange-500/12 text-orange-600 dark:text-orange-400'
+                          }`}>
+                            {entry.matchRating.toFixed(1)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground pt-1">
+                      Schedule recovery or rest sessions before next game day to bring these players back to peak readiness.
+                    </p>
                   </CardContent>
                 </Card>
               )}
@@ -568,6 +617,31 @@ export function PostMatchReview({
           {/* ---- MOMENTS ---- */}
           {activeTab === 'moments' && (
             <>
+              {/* Career moment highlights for user-club players */}
+              {playerMoments && playerMoments.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-amber-400" />
+                    <span className="text-sm font-semibold">Career Moments</span>
+                    <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-400">
+                      {playerMoments.length}
+                    </Badge>
+                  </div>
+                  {playerMoments.map(({ playerId, moment }) => {
+                    const player = players[playerId]
+                    const opp = moment.opponentClubId ? clubs[moment.opponentClubId] : null
+                    return (
+                      <DramaticMomentCard
+                        key={moment.id}
+                        moment={moment}
+                        playerName={player ? `${player.firstName} ${player.lastName}` : playerId}
+                        opponentName={opp?.name ?? undefined}
+                      />
+                    )
+                  })}
+                </div>
+              )}
+
               {/* Highlight stepper */}
               {highlights.length > 0 && currentHighlight ? (
                 <Card>

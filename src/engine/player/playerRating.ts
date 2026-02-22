@@ -42,7 +42,7 @@ export function getPlayerPositionRating(player: Player, position: PlayerPosition
 
   const familiarityBonus =
     player.position.primary === position ? 4
-    : player.position.secondary.includes(position) ? 2
+    : (player.position.secondary ?? []).includes(position) ? 2
     : 0
 
   return clamp(Math.round(baseByPosition[position] + familiarityBonus), 1, 99)

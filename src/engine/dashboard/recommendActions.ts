@@ -29,6 +29,7 @@ export type RecommendationType =
   | 'offseason-review-draft'
   | 'offseason-list-violation'
   | 'offseason-cap-violation'
+  | 'confirm-jumper-numbers'
 
 export type RecommendationSeverity = 'critical' | 'warning' | 'info'
 
@@ -52,6 +53,8 @@ export interface RecommendationInput {
   newsLog: NewsItem[]
   negotiations: NegotiationTracker | null
   offseasonState: OffseasonState | null
+  jumperManagementPending?: boolean
+  jumperDeadlineDate?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -85,11 +88,12 @@ export function computeRecommendations(input: RecommendationInput): Recommendati
       collectOffseason(input, recs)
       break
     case 'preseason':
-      collectPreseason(recs)
+      collectPreseason(input, recs)
       break
   }
 
   collectCommon(input, recs)
+  collectJumperManagement(input, recs)
 
   recs.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
   return recs.slice(0, MAX_RECOMMENDATIONS)
@@ -266,7 +270,8 @@ function collectOffseason(input: RecommendationInput, recs: Recommendation[]): v
 // Preseason
 // ---------------------------------------------------------------------------
 
-function collectPreseason(recs: Recommendation[]): void {
+function collectPreseason(input: RecommendationInput, recs: Recommendation[]): void {
+  void input // input available for future preseason checks
   recs.push({
     id: 'set-training',
     type: 'set-training',
@@ -301,6 +306,25 @@ function collectCommon(input: RecommendationInput, recs: Recommendation[]): void
       linkTo: '/inbox',
     })
   }
+}
+
+// ---------------------------------------------------------------------------
+// Jumper management
+// ---------------------------------------------------------------------------
+
+function collectJumperManagement(input: RecommendationInput, recs: Recommendation[]): void {
+  if (!input.jumperManagementPending) return
+  const datePart = input.jumperDeadlineDate
+    ? ` by ${new Date(input.jumperDeadlineDate + 'T00:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}`
+    : ''
+  recs.push({
+    id: 'confirm-jumper-numbers',
+    type: 'confirm-jumper-numbers',
+    title: 'Confirm jumper numbers',
+    description: `Assign squad jumper numbers before the season opener${datePart}.`,
+    severity: 'warning',
+    linkTo: '/jumper-management',
+  })
 }
 
 // ---------------------------------------------------------------------------

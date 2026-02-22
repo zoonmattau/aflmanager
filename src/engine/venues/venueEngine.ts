@@ -7,6 +7,7 @@ import type {
   SoldHomeGame,
   VenueAssignment,
   VenueNegotiationOffer,
+  VenueRuleSet,
 } from '@/types/venue'
 import {
   VENUES,
@@ -16,6 +17,7 @@ import {
   STATE_DISTANCE,
   SOLD_GAME_VENUES,
 } from '@/data/venues'
+import { getEffectiveVenueRules } from '@/engine/venues/venueRuleEngine'
 
 // ---------------------------------------------------------------------------
 // resolveVenueId — backward compat bridge
@@ -33,7 +35,9 @@ export function generateDefaultAllocations(
   clubIds: string[],
   clubs: Record<string, Club>,
   rng: SeededRNG,
+  venueRules?: Partial<VenueRuleSet>,
 ): Record<string, ClubVenueConfig> {
+  const effectiveRules = getEffectiveVenueRules(venueRules)
   const allocations: Record<string, ClubVenueConfig> = {}
 
   // Group clubs by primary venue to handle shared venues
@@ -96,6 +100,17 @@ export function generateDefaultAllocations(
       // Add slight randomness
       if (rng.chance(0.3) && atPrimary > 3) {
         atPrimary -= 1
+      }
+    }
+
+    // Apply secondary quota rule cap (e.g. Hawthorn max 2 Tasmania games)
+    if (secondary) {
+      const quotaRule = effectiveRules.clubQuotaRules.find((r) => r.clubId === clubId)
+      if (quotaRule?.secondaryVenueMax !== null && quotaRule?.secondaryVenueMax !== undefined) {
+        if (atSecondary > quotaRule.secondaryVenueMax) {
+          atPrimary += atSecondary - quotaRule.secondaryVenueMax
+          atSecondary = quotaRule.secondaryVenueMax
+        }
       }
     }
 
@@ -176,7 +191,9 @@ export function applyVenueAllocationsToFixture(
   season: Season,
   allocations: Record<string, ClubVenueConfig>,
   rng: SeededRNG,
+  venueRules?: Partial<VenueRuleSet>,
 ): VenueAssignment[] {
+  const effectiveRules = getEffectiveVenueRules(venueRules)
   const assignments: VenueAssignment[] = []
 
   // Track remaining primary/secondary allocations per club
@@ -271,6 +288,41 @@ export function applyVenueAllocationsToFixture(
         venueId = SHARED_VENUE_OVERFLOW[config.primaryVenueId] ?? config.primaryVenueId
       }
 
+      // ── Matchup venue rule enforcement ──────────────────────────────────
+      // Before conflict resolution, check if a rule requires a specific venue
+      // or forbids the currently selected one.
+      const matchupRule = effectiveRules.matchupRules.find(
+        (r) => r.homeClubId === homeClubId && r.awayClubId === fixture.awayClubId,
+      )
+      if (matchupRule) {
+        // If a venue is required and differs from what was computed, use the required one
+        // (only if it's not a sold game — sold-game window takes precedence only without a rule)
+        if (matchupRule.requiredVenueId && venueId !== matchupRule.requiredVenueId && !isSold) {
+          // Return any secondary slot we may have consumed
+          if (isSecondary && clubRemaining) {
+            clubRemaining.secondary++
+            isSecondary = false
+          } else if (!isSecondary && clubRemaining && clubRemaining.primary > 0) {
+            // We consumed a primary slot; leave it consumed — we're just changing the venue
+          }
+          venueId = matchupRule.requiredVenueId
+        }
+        // If the computed venue is forbidden, fall back to required venue or primary
+        if (matchupRule.forbiddenVenueIds?.includes(venueId)) {
+          const fallback = matchupRule.requiredVenueId ?? config.primaryVenueId
+          if (isSecondary && clubRemaining) {
+            clubRemaining.secondary++
+            isSecondary = false
+          }
+          venueId = fallback
+        }
+        // Sold games to forbidden venues: cancel the sold game, treat as primary
+        if (isSold && matchupRule.forbiddenVenueIds?.includes(venueId)) {
+          venueId = matchupRule.requiredVenueId ?? config.primaryVenueId
+          isSold = false
+        }
+      }
+
       // Check for conflict: if venue already used this round by another home team
       const currentUsage = roundVenueUsage[venueId] ?? 0
       if (currentUsage > 0) {
@@ -281,13 +333,15 @@ export function applyVenueAllocationsToFixture(
           if (alternate) {
             venueId = alternate
           }
-        } else {
-          // Use overflow venue instead
+        } else if (!matchupRule?.requiredVenueId) {
+          // Only use overflow if there's no matchup rule locking the venue
           const overflow = SHARED_VENUE_OVERFLOW[venueId]
-          if (overflow && overflow !== venueId) {
+          if (overflow && overflow !== venueId && !matchupRule?.forbiddenVenueIds?.includes(overflow)) {
             venueId = overflow
           }
         }
+        // If there IS a required venue rule: accept the double-booking (two clubs can share
+        // a venue in different time slots; real AFL does this routinely at the MCG/Marvel)
       }
 
       roundVenueUsage[venueId] = (roundVenueUsage[venueId] ?? 0) + 1

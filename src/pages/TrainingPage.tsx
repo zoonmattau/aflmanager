@@ -1,4 +1,6 @@
-import { useMemo, useState, useCallback, useEffect } from 'react'
+import { useMemo, useState, useCallback } from 'react'
+import { useNavigationGuard } from '@/hooks/useNavigationGuard'
+import { NavigationGuardDialog } from '@/components/common/NavigationGuardDialog'
 import { useGameStore } from '@/stores/gameStore'
 import type { Player, PlayerPositionType, PlayerTrainingFocus } from '@/types/player'
 import type { StaffMember } from '@/types/staff'
@@ -9,6 +11,7 @@ import {
   PLAYER_TRAINING_FOCUS_OPTIONS,
 } from '@/engine/players/trainingFocus'
 import { addDays } from '@/engine/calendar/calendarEngine'
+import { PHASE_ORDER } from '@/engine/season/offseasonFlow'
 import { getTrainingInjuryRisk } from '@/engine/players/trainingInjuries'
 import { getMedicalStaffImpact } from '@/engine/staff/staffEngine'
 import { computeProjectionContext } from '@/lib/trainingProjection'
@@ -17,6 +20,8 @@ import type { Club } from '@/types/club'
 import { WeekPlannerGrid } from '@/components/training/WeekPlannerGrid'
 import { WeekLoadSummary } from '@/components/training/WeekLoadSummary'
 import { EnhancedSquadFitness } from '@/components/training/EnhancedSquadFitness'
+import { TrainingReportCard } from '@/components/training/TrainingReportCard'
+import { SquadPulse } from '@/components/training/SquadPulse'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -39,6 +44,7 @@ import {
   ShieldAlert,
   AlertTriangle,
   CheckCircle2,
+  Palmtree,
 } from 'lucide-react'
 
 function getWeekStart(dateStr: string): string {
@@ -53,6 +59,32 @@ function getWeekDates(monday: string): string[] {
   return Array.from({ length: 7 }, (_, i) => addDays(monday, i))
 }
 
+/** Mirrors calendarEngine.ts toMondayAnchor — first Monday on-or-after a date. */
+function toMondayAnchor(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00`)
+  const day = d.getDay()
+  const daysToMonday = day === 1 ? 0 : (8 - day) % 7
+  d.setDate(d.getDate() + daysToMonday)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** Mirrors calendarEngine.ts matchDayOffset exactly. */
+function matchDayOffset(matchDay?: string): number {
+  switch (matchDay) {
+    case 'Thursday': return 3
+    case 'Friday': return 4
+    case 'Saturday-Early':
+    case 'Saturday-Afternoon':
+    case 'Saturday-Twilight':
+    case 'Saturday-Night': return 5
+    case 'Sunday-Early':
+    case 'Sunday-Afternoon':
+    case 'Sunday-Twilight': return 6
+    case 'Monday': return 7
+    default: return 5
+  }
+}
+
 function getMatchDateForRound(
   season: { rounds: { fixtures: { homeClubId: string; awayClubId: string; matchDay?: string }[]; byeClubIds: string[] }[] },
   currentRound: number,
@@ -63,30 +95,14 @@ function getMatchDateForRound(
   if (!round) return null
   if (round.byeClubIds?.includes(playerClubId)) return null
 
-  const baseDate = addDays(seasonStartDate, currentRound * 7)
   const fixture = round.fixtures.find(
     (f) => f.homeClubId === playerClubId || f.awayClubId === playerClubId,
   )
-  if (!fixture) return baseDate
+  if (!fixture) return null
 
-  const MATCH_DAY_OFFSETS: Record<string, number> = {
-    Thursday: 3,
-    Friday: 4,
-    'Saturday-Early': 5,
-    'Saturday-Afternoon': 5,
-    'Saturday-Twilight': 5,
-    'Saturday-Night': 5,
-    'Sunday-Early': 6,
-    'Sunday-Afternoon': 6,
-    'Sunday-Twilight': 6,
-  }
-
-  if (fixture.matchDay) {
-    const offset = MATCH_DAY_OFFSETS[fixture.matchDay] ?? 5
-    return addDays(baseDate, offset)
-  }
-
-  return addDays(baseDate, 5)
+  // Use the same Monday-anchor formula as calendarEngine.ts
+  const mondayAnchor = toMondayAnchor(seasonStartDate)
+  return addDays(mondayAnchor, currentRound * 7 + matchDayOffset(fixture.matchDay))
 }
 
 function fitnessColor(val: number): string {
@@ -133,27 +149,42 @@ function EnhancedWeekPlanner({
   const trainingWeekPlan = useGameStore((s) => s.trainingWeekPlan)
   const setTrainingWeekPlan = useGameStore((s) => s.setTrainingWeekPlan)
   const updateTrainingSlotGroups = useGameStore((s) => s.updateTrainingSlotGroups)
+  const lastTrainingReport = useGameStore((s) => s.lastTrainingReport)
 
-  const monday = getWeekStart(currentDate)
-  const weekDates = useMemo(() => getWeekDates(monday), [monday])
-
-  const matchDate = useMemo(
-    () => getMatchDateForRound(season, currentRound, playerClubId, settings.seasonStartDate),
-    [season, currentRound, playerClubId, settings.seasonStartDate],
+  const weekDates = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addDays(currentDate, i)),
+    [currentDate],
   )
 
-  useEffect(() => {
-    if (!trainingWeekPlan) {
-      const defaultPlan = getDefaultTrainingWeekPlan(weekDates, matchDate)
-      setTrainingWeekPlan(defaultPlan)
-    }
-  }, [trainingWeekPlan, weekDates, matchDate, setTrainingWeekPlan])
+  const matchDate = useMemo(() => {
+    const calculated = getMatchDateForRound(season, currentRound, playerClubId, settings.seasonStartDate)
+    // Only highlight as a match day if it actually falls within the visible window
+    if (!calculated || !weekDates.includes(calculated)) return null
+    return calculated
+  }, [season, currentRound, playerClubId, settings.seasonStartDate, weekDates])
 
-  const plan = trainingWeekPlan ?? getDefaultTrainingWeekPlan(weekDates, matchDate)
+  const emptyPlan = useMemo<TrainingWeekPlan>(
+    () => ({
+      slots: Object.fromEntries(
+        weekDates.map((date) => [date, { morning: { groups: [] }, afternoon: { groups: [] } }]),
+      ),
+      matchDate,
+    }),
+    [weekDates, matchDate],
+  )
+
+  const plan = trainingWeekPlan ?? emptyPlan
+
+  // Dirty flag: set as soon as the user modifies any session in this visit.
+  // Training changes write directly to the store (auto-saved), so this flag
+  // is only used to prompt "are you done?" before navigating away mid-session.
+  const [planDirty, setPlanDirty] = useState(false)
+  const trainingGuard = useNavigationGuard(planDirty)
 
   const handleUpdateSlotGroups = useCallback(
     (date: string, slot: 'morning' | 'afternoon', groups: TrainingGroup[]) => {
       updateTrainingSlotGroups(date, slot, groups)
+      setPlanDirty(true)
     },
     [updateTrainingSlotGroups],
   )
@@ -161,6 +192,7 @@ function EnhancedWeekPlanner({
   const handleAutoFill = useCallback(() => {
     const defaultPlan = getDefaultTrainingWeekPlan(weekDates, matchDate)
     setTrainingWeekPlan(defaultPlan)
+    setPlanDirty(true)
   }, [weekDates, matchDate, setTrainingWeekPlan])
 
   const handleClear = useCallback(() => {
@@ -174,10 +206,22 @@ function EnhancedWeekPlanner({
       matchDate,
     }
     setTrainingWeekPlan(emptyPlan)
+    setPlanDirty(true)
   }, [weekDates, matchDate, setTrainingWeekPlan])
 
   return (
     <div className="space-y-4">
+      <NavigationGuardDialog
+        isBlocked={trainingGuard.isBlocked}
+        title="Leave Training Planner?"
+        description="Your training changes are saved automatically. Leave the Training Planner?"
+        confirmLabel="Leave"
+        cancelLabel="Stay"
+        proceed={trainingGuard.proceed}
+        reset={trainingGuard.reset}
+      />
+      {lastTrainingReport && <TrainingReportCard report={lastTrainingReport} />}
+      <SquadPulse players={clubPlayers} />
       <WeekLoadSummary plan={plan} onAutoFill={handleAutoFill} onClear={handleClear} />
       <div className="overflow-x-auto">
         <WeekPlannerGrid
@@ -729,12 +773,26 @@ function InjuryRiskTab({
   )
 }
 
+// Training is only available from preseason onwards.
+// Before that, players are on their end-of-season break.
+function useTrainingAvailable(): boolean {
+  const phase = useGameStore((s) => s.phase)
+  const offseasonState = useGameStore((s) => s.offseasonState)
+  if (phase !== 'offseason') return true
+  if (!offseasonState) return true
+  const preseasonIndex = PHASE_ORDER.indexOf('preseason')
+  const currentIndex = PHASE_ORDER.indexOf(offseasonState.currentPhase)
+  return currentIndex >= preseasonIndex
+}
+
 export function TrainingPage() {
   const playerClubId = useGameStore((s) => s.playerClubId)
   const players = useGameStore((s) => s.players)
   const staff = useGameStore((s) => s.staff)
   const clubs = useGameStore((s) => s.clubs)
   const trainingWeekPlan = useGameStore((s) => s.trainingWeekPlan)
+  const offseasonState = useGameStore((s) => s.offseasonState)
+  const trainingAvailable = useTrainingAvailable()
 
   const club = clubs[playerClubId]
 
@@ -794,22 +852,49 @@ export function TrainingPage() {
         </TabsList>
 
         <TabsContent value="planner">
-          <EnhancedWeekPlanner clubPlayers={clubPlayers} clubStaff={clubStaff} />
+          {trainingAvailable ? (
+            <>
+              <p className="text-sm text-muted-foreground pb-3">
+                Plan each player's training load and focus area for the week. Balancing intensity prevents burnout and injury.
+              </p>
+              <EnhancedWeekPlanner clubPlayers={clubPlayers} clubStaff={clubStaff} />
+            </>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-16 space-y-4 text-center">
+              <Palmtree className="h-12 w-12 text-muted-foreground/50" />
+              <div className="space-y-1">
+                <p className="text-lg font-semibold">Players are on end-of-season break</p>
+                <p className="text-sm text-muted-foreground max-w-sm">
+                  Training resumes when the squad returns for preseason.
+                  {offseasonState && (
+                    <> You&apos;re currently in the <strong>{offseasonState.currentPhase.replace(/-/g, ' ')}</strong> phase.</>
+                  )}
+                </p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Use Player Focus and Upskilling tabs to plan development before training begins.
+              </p>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="fitness">
+          <p className="text-sm text-muted-foreground pb-3">Monitor squad conditioning and fatigue across the week. High fatigue increases injury risk going into a match.</p>
           <EnhancedSquadFitness clubPlayers={clubPlayers} plan={trainingWeekPlan} />
         </TabsContent>
 
         <TabsContent value="retrain">
+          <p className="text-sm text-muted-foreground pb-3">Retrain players to learn new positions or develop specific skill attributes. Progress is gradual — start early in the season.</p>
           <UpskillingTab clubPlayers={clubPlayers} />
         </TabsContent>
 
         <TabsContent value="focus">
+          <p className="text-sm text-muted-foreground pb-3">Assign dedicated coaching attention to individual players. Focused players develop faster, but staff capacity is limited.</p>
           <PlayerFocusTab clubPlayers={clubPlayers} club={club} clubStaff={clubStaff} />
         </TabsContent>
 
         <TabsContent value="injury-risk">
+          <p className="text-sm text-muted-foreground pb-3">Players at elevated risk of soft tissue or overuse injuries based on age, workload, and injury history.</p>
           <InjuryRiskTab clubPlayers={clubPlayers} clubStaff={clubStaff} />
         </TabsContent>
       </Tabs>

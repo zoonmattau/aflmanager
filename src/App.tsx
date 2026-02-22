@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, Component } from 'react'
+import type { ErrorInfo, ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ThemeProvider } from '@/components/layout/ThemeProvider'
@@ -69,8 +70,67 @@ import { SponsorshipPage } from '@/pages/SponsorshipPage'
 import { GlossaryPage } from '@/pages/GlossaryPage'
 import { BettingPage } from '@/pages/BettingPage'
 import { StateOfOriginPage } from '@/pages/StateOfOriginPage'
+import { MatchViewerPage } from '@/pages/MatchViewerPage'
+import { CoachesPage } from '@/pages/CoachesPage'
+import { CoachProfilePage } from '@/pages/CoachProfilePage'
+import { LegacyPage } from '@/pages/LegacyPage'
+import { LeadershipPage } from '@/pages/LeadershipPage'
+import { LeadershipSelectionPage } from '@/pages/LeadershipSelectionPage'
 import { useGameStore } from '@/stores/gameStore'
 import { useAppStore } from '@/stores/appStore'
+import { MatchToastContainer } from '@/components/notifications/MatchToastContainer'
+
+// ---------------------------------------------------------------------------
+// Error Boundary
+// ---------------------------------------------------------------------------
+
+interface ErrorBoundaryState {
+  error: Error | null
+}
+
+class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
+  constructor(props: { children: ReactNode }) {
+    super(props)
+    this.state = { error: null }
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { error }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[ErrorBoundary] Caught render error:', error, info.componentStack)
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-8">
+          <div className="w-full max-w-xl rounded-lg border border-red-500/40 bg-red-500/10 p-6">
+            <h2 className="mb-2 text-lg font-bold text-red-700">Something went wrong</h2>
+            <p className="mb-4 text-sm text-red-700/80">
+              A render error occurred. Check the browser console for details.
+            </p>
+            <pre className="overflow-auto rounded bg-red-950/20 p-3 text-xs text-red-300">
+              {this.state.error.message}
+              {'\n\n'}
+              {this.state.error.stack}
+            </pre>
+            <button
+              className="mt-4 rounded border border-red-500/40 bg-red-500/20 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-500/30"
+              onClick={() => this.setState({ error: null })}
+            >
+              Try to recover
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 function GameRoutes() {
   const playerClubId = useGameStore((s) => s.playerClubId)
@@ -147,6 +207,8 @@ function GameRoutes() {
         <Route path="/all-australian/squad" element={<AllAustralianSquadPage />} />
         <Route path="/awards-history" element={<AwardsHistoryPage />} />
         <Route path="/world-hub" element={<WorldHubPage />} />
+        <Route path="/coaches" element={<CoachesPage />} />
+        <Route path="/coaches/:coachId" element={<CoachProfilePage />} />
         <Route path="/youth-pathway" element={<YouthPathwayPage />} />
         <Route path="/youth-pathway/competition/:compId" element={<YouthCompDetailPage />} />
         <Route path="/youth-pathway/player/:playerId" element={<YouthPlayerDetailPage />} />
@@ -157,8 +219,11 @@ function GameRoutes() {
         <Route path="/compare" element={<PlayerComparisonPage />} />
         <Route path="/rules" element={<RulesPage />} />
         <Route path="/glossary" element={<GlossaryPage />} />
+        <Route path="/legacy" element={<LegacyPage />} />
         <Route path="/compare/:playerAId" element={<PlayerComparisonPage />} />
         <Route path="/compare/:playerAId/:playerBId" element={<PlayerComparisonPage />} />
+        <Route path="/leadership" element={<LeadershipPage />} />
+        <Route path="/preseason-leadership" element={<LeadershipSelectionPage />} />
         <Route path="/matchup-preview" element={<MatchupPreviewPage />} />
         <Route path="/game-settings" element={<GameSettingsPage />} />
         <Route path="/tribunal" element={<TribunalPage />} />
@@ -166,6 +231,7 @@ function GameRoutes() {
         <Route path="/preseason-preview" element={<PreseasonPreviewPage />} />
         <Route path="/betting" element={<BettingPage />} />
         <Route path="/state-of-origin" element={<StateOfOriginPage />} />
+        <Route path="/watch" element={<MatchViewerPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppLayout>
@@ -239,7 +305,8 @@ export default function App() {
           {currentScreen === 'settings' && <GlobalSettingsPage />}
           {currentScreen === 'league-presets' && <LeaguePresetsPage />}
           {currentScreen === 'custom-league-builder' && <CustomLeagueBuilderPage />}
-          {currentScreen === 'game' && <GameRoutes />}
+          {currentScreen === 'game' && <ErrorBoundary><GameRoutes /></ErrorBoundary>}
+          {currentScreen === 'game' && <MatchToastContainer />}
         </BrowserRouter>
       </TooltipProvider>
     </ThemeProvider>

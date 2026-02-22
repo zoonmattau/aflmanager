@@ -85,6 +85,35 @@ export interface ClubCulture {
   lastUpdatedRound: number
 }
 
+export type CohesionEventType =
+  | 'captaincy-change'
+  | 'trade'
+  | 'role-switch'
+  | 'injury-disruption'
+
+export interface CohesionEvent {
+  round: number
+  type: CohesionEventType
+  description: string
+  /** Negative = hurts cohesion. Used for display severity. */
+  impact: number
+}
+
+export interface TeamCohesion {
+  score: number               // 0-100 overall
+  leadershipStability: number // 0-100
+  roleFamiliarity: number     // 0-100
+  unitChemistry: number       // 0-100
+  listContinuity: number      // 0-100
+  moraleAverage: number       // 0-100
+  lastUpdatedRound: number
+  /** Recent events that affected cohesion (trimmed to last 8 rounds worth). */
+  recentEvents: CohesionEvent[]
+  /** Captain ID at last update — used to detect captaincy changes. */
+  prevCaptainId: string | null
+  prevViceCaptainId: string | null
+}
+
 export type ClubIdentityType =
   | 'youth-development'
   | 'star-chasing'
@@ -320,6 +349,7 @@ export interface Club {
   tacticalIdentity: TacticalIdentity
   leadership: ClubLeadership
   culture?: ClubCulture
+  cohesion?: TeamCohesion
   identity?: ClubIdentity
   fanSatisfaction?: number
   lastSeasonLadderPosition?: number  // 1-18, undefined for first season
@@ -330,6 +360,8 @@ export interface Club {
   rivalryClubIds?: string[]
   budgetAllocation?: ClubBudgetAllocation
   mediaPressure?: MediaPressure
+  /** ID of the head coach assigned to this club */
+  coachId?: string
   /** AI personality for non-player clubs */
   aiPersonality: {
     competitiveWindow: 'win-now' | 'balanced' | 'rebuilding'

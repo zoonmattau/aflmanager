@@ -301,6 +301,27 @@ export function buildSeasonCalendar(
     ),
   )
 
+  // ---- Jumper management deadline ----
+  // Placed the day before the user's Round 1 event (match or bye).
+  if (season.rounds.length > 0) {
+    const round0 = season.rounds[0]
+    const userOnBye = (round0.byeClubIds ?? []).includes(playerClubId)
+    const userFixture0 = round0.fixtures.find(
+      (f) => f.homeClubId === playerClubId || f.awayClubId === playerClubId,
+    )
+    const round1EventDate = userOnBye
+      ? addDays(mondayAnchor, 0) // Monday of bye week
+      : addDays(mondayAnchor, matchDayOffset(userFixture0?.matchDay))
+    events.push(
+      createEvent(
+        addDays(round1EventDate, -1),
+        'jumper-management',
+        'Confirm Jumper Numbers',
+        'Set squad jumper numbers before the season opener',
+      ),
+    )
+  }
+
   // Sort by date
   events.sort((a, b) => a.date.localeCompare(b.date))
 
@@ -398,7 +419,7 @@ export interface DeadlineCountdown {
 }
 
 const DEADLINE_EVENT_TYPES = new Set<GameEventType>([
-  'contract-deadline', 'trade-deadline', 'draft', 'tribunal',
+  'contract-deadline', 'trade-deadline', 'draft', 'tribunal', 'jumper-management',
 ])
 
 const DEADLINE_LINKS: Partial<Record<GameEventType, string>> = {
@@ -406,6 +427,7 @@ const DEADLINE_LINKS: Partial<Record<GameEventType, string>> = {
   'trade-deadline': '/trade',
   'draft': '/draft',
   'tribunal': '/squad',
+  'jumper-management': '/jumper-management',
 }
 
 /**

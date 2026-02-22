@@ -60,9 +60,11 @@ export function OppositionOverlay({
             : player.lastName
         const displayName = `${player.firstName.charAt(0)}. ${surname}`
         const overall = getOverallRating(player)
-        const verticalOffset = pos.top <= 50
-          ? 'calc(clamp(26px, 3.9vw, 46px) + 4px)'
-          : 'calc(-1 * (clamp(26px, 3.9vw, 46px) + 4px))'
+        // FB/CHB/CHF/FF are nudged below the midline so opposition always goes above
+        const oppAboveSlots = new Set(['FB', 'CHB', 'CHF', 'FF'])
+        const verticalOffset = (pos.top <= 50 || oppAboveSlots.has(slotPos.slot))
+          ? 'calc(-1 * (clamp(26px, 3.9vw, 46px) + 4px))'
+          : 'calc(clamp(26px, 3.9vw, 46px) + 4px)'
 
         return (
           <div
@@ -75,19 +77,19 @@ export function OppositionOverlay({
             }}
           >
             <div
-              className="pointer-events-auto flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] cursor-pointer items-center gap-[clamp(3px,0.45vw,7px)] rounded-md border px-[clamp(3px,0.55vw,7px)] opacity-85 shadow-sm transition-opacity hover:opacity-100"
+              className="pointer-events-auto flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] cursor-pointer items-center gap-[clamp(3px,0.45vw,7px)] rounded-md border px-[clamp(3px,0.55vw,7px)] shadow-sm transition-opacity hover:opacity-90"
               style={{
-                borderColor: `${clubColor}99`,
-                backgroundColor: `${clubColor}3d`,
+                borderColor: clubColor,
+                backgroundColor: `${clubColor}cc`,
               }}
               onClick={() => onPlayerClick?.(player.id)}
             >
-              <span className="hidden min-[1150px]:block w-[clamp(18px,1.8vw,28px)] text-center text-[clamp(8px,1vw,12px)] font-bold leading-none text-zinc-200">
+              <span className="hidden min-[1150px]:block w-[clamp(18px,1.8vw,28px)] text-center text-[clamp(8px,1vw,12px)] font-bold leading-none text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.9)]">
                 #{player.jerseyNumber}
               </span>
                     <div className="min-w-0 leading-tight">
-                      <span className="block truncate text-[clamp(7px,0.82vw,10px)] text-zinc-100">{displayName}</span>
-                      <span className="block truncate text-[clamp(6px,0.72vw,9px)] text-zinc-300">
+                      <span className="block truncate text-[clamp(7px,0.82vw,10px)] text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.9)]">{displayName}</span>
+                      <span className="block truncate text-[clamp(6px,0.72vw,9px)] text-white/90 [text-shadow:0_1px_2px_rgba(0,0,0,0.9)]">
                         <span className={`rounded border px-1 py-0 ${getPositionBadgeStrongClass(player.position.primary)}`}>{player.position.primary}</span> OVR {overall}
                       </span>
                     </div>

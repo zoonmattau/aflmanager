@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, memo } from 'react'
+import { cn } from '@/lib/utils'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import {
   useReactTable,
@@ -9,10 +10,12 @@ import {
   type SortingState,
 } from '@tanstack/react-table'
 import { useGameStore } from '@/stores/gameStore'
+import { useAppStore } from '@/stores/appStore'
 import { useTableViewManager, type TableViewColumnConfig } from '@/components/table-view/useTableViewManager'
 import { TableViewManagerControl } from '@/components/table-view/TableViewManagerControl'
 import type { LineupSlot, Player } from '@/types/player'
-import { getLeadershipScore, getTeamLeadershipRating } from '@/engine/leadership/leadershipEngine'
+import { getLeadershipScore, getTeamLeadershipRating, autoSelectLeadership } from '@/engine/leadership/leadershipEngine'
+import type { ClubLeadership } from '@/types/club'
 import {
   getOverallRating,
   getPlayerPositionRating,
@@ -41,19 +44,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AlertTriangle, ArrowUpDown, Shield } from 'lucide-react'
 import { PlayerStarRating } from '@/components/player/PlayerStarRating'
+import { ReadinessBadge } from '@/components/player/ReadinessBadge'
+import { PlayerHoverCard } from '@/components/player/PlayerHoverCard'
+import { computePlayerReadiness } from '@/engine/player/readinessEngine'
 import { getPositionBadgeClass, getPositionFilterButtonClass } from '@/lib/positionColor'
 import { calcDisposalEfficiency, calcKickingAccuracy, calcContestedPossessionPct, calcKickToHandballRatio, fmtPct, fmtKHRatio } from '@/lib/efficiencyStats'
 import { getInjuryRiskLevel, injuryRiskDisplay } from '@/lib/injuryRisk'
 import { matchRatingColorClass } from '@/engine/match/matchRatings'
 import { ClubBFLeaderboardWidget } from '@/components/squad/ClubBFLeaderboardWidget'
+import { CohesionTab } from '@/components/squad/CohesionTab'
 
 const columnHelper = createColumnHelper<Player>()
 
-type SquadView = 'ratings' | 'stats' | 'contracts' | 'development'
+type SquadView = 'ratings' | 'stats' | 'contracts' | 'development' | 'leadership' | 'readiness' | 'cohesion'
 type QuickFilter = 'all' | 'def' | 'mid' | 'fwd' | 'rk' | 'expiring' | 'injured'
 type AssignmentSlot = LineupSlot | `RES:${LineupSlot}` | 'SUB' | 'REST' | 'UNASSIGNED'
 
@@ -70,6 +77,9 @@ const VIEW_OPTIONS: { key: SquadView; label: string }[] = [
   { key: 'stats', label: 'Stats' },
   { key: 'contracts', label: 'Contracts' },
   { key: 'development', label: 'Development' },
+  { key: 'leadership', label: 'Leadership' },
+  { key: 'readiness', label: 'Readiness' },
+  { key: 'cohesion', label: 'Cohesion' },
 ]
 
 const QUICK_FILTERS: { key: QuickFilter; label: string }[] = [
@@ -125,15 +135,17 @@ function decodeReservesSlot(slot: `RES:${LineupSlot}`): LineupSlot {
   return slot.slice(4) as LineupSlot
 }
 
-function NameCell({ playerId, name, leadershipRole }: { playerId: string; name: string; leadershipRole?: 'C' | 'VC' | 'LG' }) {
+function NameCell({ playerId, name, leadershipRole, player }: { playerId: string; name: string; leadershipRole?: 'C' | 'VC' | 'LG'; player: Player }) {
   return (
     <div className="flex items-center gap-1.5">
-      <Link
-        className="font-medium text-left hover:underline hover:text-primary cursor-pointer"
-        to={`/player/${encodeURIComponent(playerId)}`}
-      >
-        {name}
-      </Link>
+      <PlayerHoverCard player={player} side="right">
+        <Link
+          className="font-medium text-left hover:underline hover:text-primary cursor-pointer"
+          to={`/player/${encodeURIComponent(playerId)}`}
+        >
+          {name}
+        </Link>
+      </PlayerHoverCard>
       {leadershipRole === 'C' && (
         <Badge variant="outline" className="text-[9px] px-1 py-0 bg-amber-500/15 text-amber-600 border-amber-500/30">C</Badge>
       )}
@@ -147,10 +159,78 @@ function NameCell({ playerId, name, leadershipRole }: { playerId: string; name: 
   )
 }
 
+interface SlotAssignmentCellProps {
+  player: Player
+  assignedSlot: AssignmentSlot
+  getSlotOptions: (player: Player) => AssignmentSlotOption[]
+  onChangeAssignedSlot: (playerId: string, slot: string) => void
+}
+
+const SlotAssignmentCell = memo(function SlotAssignmentCell({
+  player,
+  assignedSlot,
+  getSlotOptions,
+  onChangeAssignedSlot,
+}: SlotAssignmentCellProps) {
+  const [open, setOpen] = useState(false)
+  const slotOptions = useMemo(
+    () => (open ? getSlotOptions(player) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [open],
+  )
+  return (
+    <Select
+      open={open}
+      onOpenChange={setOpen}
+      value={assignedSlot ?? undefined}
+      onValueChange={(slot) => onChangeAssignedSlot(player.id, slot)}
+    >
+      <SelectTrigger
+        className={`h-7 w-[120px] text-xs ${
+          assignedSlot === 'UNASSIGNED'
+            ? 'border-red-500/60 bg-red-500/10 text-red-700 focus-visible:ring-red-500/30'
+            : ''
+        }`}
+      >
+        {assignedSlot === 'UNASSIGNED' ? (
+          <span className="text-muted-foreground truncate">Assign slot...</span>
+        ) : (
+          <span className="truncate">{assignedSlot}</span>
+        )}
+      </SelectTrigger>
+      <SelectContent>
+        {slotOptions.map((slotOption) => (
+          <SelectItem
+            key={`${player.id}-${slotOption.slot}`}
+            value={slotOption.slot}
+            className={slotOption.slot === 'UNASSIGNED' ? 'bg-red-500/10 text-red-700 focus:bg-red-500/20' : undefined}
+          >
+            <div className="leading-tight">
+              <div className="font-medium">
+                {slotOption.occupiedBySelf
+                  ? slotOption.slot
+                  : slotOption.occupantRating !== null
+                    ? `${slotOption.slot} - ${slotOption.occupantLabel} - ${slotOption.occupantRating}`
+                    : `${slotOption.slot} - ${slotOption.occupantLabel}`}
+              </div>
+              {!slotOption.occupiedBySelf && slotOption.occupantRating !== null && (
+                <div className="text-[10px] text-muted-foreground">
+                  {`${player.firstName} ${player.lastName} - ${slotOption.projectedRating}`}
+                </div>
+              )}
+            </div>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+})
+
 function buildColumns(
   view: SquadView,
-  reservesStatsByPlayer: Record<string, { gamesPlayed: number }>,
+  reservesStatsByPlayerRaw: Record<string, { gamesPlayed: number }> | null | undefined,
   statsDisplayMode: 'totals' | 'averages',
+  currentYear: number,
   assignment?: {
     enabled: boolean
     getAssignedSlot: (playerId: string) => AssignmentSlot | null
@@ -158,6 +238,7 @@ function buildColumns(
     onChangeAssignedSlot: (playerId: string, slot: string) => void
   },
 ) {
+  const reservesStatsByPlayer: Record<string, { gamesPlayed: number }> = reservesStatsByPlayerRaw ?? {}
   const base = [
     columnHelper.accessor('jerseyNumber', { header: '#', size: 44 }),
     columnHelper.accessor((row) => `${row.firstName} ${row.lastName}`, {
@@ -166,7 +247,7 @@ function buildColumns(
       cell: (info) => {
         const meta = info.table.options.meta as { leadershipRoleMap?: Record<string, 'C' | 'VC' | 'LG'> } | undefined
         const role = meta?.leadershipRoleMap?.[info.row.original.id]
-        return <NameCell playerId={info.row.original.id} name={info.getValue()} leadershipRole={role} />
+        return <NameCell playerId={info.row.original.id} name={info.getValue()} leadershipRole={role} player={info.row.original} />
       },
       size: 210,
     }),
@@ -191,46 +272,13 @@ function buildColumns(
         if (!assignment?.enabled) return <span className="text-xs text-muted-foreground">-</span>
         const player = info.row.original
         const assignedSlot = assignment.getAssignedSlot(player.id) ?? 'UNASSIGNED'
-        const slotOptions = assignment.getSlotOptions(player)
         return (
-          <Select
-            value={assignedSlot ?? undefined}
-            onValueChange={(slot) => assignment.onChangeAssignedSlot(player.id, slot)}
-          >
-            <SelectTrigger
-              className={`h-7 w-[120px] text-xs ${
-                assignedSlot === 'UNASSIGNED'
-                  ? 'border-red-500/60 bg-red-500/10 text-red-700 focus-visible:ring-red-500/30'
-                  : ''
-              }`}
-            >
-              <SelectValue placeholder="Assign slot..." />
-            </SelectTrigger>
-              <SelectContent>
-                {slotOptions.map((slotOption) => (
-                  <SelectItem
-                    key={`${player.id}-${slotOption.slot}`}
-                    value={slotOption.slot}
-                    className={slotOption.slot === 'UNASSIGNED' ? 'bg-red-500/10 text-red-700 focus:bg-red-500/20' : undefined}
-                  >
-                    <div className="leading-tight">
-                      <div className="font-medium">
-                        {slotOption.occupiedBySelf
-                        ? slotOption.slot
-                        : slotOption.occupantRating !== null
-                          ? `${slotOption.slot} - ${slotOption.occupantLabel} - ${slotOption.occupantRating}`
-                          : `${slotOption.slot} - ${slotOption.occupantLabel}`}
-                    </div>
-                    {!slotOption.occupiedBySelf && slotOption.occupantRating !== null && (
-                      <div className="text-[10px] text-muted-foreground">
-                        {`${player.firstName} ${player.lastName} - ${slotOption.projectedRating}`}
-                      </div>
-                    )}
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SlotAssignmentCell
+            player={player}
+            assignedSlot={assignedSlot}
+            getSlotOptions={assignment.getSlotOptions}
+            onChangeAssignedSlot={assignment.onChangeAssignedSlot}
+          />
         )
       },
       size: 280,
@@ -408,21 +456,28 @@ function buildColumns(
   }
 
   if (view === 'contracts') {
+    const yearCols = Array.from({ length: 5 }, (_, i) =>
+      columnHelper.accessor((row) => row.contract.yearByYear[i] ?? null, {
+        id: `year_${currentYear + i}`,
+        header: String(currentYear + i),
+        cell: (info) => {
+          const val = info.getValue()
+          return val !== null
+            ? <span className="text-xs tabular-nums">${Math.round(val / 1000)}k</span>
+            : <span className="text-muted-foreground/30 text-xs">—</span>
+        },
+        size: 78,
+      }),
+    )
     return [
       ...base,
-      columnHelper.accessor((row) => row.contract.yearsRemaining, { id: 'years', header: 'Years', size: 62 }),
       columnHelper.accessor((row) => row.contract.aav, {
         id: 'aav',
         header: 'AAV',
         cell: (i) => <span className="text-xs tabular-nums">${Math.round(i.getValue() / 1000)}k</span>,
-        size: 86,
+        size: 80,
       }),
-      columnHelper.accessor((row) => row.contract.aav * row.contract.yearsRemaining, {
-        id: 'remaining_value',
-        header: 'Total Remaining',
-        cell: (i) => <span className="text-xs tabular-nums">${Math.round(i.getValue() / 1000)}k</span>,
-        size: 112,
-      }),
+      ...yearCols,
       columnHelper.accessor((row) => row.isRookie, {
         id: 'list',
         header: 'List',
@@ -447,6 +502,86 @@ function buildColumns(
         },
         size: 220,
       }),
+    ]
+  }
+
+  if (view === 'readiness') {
+    return [
+      ...base,
+      columnHelper.accessor((row) => computePlayerReadiness(row).score, {
+        id: 'readiness_score',
+        header: 'Readiness',
+        cell: (i) => (
+          <ReadinessBadge player={i.row.original} showLabel size="sm" />
+        ),
+        size: 100,
+      }),
+      columnHelper.accessor('fitness', {
+        id: 'fit',
+        header: 'Fitness',
+        cell: (i) => {
+          const v = i.getValue()
+          return (
+            <div className="flex items-center gap-1.5 min-w-[80px]">
+              <div className="flex-1 h-1.5 rounded-full bg-muted/40 overflow-hidden">
+                <div className="h-full rounded-full bg-emerald-500" style={{ width: `${v}%` }} />
+              </div>
+              <span className="text-[10px] tabular-nums w-6">{v}</span>
+            </div>
+          )
+        },
+        size: 100,
+      }),
+      columnHelper.accessor('fatigue', {
+        id: 'fat',
+        header: 'Fatigue',
+        cell: (i) => {
+          const v = i.getValue()
+          const barColor = v >= 70 ? 'bg-red-500' : v >= 50 ? 'bg-amber-500' : 'bg-sky-500'
+          return (
+            <div className="flex items-center gap-1.5 min-w-[80px]">
+              <div className="flex-1 h-1.5 rounded-full bg-muted/40 overflow-hidden">
+                <div className={`h-full rounded-full ${barColor}`} style={{ width: `${v}%` }} />
+              </div>
+              <span className="text-[10px] tabular-nums w-6">{v}</span>
+            </div>
+          )
+        },
+        size: 100,
+      }),
+      columnHelper.accessor('form', {
+        id: 'form_r',
+        header: 'Form',
+        cell: (i) => {
+          const v = i.getValue()
+          return (
+            <div className="flex items-center gap-1.5 min-w-[80px]">
+              <div className="flex-1 h-1.5 rounded-full bg-muted/40 overflow-hidden">
+                <div className="h-full rounded-full bg-violet-500" style={{ width: `${v}%` }} />
+              </div>
+              <span className="text-[10px] tabular-nums w-6">{v}</span>
+            </div>
+          )
+        },
+        size: 100,
+      }),
+      columnHelper.accessor('morale', {
+        id: 'morale_r',
+        header: 'Morale',
+        cell: (i) => {
+          const v = i.getValue()
+          return (
+            <div className="flex items-center gap-1.5 min-w-[80px]">
+              <div className="flex-1 h-1.5 rounded-full bg-muted/40 overflow-hidden">
+                <div className="h-full rounded-full bg-amber-500" style={{ width: `${v}%` }} />
+              </div>
+              <span className="text-[10px] tabular-nums w-6">{v}</span>
+            </div>
+          )
+        },
+        size: 100,
+      }),
+      ...status,
     ]
   }
 
@@ -516,11 +651,243 @@ function buildColumns(
   ]
 }
 
+type LeadershipRole = 'none' | 'lg' | 'vc' | 'c'
+
+const ROLE_OPTIONS: { value: LeadershipRole; label: string }[] = [
+  { value: 'none', label: 'None' },
+  { value: 'lg', label: 'Leadership Group' },
+  { value: 'vc', label: 'Vice-Captain' },
+  { value: 'c', label: 'Captain' },
+]
+
+function getRoleForPlayer(id: string, l: ClubLeadership): LeadershipRole {
+  if (l.captainId === id) return 'c'
+  if (l.viceCaptainId === id) return 'vc'
+  if (l.leadershipGroupIds.includes(id)) return 'lg'
+  return 'none'
+}
+
+function applyRoleChange(playerId: string, newRole: LeadershipRole, current: ClubLeadership): ClubLeadership {
+  const next: ClubLeadership = {
+    captainId: current.captainId,
+    viceCaptainId: current.viceCaptainId,
+    leadershipGroupIds: [...current.leadershipGroupIds],
+  }
+  if (next.captainId === playerId) next.captainId = null
+  if (next.viceCaptainId === playerId) next.viceCaptainId = null
+  next.leadershipGroupIds = next.leadershipGroupIds.filter((id) => id !== playerId)
+  if (newRole === 'c') next.captainId = playerId
+  if (newRole === 'vc') next.viceCaptainId = playerId
+  if (newRole === 'lg') next.leadershipGroupIds.push(playerId)
+  return next
+}
+
+function lsColor(score: number): string {
+  if (score >= 75) return 'text-green-500'
+  if (score >= 60) return 'text-emerald-400'
+  if (score >= 45) return 'text-yellow-500'
+  return 'text-muted-foreground'
+}
+
+interface LeadershipTabProps {
+  clubPlayers: Player[]
+  players: Record<string, Player>
+  leadership: ClubLeadership | undefined
+  isEditable: boolean
+  onUpdate: (l: ClubLeadership) => void
+  onAutoSelect: () => void
+}
+
+function LeadershipTab({ clubPlayers, players, leadership, isEditable, onUpdate, onAutoSelect }: LeadershipTabProps) {
+  const current: ClubLeadership = leadership ?? { captainId: null, viceCaptainId: null, leadershipGroupIds: [] }
+  const captain = current.captainId ? players[current.captainId] : null
+  const vc = current.viceCaptainId ? players[current.viceCaptainId] : null
+  const lgMembers = current.leadershipGroupIds.map((id) => players[id]).filter(Boolean)
+  const teamRating = getTeamLeadershipRating(clubPlayers, current)
+
+  const sortedPlayers = useMemo(
+    () => [...clubPlayers].sort((a, b) => getLeadershipScore(b) - getLeadershipScore(a)),
+    [clubPlayers],
+  )
+
+  return (
+    <div className="space-y-4">
+      {/* Link to full leadership screen */}
+      <div className="flex justify-end">
+        <Button variant="outline" size="sm" asChild>
+          <Link to="/leadership">Full Leadership Screen →</Link>
+        </Button>
+      </div>
+
+      {/* Summary */}
+      <div className="flex flex-wrap items-start gap-3">
+        {/* Captain */}
+        <Card className={cn('min-w-[160px]', captain ? 'border-amber-500/40' : 'border-dashed')}>
+          <CardContent className="p-3">
+            <div className="mb-1 flex items-center gap-1.5">
+              <Badge className="h-4 bg-amber-500/20 px-1.5 text-[10px] text-amber-500 border-amber-500/30">C</Badge>
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Captain</span>
+            </div>
+            {captain ? (
+              <>
+                <Link to={`/player/${captain.id}`} className="text-sm font-semibold text-foreground hover:underline hover:text-primary">
+                  {captain.firstName} {captain.lastName}
+                </Link>
+                <p className="text-xs text-muted-foreground">{captain.position.primary} · {captain.age}yo</p>
+                <p className={cn('text-xs font-bold tabular-nums', lsColor(getLeadershipScore(captain)))}>
+                  LS {getLeadershipScore(captain)}
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground italic">Not assigned</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Vice-Captain */}
+        <Card className={cn('min-w-[160px]', vc ? 'border-blue-500/40' : 'border-dashed')}>
+          <CardContent className="p-3">
+            <div className="mb-1 flex items-center gap-1.5">
+              <Badge className="h-4 bg-blue-500/20 px-1.5 text-[10px] text-blue-500 border-blue-500/30">VC</Badge>
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Vice-Captain</span>
+            </div>
+            {vc ? (
+              <>
+                <Link to={`/player/${vc.id}`} className="text-sm font-semibold text-foreground hover:underline hover:text-primary">
+                  {vc.firstName} {vc.lastName}
+                </Link>
+                <p className="text-xs text-muted-foreground">{vc.position.primary} · {vc.age}yo</p>
+                <p className={cn('text-xs font-bold tabular-nums', lsColor(getLeadershipScore(vc)))}>
+                  LS {getLeadershipScore(vc)}
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground italic">Not assigned</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Leadership Group */}
+        {lgMembers.length > 0 && (
+          <Card className="flex-1 min-w-[200px]">
+            <CardContent className="p-3">
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Leadership Group ({lgMembers.length})
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {lgMembers.map((p) => (
+                  <Link
+                    key={p.id}
+                    to={`/player/${p.id}`}
+                    className="rounded border border-border bg-muted/40 px-1.5 py-0.5 text-xs text-foreground hover:border-primary/40 hover:text-primary"
+                  >
+                    {p.firstName[0]}. {p.lastName}
+                  </Link>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Team Rating + Auto-select */}
+        <div className="flex flex-col items-end gap-2 ml-auto">
+          <div className="text-right">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Team Leadership</p>
+            <p className={cn('text-2xl font-bold tabular-nums', lsColor(teamRating))}>{teamRating}</p>
+          </div>
+          {isEditable && (
+            <Button size="sm" variant="outline" onClick={onAutoSelect}>
+              Auto-select
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Player list */}
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="px-3 text-xs w-8">#</TableHead>
+                <TableHead className="px-3 text-xs">Name</TableHead>
+                <TableHead className="px-3 text-xs">Pos</TableHead>
+                <TableHead className="px-3 text-xs">Age</TableHead>
+                <TableHead className="px-3 text-xs">GP</TableHead>
+                <TableHead className="px-3 text-xs">OVR</TableHead>
+                <TableHead className="px-3 text-xs">LS</TableHead>
+                <TableHead className="px-3 text-xs">{isEditable ? 'Role' : 'Role'}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sortedPlayers.map((p, i) => {
+                const role = getRoleForPlayer(p.id, current)
+                const ls = getLeadershipScore(p)
+                return (
+                  <TableRow key={p.id} className="text-sm">
+                    <TableCell className="px-3 py-1.5 text-xs tabular-nums text-muted-foreground">{i + 1}</TableCell>
+                    <TableCell className="px-3 py-1.5">
+                      <Link to={`/player/${p.id}`} className="font-medium hover:underline hover:text-primary">
+                        {p.firstName} {p.lastName}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="px-3 py-1.5">
+                      <Badge variant="outline" className={getPositionBadgeClass(p.position.primary)}>{p.position.primary}</Badge>
+                    </TableCell>
+                    <TableCell className="px-3 py-1.5 text-xs tabular-nums">{p.age}</TableCell>
+                    <TableCell className="px-3 py-1.5 text-xs tabular-nums">{p.careerStats.gamesPlayed}</TableCell>
+                    <TableCell className="px-3 py-1.5 text-xs tabular-nums font-semibold">{getOverallRating(p)}</TableCell>
+                    <TableCell className="px-3 py-1.5">
+                      <span className={cn('text-xs font-bold tabular-nums', lsColor(ls))}>{ls}</span>
+                    </TableCell>
+                    <TableCell className="px-3 py-1.5">
+                      {isEditable ? (
+                        <Select
+                          value={role}
+                          onValueChange={(v) => onUpdate(applyRoleChange(p.id, v as LeadershipRole, current))}
+                        >
+                          <SelectTrigger className="h-7 w-[160px] text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ROLE_OPTIONS.map((opt) => (
+                              <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                                {opt.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        role !== 'none' ? (
+                          <Badge variant="outline" className={cn('text-[10px] px-1.5',
+                            role === 'c' ? 'bg-amber-500/15 text-amber-600 border-amber-500/30'
+                            : role === 'vc' ? 'bg-blue-500/15 text-blue-600 border-blue-500/30'
+                            : 'bg-slate-500/15 text-slate-500 border-slate-500/30'
+                          )}>
+                            {role === 'c' ? 'Captain' : role === 'vc' ? 'Vice-Captain' : 'LG'}
+                          </Badge>
+                        ) : <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
 export function SquadPage() {
   const { clubId: routeClubId } = useParams<{ clubId?: string }>()
   const playerClubId = useGameStore((s) => s.playerClubId)
+  const viewedTeamClubId = useAppStore((s) => s.viewedTeamClubId)
   const players = useGameStore((s) => s.players)
   const clubs = useGameStore((s) => s.clubs)
+  const currentYear = useGameStore((s) => s.currentYear)
+  const currentRound = useGameStore((s) => s.currentRound)
   const reserves = useGameStore((s) => s.reserves)
   const settings = useGameStore((s) => s.settings)
   const selectedLineup = useGameStore((s) => s.selectedLineup)
@@ -530,8 +897,9 @@ export function SquadPage() {
   const setManagedReservesLineup = useGameStore((s) => s.setManagedReservesLineup)
   const setManagedReservesLineupSlots = useGameStore((s) => s.setManagedReservesLineupSlots)
   const setReservesPlayerAvailability = useGameStore((s) => s.setReservesPlayerAvailability)
+  const setClubLeadership = useGameStore((s) => s.setClubLeadership)
 
-  const clubId = routeClubId ?? playerClubId
+  const clubId = routeClubId ?? viewedTeamClubId ?? playerClubId
   const club = clubs[clubId]
   const leadership = club?.leadership
   const clubPlayers = useMemo(() => Object.values(players).filter((p) => p.clubId === clubId), [players, clubId])
@@ -541,17 +909,10 @@ export function SquadPage() {
     if (!leadership) return map
     if (leadership.captainId) map[leadership.captainId] = 'C'
     if (leadership.viceCaptainId) map[leadership.viceCaptainId] = 'VC'
-    for (const id of leadership.leadershipGroupIds) map[id] = 'LG'
+    for (const id of (leadership.leadershipGroupIds ?? [])) map[id] = 'LG'
     return map
   }, [leadership])
 
-  const leadershipCardData = useMemo(() => {
-    if (!leadership) return null
-    const captain = leadership.captainId ? players[leadership.captainId] : null
-    const vc = leadership.viceCaptainId ? players[leadership.viceCaptainId] : null
-    const group = leadership.leadershipGroupIds.map((id) => players[id]).filter(Boolean)
-    return { captain, vc, group, teamRating: getTeamLeadershipRating(clubPlayers, leadership) }
-  }, [leadership, players, clubPlayers])
 
   const [searchParams, setSearchParams] = useSearchParams()
   const view: SquadView = (() => {
@@ -939,7 +1300,7 @@ export function SquadPage() {
 
   const columns = useMemo(
     () =>
-      buildColumns(view, reserves.seasonStatsByPlayer, statsDisplayMode, {
+      buildColumns(view, reserves.seasonStatsByPlayer, statsDisplayMode, currentYear, {
         enabled: clubId === playerClubId,
         getAssignedSlot: (playerId: string) => assignedSlotByPlayer.get(playerId) ?? null,
         getSlotOptions: getSlotOptionsForPlayer,
@@ -950,6 +1311,7 @@ export function SquadPage() {
     [
       assignedSlotByPlayer,
       clubId,
+      currentYear,
       getSlotOptionsForPlayer,
       handleChangeAssignedSlot,
       playerClubId,
@@ -1078,6 +1440,15 @@ export function SquadPage() {
             ))}
           </TabsList>
         </Tabs>
+        <p className="text-sm text-muted-foreground">
+          {view === 'ratings' && 'Overall and positional ratings, star tier, and lineup slot assignment.'}
+          {view === 'stats' && 'Season statistics — toggle between cumulative totals and per-game averages.'}
+          {view === 'contracts' && 'Year-by-year salary commitment for the next 5 seasons. Manage deals on the Contracts page.'}
+          {view === 'development' && 'Potential ceiling, development rate, and peak age window for each player.'}
+          {view === 'leadership' && 'Captain, vice-captain, and leadership group. Sorted by leadership score.'}
+          {view === 'readiness' && 'Pre-game readiness — composite score from fitness, fatigue, form, and morale. Sort by Readiness to find risks.'}
+          {view === 'cohesion' && 'Team cohesion — how well your squad works together. Affects match performance through leadership, role familiarity, unit chemistry, list continuity, and morale.'}
+        </p>
         {view === 'stats' && (
           <div className="flex gap-1">
             <Button
@@ -1106,7 +1477,26 @@ export function SquadPage() {
         )}
       </div>
 
-      {clubId === playerClubId && unassignedErrorPlayerIds.size > 0 && (
+      {view === 'leadership' && (
+        <LeadershipTab
+          clubPlayers={clubPlayers}
+          players={players}
+          leadership={leadership}
+          isEditable={clubId === playerClubId}
+          onUpdate={(l) => setClubLeadership(clubId, l)}
+          onAutoSelect={() => setClubLeadership(clubId, autoSelectLeadership(players, clubId))}
+        />
+      )}
+
+      {view === 'cohesion' && club && (
+        <CohesionTab
+          club={club}
+          clubPlayers={clubPlayers}
+          currentRound={currentRound}
+        />
+      )}
+
+      {view !== 'leadership' && view !== 'cohesion' && clubId === playerClubId && unassignedErrorPlayerIds.size > 0 && (
         <div className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2">
           <div className="flex items-center gap-2 text-sm font-medium text-red-700">
             <AlertTriangle className="h-4 w-4" />
@@ -1118,62 +1508,20 @@ export function SquadPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      {view !== 'leadership' && view !== 'cohesion' && (<>
+      <div className="flex flex-wrap gap-4">
         {clubId === playerClubId && <ClubBFLeaderboardWidget />}
-        <Card>
-          <CardContent className="p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <Shield className="h-4 w-4 text-amber-500" />
-              <h3 className="text-sm font-semibold">Leadership Group</h3>
-              {leadershipCardData && (
-                <Badge variant="outline" className="ml-auto text-xs">Team Rating: {leadershipCardData.teamRating}</Badge>
-              )}
-            </div>
-            {leadershipCardData ? (
-              <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
-                {leadershipCardData.captain && (
-                  <div className="flex flex-col">
-                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Captain</span>
-                    <span className="font-medium">{leadershipCardData.captain.firstName} {leadershipCardData.captain.lastName}</span>
-                    <span className="text-xs text-muted-foreground">{leadershipCardData.captain.position.primary} · Age {leadershipCardData.captain.age} · LS {getLeadershipScore(leadershipCardData.captain)}</span>
-                  </div>
-                )}
-                {leadershipCardData.vc && (
-                  <div className="flex flex-col">
-                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Vice-Captain</span>
-                    <span className="font-medium">{leadershipCardData.vc.firstName} {leadershipCardData.vc.lastName}</span>
-                    <span className="text-xs text-muted-foreground">{leadershipCardData.vc.position.primary} · Age {leadershipCardData.vc.age} · LS {getLeadershipScore(leadershipCardData.vc)}</span>
-                  </div>
-                )}
-                {leadershipCardData.group.length > 0 && (
-                  <div className="col-span-2 flex flex-col">
-                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Leadership Group</span>
-                    <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                      {leadershipCardData.group.map((p) => (
-                        <span key={p.id} className="text-xs">{p.firstName} {p.lastName}<span className="text-muted-foreground"> ({p.position.primary}, LS {getLeadershipScore(p)})</span></span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="text-sm text-muted-foreground">No leadership group assigned.</div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Filters And View</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
+        <Card className="flex-1 min-w-[280px]">
+          <CardContent className="p-3 space-y-2.5">
+            {/* Filters row */}
             <div className="flex flex-wrap items-center gap-2">
               {QUICK_FILTERS.map((f) => (
                 <Button
                   key={f.key}
                   variant="outline"
                   size="sm"
-                  className={
+                  className={cn(
+                    'h-7 px-2.5 text-xs',
                     f.key === 'def'
                       ? getPositionFilterButtonClass('DEF', quickFilter === f.key)
                       : f.key === 'mid'
@@ -1184,16 +1532,18 @@ export function SquadPage() {
                             ? getPositionFilterButtonClass('RK', quickFilter === f.key)
                             : quickFilter === f.key
                               ? 'border-primary/40 bg-primary/15 text-primary'
-                              : undefined
-                  }
+                              : undefined,
+                  )}
                   onClick={() => setQuickFilter(f.key)}
                 >
                   {f.label}
                 </Button>
               ))}
+              <Input className="h-7 w-40 text-xs" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
+              <div className="ml-auto">
+                <TableViewManagerControl columns={tableViewColumns} manager={tableView} />
+              </div>
             </div>
-            <Input className="h-8 text-xs" placeholder="Search player..." value={search} onChange={(e) => setSearch(e.target.value)} />
-            <TableViewManagerControl columns={tableViewColumns} manager={tableView} />
           </CardContent>
         </Card>
       </div>
@@ -1246,6 +1596,7 @@ export function SquadPage() {
           </div>
         </CardContent>
       </Card>
+      </>)}
     </div>
   )
 }

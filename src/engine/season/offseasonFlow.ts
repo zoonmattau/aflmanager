@@ -594,6 +594,14 @@ export function processSeasonEnd(
     agePlayer(player)
     const overallBefore = getOverall(player)
 
+    // Snapshot attributes before development for trend tracking (keeps last 5 seasons)
+    {
+      if (!player.attributeSnapshots) player.attributeSnapshots = {}
+      player.attributeSnapshots[currentYear] = { ...player.attributes }
+      const oldSnapKeys = Object.keys(player.attributeSnapshots).map(Number).sort()
+      while (oldSnapKeys.length > 5) delete player.attributeSnapshots[oldSnapKeys.shift()!]
+    }
+
     // Run contextual offseason development model
     const clubContext = clubContexts.get(player.clubId)
     developPlayer(player, rng, {
@@ -1420,6 +1428,7 @@ export function processPreseason(
   clubs: Record<string, Club>,
   rng: SeededRNG,
   currentYear?: number,
+  playerClubId?: string,
 ): PreseasonResult {
   // Clone players (deep enough for mutation by calculatePreseasonTraining)
   const updatedPlayers: Record<string, Player> = {}
@@ -1521,8 +1530,9 @@ export function processPreseason(
     }
   }
 
-  // Re-select leadership for all clubs
+  // Re-select leadership for all clubs; skip player's club (they appoint manually)
   for (const club of Object.values(clubs)) {
+    if (playerClubId && club.id === playerClubId) continue
     club.leadership = autoSelectLeadership(updatedPlayers, club.id)
   }
 

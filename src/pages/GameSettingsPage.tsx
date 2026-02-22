@@ -27,14 +27,18 @@ import { Slider } from '@/components/ui/slider'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
 import { FinalsFormatEditor } from '@/pages/wizard/FinalsFormatEditor'
 import { TeamEditorPanel } from '@/components/teams/TeamEditorPanel'
 import type { TeamEditorData } from '@/components/teams/TeamEditorPanel'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight, Check, RotateCcw } from 'lucide-react'
+import { useAppStore } from '@/stores/appStore'
+import { resetTour } from '@/components/onboarding/CoachmarkTour'
 
 function clubToEditorData(club: Club): TeamEditorData {
   return {
@@ -89,17 +93,12 @@ function editorDataToClubUpdates(updates: Partial<TeamEditorData>, existing: Clu
 }
 
 const GF_VENUES = ['MCG', 'Marvel Stadium', 'Adelaide Oval', 'Optus Stadium', 'Gabba']
-const MATCH_DAY_OPTIONS: MatchDay[] = [
-  'Thursday',
-  'Friday',
-  'Saturday-Early',
-  'Saturday-Afternoon',
-  'Saturday-Twilight',
-  'Saturday-Night',
-  'Sunday-Early',
-  'Sunday-Afternoon',
-  'Sunday-Twilight',
-  'Monday',
+const MATCH_DAY_GROUPS: Array<{ label: string; days: MatchDay[] }> = [
+  { label: 'Midweek (Non-standard)', days: ['Tuesday', 'Wednesday'] },
+  { label: 'Thursday – Friday',      days: ['Thursday', 'Friday'] },
+  { label: 'Saturday',               days: ['Saturday-Early', 'Saturday-Afternoon', 'Saturday-Twilight', 'Saturday-Night'] },
+  { label: 'Sunday',                 days: ['Sunday-Early', 'Sunday-Afternoon', 'Sunday-Twilight'] },
+  { label: 'Monday',                 days: ['Monday'] },
 ]
 const REALISM_LABELS: Record<keyof RealismSettings, string> = {
   playerLoyalty: 'Player Loyalty',
@@ -192,6 +191,8 @@ function getEffectiveTeamCount(config: OriginConfig): number {
 }
 
 export function GameSettingsPage() {
+  const showTutorialHints = useAppStore((s) => s.globalSettings.showTutorialHints)
+  const updateGlobalSettings = useAppStore((s) => s.updateGlobalSettings)
   const settings = useGameStore((s) => s.settings)
   const clubs = useGameStore((s) => s.clubs)
   const leagueConfig = useGameStore((s) => s.leagueConfig)
@@ -201,7 +202,7 @@ export function GameSettingsPage() {
   const enableBetting = useGameStore((s) => s.enableBetting)
   const disableBetting = useGameStore((s) => s.disableBetting)
   const [draft, setDraft] = useState<GameSettings>(settings)
-  const [savedTick, setSavedTick] = useState(0)
+  const [saved, setSaved] = useState(false)
   const [ageGateOpen, setAgeGateOpen] = useState(false)
   const [sectionsOpen, setSectionsOpen] = useState({
     finals: true,
@@ -276,7 +277,8 @@ export function GameSettingsPage() {
 
   const saveDraft = () => {
     updateGameSettings(draft)
-    setSavedTick((t) => t + 1)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
   }
 
   const addMatchSlot = () => {
@@ -401,7 +403,9 @@ export function GameSettingsPage() {
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => setDraft(createDefaultSettings())}>Reset To Defaults</Button>
-          <Button onClick={saveDraft}>Save Changes</Button>
+          <Button onClick={saveDraft} variant={saved ? 'outline' : 'default'} className={saved ? 'text-green-600 border-green-500' : ''}>
+            {saved ? <><Check className="w-4 h-4 mr-1" />Saved</> : 'Save Changes'}
+          </Button>
         </div>
       </div>
 
@@ -409,6 +413,42 @@ export function GameSettingsPage() {
         <Card className="xl:col-span-2 border-amber-500/40 bg-amber-500/10">
           <CardContent className="py-3 text-sm text-amber-900 dark:text-amber-200">
             Fixture, season structure, finals format, league mode, and team count changes are queued for upcoming season generation and will not rewrite the current fixture mid-season.
+          </CardContent>
+        </Card>
+
+        {/* Help & Interface */}
+        <Card>
+          <CardHeader><CardTitle className="text-base">Help & Interface</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <Label className="flex flex-col gap-0.5">
+                <span>Tutorial hints</span>
+                <span className="text-xs font-normal text-muted-foreground">
+                  Show contextual tip banners on each page
+                </span>
+              </Label>
+              <Switch
+                checked={showTutorialHints}
+                onCheckedChange={(checked) => updateGlobalSettings({ showTutorialHints: checked })}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <Label className="flex flex-col gap-0.5">
+                <span>Onboarding tour</span>
+                <span className="text-xs font-normal text-muted-foreground">
+                  Restart the guided highlight tour of key areas
+                </span>
+              </Label>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={resetTour}
+                className="shrink-0"
+              >
+                <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                Restart Tour
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
@@ -863,7 +903,14 @@ export function GameSettingsPage() {
                 <Select value={slot.day} onValueChange={(value) => updateMatchSlot(slot.id, { day: value as MatchDay })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {MATCH_DAY_OPTIONS.map((day) => <SelectItem key={day} value={day}>{formatMatchDay(day)}</SelectItem>)}
+                    {MATCH_DAY_GROUPS.map((group) => (
+                      <SelectGroup key={group.label}>
+                        <SelectLabel>{group.label}</SelectLabel>
+                        {group.days.map((day) => (
+                          <SelectItem key={day} value={day}>{formatMatchDay(day)}</SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ))}
                   </SelectContent>
                 </Select>
                 <Input value={slot.time} onChange={(e) => updateMatchSlot(slot.id, { time: e.target.value })} placeholder="7:25pm" />
@@ -936,7 +983,14 @@ export function GameSettingsPage() {
                     <Select value={item.scheduledDay} onValueChange={(v) => updateBlockbuster(item.id, { scheduledDay: v as MatchDay })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {MATCH_DAY_OPTIONS.map((day) => <SelectItem key={day} value={day}>{formatMatchDay(day)}</SelectItem>)}
+                        {MATCH_DAY_GROUPS.map((group) => (
+                          <SelectGroup key={group.label}>
+                            <SelectLabel>{group.label}</SelectLabel>
+                            {group.days.map((day) => (
+                              <SelectItem key={day} value={day}>{formatMatchDay(day)}</SelectItem>
+                            ))}
+                          </SelectGroup>
+                        ))}
                       </SelectContent>
                     </Select>
                     <Input value={item.scheduledTime} onChange={(e) => updateBlockbuster(item.id, { scheduledTime: e.target.value })} placeholder="Time" />
@@ -1539,7 +1593,6 @@ export function GameSettingsPage() {
         </DialogContent>
       </Dialog>
 
-      <p className="text-xs text-muted-foreground">Settings saved: {savedTick}</p>
     </div>
   )
 }

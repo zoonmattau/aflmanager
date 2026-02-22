@@ -1,9 +1,12 @@
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useNavigationGuard } from '@/hooks/useNavigationGuard'
+import { NavigationGuardDialog } from '@/components/common/NavigationGuardDialog'
 import { useGameStore } from '@/stores/gameStore'
 import { useAppStore } from '@/stores/appStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { ConfirmButton } from '@/components/ui/ConfirmButton'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -17,13 +20,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Wand2, RotateCcw, Save, Eye, EyeOff, FolderOpen, Pencil, Trash2, BookmarkPlus, Stethoscope } from 'lucide-react'
+import { Wand2, RotateCcw, Save, Eye, EyeOff, FolderOpen, Pencil, Trash2, BookmarkPlus, Stethoscope, Settings2, ChevronDown, ChevronRight, Plus, X } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { isRecentlyReturned } from '@/lib/injuryRisk'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { isRecentlyReturned, weeksAgoReturned } from '@/lib/injuryRisk'
 import type { LineupSlot, Player, PlayerPositionType } from '@/types/player'
 import { getLineupSlots, SLOT_POSITION_COMPATIBILITY } from '@/engine/core/constants'
+import { getLineupEmergencySlots } from '@/engine/lineup/emergencyRoles'
 import { selectBestLineup, type LineupAutofillStrategy } from '@/engine/ai/lineupSelection'
 import { FootballField } from '@/components/lineup/FootballField'
+import { InjuryReplacementPanel } from '@/components/lineup/InjuryReplacementPanel'
 import { isPlayerSuspended } from '@/engine/players/availability'
 import { canBeSelectedForAfl } from '@/engine/players/contracts'
 import { getOverallRating, getPlayerPositionRatings, getPlayerStarRating } from '@/engine/player/playerRating'
@@ -33,13 +39,16 @@ import {
   getPositionSuitabilityForSlot,
 } from '@/engine/player/positionEligibility'
 import { PlayerStarRating } from '@/components/player/PlayerStarRating'
+import { ReadinessBadge } from '@/components/player/ReadinessBadge'
+import { PlayerHoverCard } from '@/components/player/PlayerHoverCard'
+import { computePlayerReadiness } from '@/engine/player/readinessEngine'
 import {
   buildUpcomingMilestoneNotes,
   formatUpcomingMilestoneLabel,
 } from '@/engine/narrative/upcomingMilestones'
 import { getPositionBadgeClass, getPositionFilterButtonClass } from '@/lib/positionColor'
 import type { CustomLineupAutofillPreset, LineupAutofillPresetId } from '@/types/globalSettings'
-import type { SavedLineup } from '@/types/game'
+import type { SavedLineup, RotationEvent } from '@/types/game'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -218,9 +227,8 @@ function sanitizeLineup(
     if (player.clubId !== playerClubId) continue
     if (!canBeSelectedForAfl(player)) continue
     if (player.injury || isPlayerSuspended(player) || player.fitness < 50) continue
-    const slotCompat = SLOT_POSITION_COMPATIBILITY[slot as keyof typeof SLOT_POSITION_COMPATIBILITY] ?? []
-    const eligibleTypes = new Set(getPlayerEligiblePositionTypes(player))
-    if (slotCompat.length > 0 && !slotCompat.some((pos) => eligibleTypes.has(pos))) continue
+    // Emergency coverage: allow any assignment — suitability is shown visually
+    // and applied as a performance penalty in simulation.
     next[slot] = playerId
     seen.add(playerId)
   }
@@ -253,6 +261,108 @@ function getDragPreviewElement(label: string): HTMLDivElement {
 }
 
 // ---------------------------------------------------------------------------
+// EmergencyCoveragePanel
+// ---------------------------------------------------------------------------
+
+interface EmergencyCoveragePanelProps {
+  lineup: Record<string, string>
+  players: Record<string, Player>
+  availablePlayers: Player[]
+  onNavigate: (id: string) => void
+}
+
+function EmergencyCoveragePanel({ lineup, players, availablePlayers, onNavigate }: EmergencyCoveragePanelProps) {
+  const [isOpen, setIsOpen] = useState(false)
+  const emergencySlots = useMemo(
+    () => getLineupEmergencySlots(lineup, players, availablePlayers),
+    [lineup, players, availablePlayers],
+  )
+
+  if (emergencySlots.length === 0) return null
+
+  return (
+    <div className="shrink-0">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 rounded-md border border-border/70 px-3 py-2 text-sm font-medium hover:bg-accent/40 transition-colors"
+        onClick={() => setIsOpen((v) => !v)}
+      >
+        {isOpen
+          ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+        <span>Emergency Coverage</span>
+        <Badge variant="outline" className="ml-auto text-xs border-amber-500/40 bg-amber-500/10 text-amber-600">
+          {emergencySlots.length} out-of-position
+        </Badge>
+      </button>
+
+      {isOpen && (
+        <div className="mt-2 rounded-md border border-border/70 p-3 space-y-2.5">
+          <p className="text-[11px] text-muted-foreground">
+            Players assigned outside their natural position incur performance, fatigue, and injury risk penalties in simulation.
+          </p>
+          {emergencySlots.map(({ slot, player, fitDisplay, alternatives }) => (
+            <div key={slot} className={`rounded-md border px-2.5 py-2 space-y-1.5 ${fitDisplay.borderClass} ${fitDisplay.bgClass}`}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold text-muted-foreground w-7 shrink-0">{slot}</span>
+                <button
+                  type="button"
+                  className="text-sm font-medium hover:underline"
+                  onClick={() => onNavigate(player.id)}
+                >
+                  {player.firstName.charAt(0)}. {player.lastName}
+                  <span className="ml-1 text-xs text-muted-foreground">({player.position.primary})</span>
+                </button>
+                <span className={`ml-auto text-[10px] font-semibold ${fitDisplay.colour}`}>
+                  {fitDisplay.label}
+                </span>
+              </div>
+              <div className="flex gap-3 text-[10px] flex-wrap">
+                <span className="text-rose-400">−{fitDisplay.perfPenaltyPct}% performance</span>
+                <span className="text-amber-400">+{fitDisplay.fatiguePct}% fatigue</span>
+                <span className="text-orange-400">×{fitDisplay.injuryMult.toFixed(2)} injury risk</span>
+              </div>
+              {alternatives.length > 0 && (
+                <div className="text-[10px] text-muted-foreground leading-relaxed">
+                  {'Better options: '}
+                  {alternatives.map((alt, i) => (
+                    <button
+                      key={alt.player.id}
+                      type="button"
+                      className="hover:underline"
+                      onClick={() => onNavigate(alt.player.id)}
+                    >
+                      {alt.player.firstName.charAt(0)}. {alt.player.lastName}
+                      <span className="ml-0.5 opacity-60">
+                        ({alt.suitability === 'primary' ? '✓' : alt.suitability === 'secondary' ? '~' : '!'})
+                      </span>
+                      {i < alternatives.length - 1 ? ', ' : ''}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Rotation Planner constants
+// ---------------------------------------------------------------------------
+
+const ON_FIELD_LINEUP_SLOTS = [
+  'LBP', 'RBP', 'FB',
+  'LHB', 'RHB', 'CHB',
+  'LW', 'RW', 'C',
+  'LHF', 'RHF', 'CHF',
+  'LFP', 'RFP', 'FF',
+  'RK', 'RR', 'ROV',
+] as const
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -272,11 +382,21 @@ export function LineupPage() {
   const deleteSavedLineup = useGameStore((s) => s.deleteSavedLineup)
   const season = useGameStore((s) => s.season)
   const currentRound = useGameStore((s) => s.currentRound)
+  const currentDate = useGameStore((s) => s.currentDate)
   const settings = useGameStore((s) => s.settings)
+  const weeklyGameplan = useGameStore((s) => s.weeklyGameplans[s.playerClubId])
+  const setRotationPlan = useGameStore((s) => s.setRotationPlan)
+  const injuryReplacementPuzzles = useGameStore((s) => s.injuryReplacementPuzzles)
+  const resolveInjuryReplacementPuzzle = useGameStore((s) => s.resolveInjuryReplacementPuzzle)
+  const dismissInjuryReplacementPuzzle = useGameStore((s) => s.dismissInjuryReplacementPuzzle)
   const globalSettings = useAppStore((s) => s.globalSettings)
   const updateGlobalSettings = useAppStore((s) => s.updateGlobalSettings)
+  const viewedTeamClubId = useAppStore((s) => s.viewedTeamClubId)
 
-  const club = clubs[playerClubId]
+  const viewingOtherClub = !!viewedTeamClubId && viewedTeamClubId !== playerClubId
+  const effectiveClubId = viewedTeamClubId ?? playerClubId
+
+  const club = clubs[effectiveClubId]
   const lineupAutofillSettings = globalSettings.lineupAutofill
   const activePresetId = lineupAutofillSettings.selectedPresetId
   const resolvedPreset = useMemo(
@@ -345,6 +465,7 @@ export function LineupPage() {
   )
 
   const [lineupDraft, setLineupDraft] = useState<Record<string, string> | null>(null)
+  const lineupGuard = useNavigationGuard(lineupDraft !== null)
 
   const lineupSlots = useMemo(
     () => getLineupSlots(settings.matchRules.interchangePlayers),
@@ -365,6 +486,18 @@ export function LineupPage() {
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null)
   const [selectedSavedLineupId, setSelectedSavedLineupId] = useState<string | null>(null)
 
+  // Rotation Planner state
+  const [rotationPlanLocal, setRotationPlanLocal] = useState<RotationEvent[]>(
+    () => weeklyGameplan?.rotationPlan ?? [],
+  )
+  const [showRotationPlanner, setShowRotationPlanner] = useState(false)
+  const [activeQtr, setActiveQtr] = useState<1 | 2 | 3 | 4>(1)
+  const [addingRotation, setAddingRotation] = useState(false)
+  const [newMinute, setNewMinute] = useState(5)
+  const [newPlayerOffId, setNewPlayerOffId] = useState('')
+  const [newPlayerOnId, setNewPlayerOnId] = useState('')
+  const rotationDidMountRef = useRef(false)
+
   const activeLineup = useMemo(
     () => lineupDraft ?? selectedLineup ?? {},
     [lineupDraft, selectedLineup],
@@ -380,6 +513,15 @@ export function LineupPage() {
     [safeLineup],
   )
 
+  // Pre-match overtraining load check: starters with fatigue >= 72
+  const overtrainedStarters = useMemo(() => {
+    if (viewingOtherClub) return []
+    return Object.values(safeLineup)
+      .map((pid) => players[pid])
+      .filter((p): p is import('@/types/player').Player => !!p && p.fatigue >= 72)
+      .sort((a, b) => b.fatigue - a.fatigue)
+  }, [safeLineup, players, viewingOtherClub])
+
   const savedLineupsForClub = useMemo(
     () =>
       savedLineups
@@ -394,55 +536,123 @@ export function LineupPage() {
     return () => window.clearTimeout(timeout)
   }, [saveFeedback])
 
+  // Auto-save rotation plan to store whenever local state changes (skip initial mount)
+  useEffect(() => {
+    if (!rotationDidMountRef.current) {
+      rotationDidMountRef.current = true
+      return
+    }
+    setRotationPlan(rotationPlanLocal)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rotationPlanLocal])
+
+  // Derived rotation planner values
+  const activeQtrRotations = useMemo(
+    () =>
+      rotationPlanLocal
+        .filter((e) => e.quarter === activeQtr)
+        .sort((a, b) => a.minute - b.minute),
+    [rotationPlanLocal, activeQtr],
+  )
+
+  const onFieldPlayerOptions = useMemo(() => {
+    return ON_FIELD_LINEUP_SLOTS.flatMap((slot) => {
+      const playerId = safeLineup[slot]
+      if (!playerId) return []
+      const player = players[playerId]
+      if (!player) return []
+      return [{ slot, player }]
+    })
+  }, [safeLineup, players])
+
+  const interchangePlayerOptions = useMemo(() => {
+    const slots = Array.from(
+      { length: settings.matchRules.interchangePlayers },
+      (_, i) => `I${i + 1}`,
+    )
+    return slots.flatMap((slot) => {
+      const playerId = safeLineup[slot]
+      if (!playerId) return []
+      const player = players[playerId]
+      if (!player) return []
+      return [{ slot, player }]
+    })
+  }, [safeLineup, players, settings.matchRules.interchangePlayers])
+
+  const alreadyScheduledOnIds = useMemo(
+    () =>
+      new Set(
+        rotationPlanLocal
+          .filter((e) => e.quarter === activeQtr)
+          .map((e) => e.playerOnId),
+      ),
+    [rotationPlanLocal, activeQtr],
+  )
+
+  // ---- Rotation Planner Handlers ----
+
+  const handleAddRotation = useCallback(() => {
+    if (!newPlayerOffId || !newPlayerOnId) return
+    const event: RotationEvent = {
+      id: crypto.randomUUID(),
+      quarter: activeQtr,
+      minute: newMinute,
+      playerOffId: newPlayerOffId,
+      playerOnId: newPlayerOnId,
+    }
+    setRotationPlanLocal((prev) => [...prev, event])
+    setAddingRotation(false)
+    setNewPlayerOffId('')
+    setNewPlayerOnId('')
+  }, [activeQtr, newMinute, newPlayerOffId, newPlayerOnId])
+
+  const handleRemoveRotation = useCallback((id: string) => {
+    setRotationPlanLocal((prev) => prev.filter((e) => e.id !== id))
+  }, [])
+
   // ---- Handlers ----
 
   const handleAssign = useCallback(
     (slot: string, playerId: string) => {
       if (!lineupSlotSet.has(slot)) return
-      setLineupDraft((prevDraft) => {
-        const prev = prevDraft ?? selectedLineup ?? {}
-        const next = { ...prev }
-        // Remove player from any other position first
-        for (const [k, v] of Object.entries(next)) {
-          if (v === playerId) delete next[k]
-        }
-        // If the target slot already has a player, remove that assignment
-        // (the old occupant goes back to the bench)
-        next[slot] = playerId
-        return next
-      })
+      const prev = lineupDraft ?? selectedLineup ?? {}
+      const next = { ...prev }
+      for (const [k, v] of Object.entries(next)) {
+        if (v === playerId) delete next[k]
+      }
+      next[slot] = playerId
+      setLineupDraft(next)
+      setSelectedLineup(next)
     },
-    [lineupSlotSet, selectedLineup],
+    [lineupDraft, lineupSlotSet, selectedLineup, setSelectedLineup],
   )
 
   const handleSwap = useCallback(
     (slotA: string, slotB: string) => {
       if (!lineupSlotSet.has(slotA) || !lineupSlotSet.has(slotB)) return
-      setLineupDraft((prevDraft) => {
-        const prev = prevDraft ?? selectedLineup ?? {}
-        const next = { ...prev }
-        const playerA = next[slotA]
-        const playerB = next[slotB]
-        if (playerA) next[slotB] = playerA
-        else delete next[slotB]
-        if (playerB) next[slotA] = playerB
-        else delete next[slotA]
-        return next
-      })
+      const prev = lineupDraft ?? selectedLineup ?? {}
+      const next = { ...prev }
+      const playerA = next[slotA]
+      const playerB = next[slotB]
+      if (playerA) next[slotB] = playerA
+      else delete next[slotB]
+      if (playerB) next[slotA] = playerB
+      else delete next[slotA]
+      setLineupDraft(next)
+      setSelectedLineup(next)
     },
-    [lineupSlotSet, selectedLineup],
+    [lineupDraft, lineupSlotSet, selectedLineup, setSelectedLineup],
   )
 
   const handleUnassign = useCallback(
     (slot: string) => {
-      setLineupDraft((prevDraft) => {
-        const prev = prevDraft ?? selectedLineup ?? {}
-        const next = { ...prev }
-        delete next[slot]
-        return next
-      })
+      const prev = lineupDraft ?? selectedLineup ?? {}
+      const next = { ...prev }
+      delete next[slot]
+      setLineupDraft(next)
+      setSelectedLineup(next)
     },
-    [selectedLineup],
+    [lineupDraft, selectedLineup, setSelectedLineup],
   )
 
   const handleAutoFill = useCallback(() => {
@@ -458,9 +668,9 @@ export function LineupPage() {
       preserveAssignedSlots: resolvedPreset.preserveAssignments,
       continuityBias: resolvedPreset.continuityBias,
     })
-    setLineupDraft(
-      sanitizeLineup(result.lineup, players, playerClubId, lineupSlotSet),
-    )
+    const sanitized = sanitizeLineup(result.lineup, players, playerClubId, lineupSlotSet)
+    setLineupDraft(sanitized)
+    setSelectedLineup(sanitized)
   }, [
     availablePlayers,
     club,
@@ -472,6 +682,7 @@ export function LineupPage() {
     resolvedPreset.strategy,
     safeLineup,
     selectedLineup,
+    setSelectedLineup,
     settings.matchRules.interchangePlayers,
   ])
 
@@ -544,7 +755,8 @@ export function LineupPage() {
 
   const handleClear = useCallback(() => {
     setLineupDraft({})
-  }, [])
+    setSelectedLineup({})
+  }, [setSelectedLineup])
 
   // ---- Panel drag handling (drop player back to bench) ----
 
@@ -708,7 +920,6 @@ export function LineupPage() {
   }, [renameSavedLineup])
 
   const handleDeleteSavedLineup = useCallback((entry: SavedLineup) => {
-    if (!window.confirm(`Delete saved lineup "${entry.name}"?`)) return
     const result = deleteSavedLineup(entry.id)
     if (!result.success) return
     if (selectedSavedLineupId === entry.id) setSelectedSavedLineupId(null)
@@ -733,6 +944,40 @@ export function LineupPage() {
     [selectedAssignSlot],
   )
 
+  // Read-only view when scouting another club's lineup
+  if (viewingOtherClub) {
+    const otherClub = clubs[effectiveClubId]
+    const otherLineup = selectBestLineup(
+      Object.values(players),
+      effectiveClubId,
+      {
+        interchangePlayers: settings.matchRules.interchangePlayers,
+        club: otherClub,
+      },
+    ).lineup
+    return (
+      <div className="space-y-4">
+        <div>
+          <h1 className="text-2xl font-bold">{otherClub?.name} — Lineup</h1>
+          <p className="text-sm text-muted-foreground">Projected AI lineup (read-only)</p>
+        </div>
+        <FootballField
+          lineup={otherLineup}
+          players={players}
+          clubs={clubs}
+          userClubId={effectiveClubId}
+          interchangeCount={settings.matchRules.interchangePlayers}
+          substitutesEnabled={settings.matchRules.enableSubstitutes}
+          oppositionClubId={null}
+          showOpposition={false}
+          onAssign={() => {}}
+          onSwap={() => {}}
+          onUnassign={() => {}}
+        />
+      </div>
+    )
+  }
+
   if (userOnBye) {
     return (
       <div className="space-y-4">
@@ -750,9 +995,15 @@ export function LineupPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col h-full gap-4">
+      <NavigationGuardDialog
+        isBlocked={lineupGuard.isBlocked}
+        description="You have unsaved lineup changes — leave anyway?"
+        proceed={lineupGuard.proceed}
+        reset={lineupGuard.reset}
+      />
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
+      <div className="flex items-center justify-between flex-wrap gap-2 shrink-0">
         <div>
           <h1 className="text-2xl font-bold">
             {club?.name} - Lineup Selection
@@ -770,9 +1021,6 @@ export function LineupPage() {
               ?? BUILT_IN_AUTOFILL_PRESETS.find((preset) => preset.id === activePresetId)?.label
               ?? 'Best Available'}
           </p>
-          {activePresetDescription && (
-            <p className="text-[11px] text-muted-foreground">{activePresetDescription}</p>
-          )}
         </div>
         <div className="flex gap-2 flex-wrap">
           {settings.matchRules.enableSubstitutes && (
@@ -812,85 +1060,114 @@ export function LineupPage() {
               {showOpposition ? 'Hide Opp' : 'View Opp'}
             </Button>
           )}
-          <div className="flex items-center gap-1 rounded-md border border-border/70 px-2 py-1">
-            <span className="text-[11px] text-muted-foreground">Preset</span>
-            <Select
-              value={activePresetId}
-              onValueChange={handleSelectAutofillPreset}
-            >
-              <SelectTrigger className="h-8 w-[210px]">
-                <SelectValue placeholder="Select autofill preset" />
-              </SelectTrigger>
-              <SelectContent>
-                {BUILT_IN_AUTOFILL_PRESETS.map((preset) => (
-                  <SelectItem key={preset.id} value={preset.id}>
-                    {preset.label}
-                  </SelectItem>
-                ))}
-                {lineupAutofillSettings.customPresets.length > 0 && (
-                  <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-                    Custom Presets
-                  </div>
-                )}
-                {lineupAutofillSettings.customPresets.map((preset) => (
-                  <SelectItem key={`custom-${preset.id}`} value={`custom:${preset.id}`}>
-                    {preset.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-center gap-1 rounded-md border border-border/70 px-2 py-1">
-            <span className="text-[11px] text-muted-foreground">Preserve</span>
-            <Select
-              value={String(lineupAutofillSettings.preserveAssignments)}
-              onValueChange={handleSetPreserveAssignments}
-            >
-              <SelectTrigger className="h-8 w-[96px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="false">Off</SelectItem>
-                <SelectItem value="true">On</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-center gap-1 rounded-md border border-border/70 px-2 py-1">
-            <span className="text-[11px] text-muted-foreground">Continuity</span>
-            <Select
-              value={CONTINUITY_LEVELS.find((level) => level.value === lineupAutofillSettings.continuityBias)?.id ?? 'medium'}
-              onValueChange={handleSetContinuityBias}
-            >
-              <SelectTrigger className="h-8 w-[104px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {CONTINUITY_LEVELS.map((level) => (
-                  <SelectItem key={level.id} value={level.id}>
-                    {level.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <Button variant="outline" size="sm" onClick={handleSaveCustomPreset}>
-            <BookmarkPlus className="mr-1 h-4 w-4" />
-            Save Custom
-          </Button>
-          {resolvedPreset.customPreset && (
-            <Button variant="outline" size="sm" onClick={handleDeleteCustomPreset}>
-              <Trash2 className="mr-1 h-4 w-4" />
-              Delete Custom
-            </Button>
-          )}
           <Button variant="outline" size="sm" onClick={handleClear}>
             <RotateCcw className="mr-1 h-4 w-4" />
             Clear
           </Button>
-          <Button variant="secondary" size="sm" onClick={handleAutoFill}>
-            <Wand2 className="mr-1 h-4 w-4" />
-            Auto Fill
-          </Button>
+          <div className="flex">
+            <Button variant="secondary" size="sm" className="rounded-r-none" onClick={handleAutoFill}>
+              <Wand2 className="mr-1 h-4 w-4" />
+              Auto Fill
+            </Button>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="rounded-l-none border-l border-background/20 px-2"
+                  aria-label="Autofill settings"
+                >
+                  <Settings2 className="h-3.5 w-3.5" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-80 space-y-4">
+                <p className="text-sm font-semibold">Autofill Settings</p>
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Strategy Preset</Label>
+                    <Select value={activePresetId} onValueChange={handleSelectAutofillPreset}>
+                      <SelectTrigger className="h-8">
+                        <SelectValue placeholder="Select preset" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {BUILT_IN_AUTOFILL_PRESETS.map((preset) => (
+                          <SelectItem key={preset.id} value={preset.id}>
+                            {preset.label}
+                          </SelectItem>
+                        ))}
+                        {lineupAutofillSettings.customPresets.length > 0 && (
+                          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                            Custom Presets
+                          </div>
+                        )}
+                        {lineupAutofillSettings.customPresets.map((preset) => (
+                          <SelectItem key={`custom-${preset.id}`} value={`custom:${preset.id}`}>
+                            {preset.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {activePresetDescription && (
+                      <p className="text-[11px] text-muted-foreground">{activePresetDescription}</p>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Preserve Assignments</Label>
+                      <Select
+                        value={String(lineupAutofillSettings.preserveAssignments)}
+                        onValueChange={handleSetPreserveAssignments}
+                      >
+                        <SelectTrigger className="h-8">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="false">Off</SelectItem>
+                          <SelectItem value="true">On</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Continuity Bias</Label>
+                      <Select
+                        value={CONTINUITY_LEVELS.find((level) => level.value === lineupAutofillSettings.continuityBias)?.id ?? 'medium'}
+                        onValueChange={handleSetContinuityBias}
+                      >
+                        <SelectTrigger className="h-8">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CONTINUITY_LEVELS.map((level) => (
+                            <SelectItem key={level.id} value={level.id}>
+                              {level.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2 border-t border-border/60 pt-3">
+                  <Button variant="outline" size="sm" className="flex-1" onClick={handleSaveCustomPreset}>
+                    <BookmarkPlus className="mr-1 h-3.5 w-3.5" />
+                    Save as Custom
+                  </Button>
+                  {resolvedPreset.customPreset && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button variant="outline" size="sm" onClick={handleDeleteCustomPreset}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="text-xs">
+                        Delete custom preset
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
           <Button
             variant="outline"
             size="sm"
@@ -910,17 +1187,56 @@ export function LineupPage() {
         </div>
       </div>
       {saveFeedback && (
-        <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">
+        <div className="shrink-0 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">
           {saveFeedback}
         </div>
       )}
 
+      {/* Injury replacement puzzles */}
+      {!viewingOtherClub && (
+        <InjuryReplacementPanel
+          puzzles={injuryReplacementPuzzles}
+          players={players}
+          onResolve={resolveInjuryReplacementPuzzle}
+          onDismiss={dismissInjuryReplacementPuzzle}
+        />
+      )}
+
+      {/* Overtraining load warning */}
+      {overtrainedStarters.length > 0 && (
+        <div className="shrink-0 rounded-md border border-orange-500/30 bg-orange-500/8 px-3 py-2.5 space-y-2">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-orange-500 flex-shrink-0" />
+            <span className="text-sm font-semibold text-orange-700 dark:text-orange-400">
+              Load Warning — {overtrainedStarters.length} selected {overtrainedStarters.length === 1 ? 'player is' : 'players are'} carrying heavy fatigue
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {overtrainedStarters.map((p) => (
+              <span
+                key={p.id}
+                className={`flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium ${
+                  p.fatigue >= 82
+                    ? 'border-red-500/35 bg-red-500/12 text-red-700 dark:text-red-400'
+                    : 'border-orange-500/35 bg-orange-500/12 text-orange-700 dark:text-orange-400'
+                }`}
+              >
+                {p.firstName.charAt(0)}. {p.lastName}
+                <span className="font-bold tabular-nums ml-0.5">{p.fatigue}</span>
+              </span>
+            ))}
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Fatigue ≥ 72 increases injury risk and reduces match performance. Consider rotating in fresher players or scheduling a rest/recovery session before game day.
+          </p>
+        </div>
+      )}
+
       {/* Main layout: Field (left ~70%) + Bench panel (right ~30%) */}
-      <div className="flex flex-col lg:flex-row gap-4">
-        {/* Football field */}
-        <div className="lg:w-[70%] w-full relative">
-          <div className="relative">
-            <FootballField
+      <div className="flex flex-col lg:flex-row gap-4 flex-1 min-h-0">
+        {/* Football field + Rotation Planner */}
+        <div className="lg:w-[70%] w-full flex flex-col gap-3 overflow-y-auto">
+          <FootballField
               lineup={safeLineup}
               players={players}
               clubs={clubs}
@@ -938,17 +1254,193 @@ export function LineupPage() {
               onSwap={handleSwap}
               onUnassign={handleUnassign}
             />
+
+          {/* Emergency Coverage Panel */}
+          <EmergencyCoveragePanel
+            lineup={safeLineup}
+            players={players}
+            availablePlayers={availablePlayers}
+            onNavigate={(id) => navigate(`/player/${encodeURIComponent(id)}`)}
+          />
+
+          {/* Rotation Planner */}
+          <div className="shrink-0">
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-md border border-border/70 px-3 py-2 text-sm font-medium hover:bg-accent/40 transition-colors"
+              onClick={() => setShowRotationPlanner((v) => !v)}
+            >
+              {showRotationPlanner
+                ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+              <span>Rotation Planner</span>
+              {rotationPlanLocal.length > 0 && (
+                <Badge variant="outline" className="ml-auto text-xs">
+                  {rotationPlanLocal.length} rotation{rotationPlanLocal.length !== 1 ? 's' : ''}
+                </Badge>
+              )}
+            </button>
+
+            {showRotationPlanner && (
+              <div className="mt-2 rounded-md border border-border/70 p-3 space-y-3">
+                {/* Quarter tabs */}
+                <div className="inline-flex rounded-md overflow-hidden border border-border/70">
+                  {([1, 2, 3, 4] as const).map((q, qi) => (
+                    <button
+                      key={q}
+                      type="button"
+                      className={`h-7 px-3 text-xs font-medium transition-colors ${
+                        activeQtr === q
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+                      }${qi > 0 ? ' border-l border-border/70' : ''}`}
+                      onClick={() => setActiveQtr(q)}
+                    >
+                      Q{q}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Rotation list for active quarter */}
+                <div className="space-y-1">
+                  {activeQtrRotations.length === 0 && !addingRotation && (
+                    <p className="text-xs text-muted-foreground text-center py-2">
+                      No rotations scheduled for Q{activeQtr}
+                    </p>
+                  )}
+                  {activeQtrRotations.map((event) => {
+                    const offPlayer = players[event.playerOffId]
+                    const onPlayer = players[event.playerOnId]
+                    const offSlot = Object.entries(safeLineup).find(([, id]) => id === event.playerOffId)?.[0]
+                    const onSlot = Object.entries(safeLineup).find(([, id]) => id === event.playerOnId)?.[0]
+                    const offLabel = offPlayer
+                      ? `${offPlayer.firstName.charAt(0)}. ${offPlayer.lastName}${offSlot ? ` (${offSlot})` : ''}`
+                      : event.playerOffId
+                    const onLabel = onPlayer
+                      ? `${onPlayer.firstName.charAt(0)}. ${onPlayer.lastName}${onSlot ? ` (${onSlot})` : ''}`
+                      : event.playerOnId
+                    return (
+                      <div
+                        key={event.id}
+                        className="flex items-center gap-2 rounded-md border border-border/60 px-2 py-1.5 text-xs"
+                      >
+                        <span className="text-muted-foreground w-12 shrink-0">Min {event.minute}</span>
+                        <span className="flex-1 truncate">{offLabel}</span>
+                        <span className="text-muted-foreground shrink-0">→</span>
+                        <span className="flex-1 truncate">{onLabel}</span>
+                        <button
+                          type="button"
+                          className="shrink-0 text-muted-foreground hover:text-destructive transition-colors"
+                          onClick={() => handleRemoveRotation(event.id)}
+                          aria-label="Remove rotation"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    )
+                  })}
+
+                  {addingRotation && (
+                    <div className="rounded-md border border-border/60 bg-muted/20 p-2 space-y-2">
+                      <div className="grid grid-cols-[80px_1fr_1fr] gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Minute</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={29}
+                            value={newMinute}
+                            onChange={(e) => setNewMinute(Math.max(1, Math.min(29, Number(e.target.value))))}
+                            className="h-7 text-xs"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Player Off</Label>
+                          <Select value={newPlayerOffId} onValueChange={setNewPlayerOffId}>
+                            <SelectTrigger className="h-7 text-xs">
+                              <SelectValue placeholder="Select..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {onFieldPlayerOptions.map(({ slot, player }) => (
+                                <SelectItem key={player.id} value={player.id}>
+                                  {player.firstName.charAt(0)}. {player.lastName} ({slot})
+                                </SelectItem>
+                              ))}
+                              {onFieldPlayerOptions.length === 0 && (
+                                <div className="px-2 py-1 text-xs text-muted-foreground">No on-field players assigned</div>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Player On</Label>
+                          <Select value={newPlayerOnId} onValueChange={setNewPlayerOnId}>
+                            <SelectTrigger className="h-7 text-xs">
+                              <SelectValue placeholder="Select..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {interchangePlayerOptions.map(({ slot, player }) => (
+                                <SelectItem
+                                  key={player.id}
+                                  value={player.id}
+                                  disabled={alreadyScheduledOnIds.has(player.id)}
+                                >
+                                  {player.firstName.charAt(0)}. {player.lastName} ({slot})
+                                </SelectItem>
+                              ))}
+                              {interchangePlayerOptions.length === 0 && (
+                                <div className="px-2 py-1 text-xs text-muted-foreground">No interchange players assigned</div>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={handleAddRotation}
+                          disabled={!newPlayerOffId || !newPlayerOnId}
+                        >
+                          Add
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={() => { setAddingRotation(false); setNewPlayerOffId(''); setNewPlayerOnId('') }}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {!addingRotation && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    onClick={() => { setAddingRotation(true); setNewMinute(5); setNewPlayerOffId(''); setNewPlayerOnId('') }}
+                  >
+                    <Plus className="mr-1 h-3 w-3" />
+                    Add Rotation
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
         {/* Available players panel */}
         <div
-          className="lg:w-[30%] w-full"
+          className="lg:w-[30%] w-full flex flex-col min-h-0"
           onDragOver={handlePanelDragOver}
           onDrop={handlePanelDrop}
         >
-          <Card className="h-full">
-            <CardHeader className="py-3 space-y-2">
+          <Card className="flex flex-col flex-1 min-h-0">
+            <CardHeader className="py-3 space-y-2 shrink-0">
               <CardTitle className="text-sm">
                 Available Players ({benchPlayers.length})
               </CardTitle>
@@ -956,23 +1448,29 @@ export function LineupPage() {
                 Position numbers are overall rating at that position. FIT% is current match fitness.
               </p>
               <div className="space-y-1">
-                <div className="flex gap-1 flex-wrap">
-                  <Button
-                    size="sm"
-                    variant={fitView === 'slot-fit' ? 'default' : 'outline'}
-                    className="h-6 px-2 text-xs"
-                    onClick={() => setFitView('slot-fit')}
-                  >
-                    Slot Fit View
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={fitView === 'standard' ? 'default' : 'outline'}
-                    className="h-6 px-2 text-xs"
+                <div className="inline-flex rounded-md overflow-hidden border border-border/70">
+                  <button
+                    type="button"
                     onClick={() => setFitView('standard')}
+                    className={`h-7 px-3 text-xs font-medium transition-colors ${
+                      fitView === 'standard'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+                    }`}
                   >
-                    Standard View
-                  </Button>
+                    Standard
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFitView('slot-fit')}
+                    className={`h-7 px-3 text-xs font-medium border-l border-border/70 transition-colors ${
+                      fitView === 'slot-fit'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+                    }`}
+                  >
+                    Slot Fit
+                  </button>
                 </div>
                 {fitView === 'slot-fit' && (
                   <div className="rounded-md border border-border/70 bg-muted/20 px-2 py-1 text-[11px] text-muted-foreground">
@@ -1017,9 +1515,22 @@ export function LineupPage() {
                   </Button>
                 ))}
               </div>
+
+              {/* Team readiness summary */}
+              {benchPlayers.length > 0 && (() => {
+                const rScores = benchPlayers.map((p) => computePlayerReadiness(p).score)
+                const avgFit = Math.round(benchPlayers.reduce((s, p) => s + p.fitness, 0) / benchPlayers.length)
+                const avgFat = Math.round(benchPlayers.reduce((s, p) => s + p.fatigue, 0) / benchPlayers.length)
+                const avgReady = Math.round(rScores.reduce((a, b) => a + b, 0) / rScores.length)
+                return (
+                  <div className="text-[10px] text-muted-foreground">
+                    Bench — Avg Fitness {avgFit} · Avg Fatigue {avgFat} · Avg Readiness {avgReady}
+                  </div>
+                )
+              })()}
             </CardHeader>
-            <CardContent className="p-0">
-              <ScrollArea className="h-[calc(100vh-280px)]">
+            <CardContent className="p-0 flex-1 min-h-0">
+              <ScrollArea className="h-full">
                 <div className="space-y-0.5 px-2 pb-2">
                   {benchPlayers.map((p) => (
                     <div
@@ -1044,10 +1555,12 @@ export function LineupPage() {
                       </span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1">
-                          <span className="text-sm truncate">
-                            {p.firstName.charAt(0)}. {p.lastName}
-                          </span>
-                          {isRecentlyReturned(p) && (
+                          <PlayerHoverCard player={p} side="right">
+                            <span className="text-sm truncate cursor-default">
+                              {p.firstName.charAt(0)}. {p.lastName}
+                            </span>
+                          </PlayerHoverCard>
+                          {isRecentlyReturned(p, currentDate) && (
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <span className="shrink-0">
@@ -1056,14 +1569,23 @@ export function LineupPage() {
                               </TooltipTrigger>
                               <TooltipContent side="right" className="text-xs">
                                 {(() => {
-                                  const last = [...(p.injuryHistory ?? [])].reverse()[0]
-                                  return last
-                                    ? `Returned from ${last.type} (${last.initialWeeks}w, ${last.gamesMissed ?? 0} gm missed)`
-                                    : 'Recently returned from injury'
+                                  const last = (p.injuryHistory ?? []).at(-1)
+                                  if (!last) return 'Recently returned from injury'
+                                  const weeksAgo = weeksAgoReturned(p, currentDate)
+                                  return (
+                                    <div className="space-y-0.5">
+                                      <p className="font-semibold">Returned from injury</p>
+                                      <p>{last.type} ({last.initialWeeks}w, {last.gamesMissed ?? 0} gm missed)</p>
+                                      <p className="text-amber-400">
+                                        {weeksAgo === 0 ? 'Back this week' : `${weeksAgo}w ago`}
+                                      </p>
+                                    </div>
+                                  )
                                 })()}
                               </TooltipContent>
                             </Tooltip>
                           )}
+                          <ReadinessBadge player={p} size="xs" />
                         </div>
                         {milestoneByPlayer.has(p.id) && (
                           <Badge variant="outline" className="mt-0.5 text-[10px] border-cyan-500/30 bg-cyan-500/10 text-cyan-700">
@@ -1251,10 +1773,10 @@ export function LineupPage() {
                           <Pencil className="mr-1 h-3.5 w-3.5" />
                           Rename
                         </Button>
-                        <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => handleDeleteSavedLineup(entry)}>
+                        <ConfirmButton size="sm" variant="outline" className="h-7 px-2 text-xs" onConfirm={() => handleDeleteSavedLineup(entry)} confirmLabel="Delete?">
                           <Trash2 className="mr-1 h-3.5 w-3.5" />
                           Delete
-                        </Button>
+                        </ConfirmButton>
                       </div>
                     </div>
                   )

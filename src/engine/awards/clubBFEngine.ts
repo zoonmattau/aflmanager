@@ -64,14 +64,17 @@ export function awardClubBFVotes(
  * Get top N B&F vote-getters for a specific club this season.
  */
 export function getClubBFLeaderboard(
-  tracker: ClubBFRound[],
+  tracker: ClubBFRound[] | null | undefined,
   clubId: string,
   topN: number = 5,
 ): { playerId: string; votes: number }[] {
+  if (!Array.isArray(tracker)) return []
   const totals: Record<string, number> = {}
   for (const r of tracker) {
-    if (r.clubId !== clubId) continue
+    if (!r || r.clubId !== clubId) continue
+    if (!Array.isArray(r.votes)) continue
     for (const v of r.votes) {
+      if (!v?.playerId) continue
       totals[v.playerId] = (totals[v.playerId] ?? 0) + v.votes
     }
   }

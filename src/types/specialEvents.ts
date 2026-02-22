@@ -7,6 +7,21 @@ export type SpecialEventId =
 
 export type SpecialEventTiming = 'preseason' | 'mid-season' | 'post-season'
 
+export type SpecialEventManualTiming =
+  | 'preseason'       // Before Round 1
+  | 'early-season'    // Roughly Rounds 1–8
+  | 'mid-season'      // Roughly Rounds 9–16 (or bye rounds)
+  | 'late-season'     // Roughly Rounds 17+
+  | 'pre-finals'      // Week immediately before finals begin
+  | 'post-season'     // After the Grand Final
+  | 'custom-round'    // User-specified round number
+
+export interface SpecialEventSchedule {
+  timing: SpecialEventManualTiming
+  customRound: number    // Only used when timing === 'custom-round'
+  venueOverride: string  // Empty string = use event default venue
+}
+
 export interface SpecialEventDefinition {
   id: SpecialEventId
   name: string
@@ -126,4 +141,5 @@ export interface SpecialEventsSettings {
   autoSchedule: boolean
   originEligibility: OriginEligibility
   originConfig: OriginConfig
+  eventSchedules: Partial<Record<SpecialEventId, SpecialEventSchedule>>
 }

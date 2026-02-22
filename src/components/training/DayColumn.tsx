@@ -13,6 +13,7 @@ interface DayColumnProps {
   isMatchDay: boolean
   isGameEve: boolean
   isRecoveryDay: boolean
+  isToday: boolean
   morningSlot: TrainingSlot
   afternoonSlot: TrainingSlot
   clubPlayers: Player[]
@@ -27,6 +28,7 @@ export function DayColumn({
   isMatchDay,
   isGameEve,
   isRecoveryDay,
+  isToday,
   morningSlot,
   afternoonSlot,
   clubPlayers,
@@ -40,6 +42,7 @@ export function DayColumn({
         isMatchDay && 'border-blue-500/50 bg-blue-500/5',
         isGameEve && 'border-amber-500/30',
         isRecoveryDay && 'border-green-500/30',
+        isToday && !isMatchDay && 'border-primary/60 bg-primary/5',
       )}
     >
       {/* Day header */}
@@ -47,10 +50,14 @@ export function DayColumn({
         className={cn(
           'px-2 py-1.5 border-b text-center',
           isMatchDay && 'bg-blue-500/10 border-blue-500/30',
+          isToday && !isMatchDay && 'bg-primary/10 border-primary/30',
         )}
       >
-        <div className="text-xs font-semibold">{dayLabel}</div>
+        <div className={cn('text-xs font-semibold', isToday && 'text-primary')}>{dayLabel}</div>
         <div className="text-[10px] text-muted-foreground">{dayNumber}</div>
+        {isToday && !isMatchDay && (
+          <div className="text-[10px] text-primary font-medium mt-0.5">Today</div>
+        )}
         {isMatchDay && (
           <Badge className="mt-1 bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30 text-[10px] h-4 px-1.5">
             <Swords className="mr-1 h-2.5 w-2.5" />

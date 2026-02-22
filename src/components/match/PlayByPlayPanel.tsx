@@ -7,33 +7,35 @@ import type { PlayByPlayEvent, PlayByPlayEventType } from '@/types/match'
 import type { Player } from '@/types/player'
 
 const TYPE_COLOR: Record<PlayByPlayEventType, string> = {
-  goal:             'bg-green-500',
-  behind:           'bg-teal-500',
-  miss:             'bg-amber-500',
-  turnover:         'bg-red-500',
-  intercept:        'bg-orange-500',
-  'contested-mark': 'bg-blue-500',
-  mark:             'bg-blue-400',
-  clearance:        'bg-purple-400',
-  'free-kick':      'bg-yellow-500',
-  tackle:           'bg-slate-400',
-  inside50:         'bg-indigo-400',
-  'quarter-break':  'bg-muted-foreground',
+  goal:               'bg-green-500',
+  behind:             'bg-teal-500',
+  miss:               'bg-amber-500',
+  turnover:           'bg-red-500',
+  intercept:          'bg-orange-500',
+  'contested-mark':   'bg-blue-500',
+  mark:               'bg-blue-400',
+  clearance:          'bg-purple-400',
+  'free-kick':        'bg-yellow-500',
+  tackle:             'bg-slate-400',
+  inside50:           'bg-indigo-400',
+  'quarter-break':    'bg-muted-foreground',
+  'training-callout': 'bg-violet-500',
 }
 
 const TYPE_LABEL: Record<PlayByPlayEventType, string> = {
-  goal:             'Goal',
-  behind:           'Behind',
-  miss:             'Miss',
-  turnover:         'Turnover',
-  intercept:        'Intercept',
-  'contested-mark': 'C.Mark',
-  mark:             'Mark',
-  clearance:        'Clearance',
-  'free-kick':      'Free',
-  tackle:           'Tackle',
-  inside50:         'I.50',
-  'quarter-break':  'Break',
+  goal:               'Goal',
+  behind:             'Behind',
+  miss:               'Miss',
+  turnover:           'Turnover',
+  intercept:          'Intercept',
+  'contested-mark':   'C.Mark',
+  mark:               'Mark',
+  clearance:          'Clearance',
+  'free-kick':        'Free',
+  tackle:             'Tackle',
+  inside50:           'I.50',
+  'quarter-break':    'Break',
+  'training-callout': 'Training',
 }
 
 type EventFilter = 'all' | 'goals' | 'scoring' | 'turnovers' | 'marks' | 'free-kicks' | 'highlights'
@@ -62,6 +64,16 @@ function EventRow({
   const isHome = event.clubId === homeClubId
   const isAway = event.clubId === awayClubId
   const dotColor = TYPE_COLOR[event.type] ?? 'bg-muted-foreground'
+
+  // Training callouts get their own condensed layout
+  if (event.type === 'training-callout') {
+    return (
+      <div className="rounded px-2 py-1 text-xs border-l-2 border-violet-500/60 bg-violet-500/5 ml-2 my-0.5">
+        <span className="text-[10px] font-semibold text-violet-400 mr-1.5">Training</span>
+        <span className="text-muted-foreground italic">{event.commentary}</span>
+      </div>
+    )
+  }
 
   return (
     <div
@@ -135,7 +147,7 @@ export function PlayByPlayPanel({
   const searchLower = playerSearch.toLowerCase()
 
   const filtered = events.filter((e) => {
-    if (e.type === 'quarter-break') return true
+    if (e.type === 'quarter-break' || e.type === 'training-callout') return true
     if (teamFilter === 'home' && e.clubId !== homeClubId) return false
     if (teamFilter === 'away' && e.clubId !== awayClubId) return false
     if (playerSearch && !e.commentary.toLowerCase().includes(searchLower)) return false

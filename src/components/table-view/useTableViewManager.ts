@@ -51,12 +51,14 @@ function sanitizeSnapshot(
   defaultSnapshot: TableViewSnapshot,
 ): TableViewSnapshot {
   const columnIds = new Set(columns.map((c) => c.id))
+  const safeOrder: string[] = Array.isArray(snapshot.columnOrder) ? snapshot.columnOrder : []
+  const safeHidden: string[] = Array.isArray(snapshot.hiddenColumnIds) ? snapshot.hiddenColumnIds : []
   const order = unique([
-    ...snapshot.columnOrder.filter((id) => columnIds.has(id)),
+    ...safeOrder.filter((id) => columnIds.has(id)),
     ...defaultSnapshot.columnOrder.filter((id) => columnIds.has(id)),
   ])
   const hidden = unique(
-    snapshot.hiddenColumnIds.filter((id) => columnIds.has(id)),
+    safeHidden.filter((id) => columnIds.has(id)),
   )
   const widths: Record<string, number> = {}
   for (const [id, width] of Object.entries(snapshot.columnWidths ?? {})) {
