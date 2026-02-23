@@ -1,4 +1,4 @@
-import { Pause, Play, ChevronLast, Turtle, FastForward } from 'lucide-react'
+import { Pause, Play, ChevronLast, Turtle, FastForward, StepForward } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 export type PlaybackSpeed = 'paused' | 'slow' | 'normal' | 'fast'
@@ -17,6 +17,8 @@ interface LiveScoreboardProps {
   speed: PlaybackSpeed
   onSpeedChange: (speed: PlaybackSpeed) => void
   onSkip: () => void
+  /** When provided, shows a Step button while paused to advance one tick manually. */
+  onStep?: () => void
 }
 
 export function LiveScoreboard({
@@ -33,6 +35,7 @@ export function LiveScoreboard({
   speed,
   onSpeedChange,
   onSkip,
+  onStep,
 }: LiveScoreboardProps) {
   const margin = Math.abs(homeScore - awayScore)
   const leadingAbbr = homeScore > awayScore ? homeAbbr : awayScore > homeScore ? awayAbbr : null
@@ -111,6 +114,18 @@ export function LiveScoreboard({
           {speed === 'paused' ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
           {speed === 'paused' ? 'Resume' : 'Pause'}
         </Button>
+        {speed === 'paused' && onStep && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2 text-xs gap-1"
+            onClick={onStep}
+            title="Advance one possession"
+          >
+            <StepForward className="h-3 w-3" />
+            Step
+          </Button>
+        )}
         <Button
           variant={speed === 'slow' ? 'default' : 'ghost'}
           size="sm"

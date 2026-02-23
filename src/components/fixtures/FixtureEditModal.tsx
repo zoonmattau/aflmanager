@@ -18,7 +18,7 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { ArrowLeftRight, AlertCircle, MoveRight, ShieldAlert, Info } from 'lucide-react'
 import { useGameStore } from '@/stores/gameStore'
-import type { Fixture, MatchDay, Round } from '@/types/season'
+import type { MatchDay, Round } from '@/types/season'
 import type { Club } from '@/types/club'
 import { VENUES, CLUB_DEFAULT_VENUES } from '@/data/venues'
 import { getEffectiveVenueRules, validateMatchupVenue, getMatchupRule } from '@/engine/venues/venueRuleEngine'
@@ -38,6 +38,8 @@ const MATCH_DAYS: MatchDay[] = [
 ]
 
 const MATCH_DAY_LABELS: Record<MatchDay, string> = {
+  Tuesday: 'Tuesday',
+  Wednesday: 'Wednesday',
   Thursday: 'Thursday',
   Friday: 'Friday',
   'Saturday-Early': 'Saturday (Early)',

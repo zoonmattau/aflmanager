@@ -19,6 +19,7 @@ import type {
   WeeklyMatchupTactics,
   RotationEvent,
   ReplacementPathwayType,
+  RoundPrepSnapshot,
 } from '@/types/game'
 import type { TradeInboxItem, TradeNegotiationOffer } from '@/types/trade'
 import type { ScheduleSlot } from '@/types/calendar'
@@ -51,6 +52,7 @@ import { DEFAULT_BETTING_SETTINGS } from '@/types/betting'
 import { generateFixture, createInitialLadder } from '@/engine/season/fixtureGenerator'
 import { validateFixture } from '@/engine/season/fixtureValidator'
 import { simulateRound, isRegularSeasonComplete, applyPostRoundEffects } from '@/engine/season/advanceRound'
+import { simulateMatch } from '@/engine/match/simulateMatch'
 import { generatePrepAnalysis } from '@/engine/match/prepAnalysis'
 import { processMatchResults } from '@/engine/season/processResults'
 import { computeWeeklyPowerRankings } from '@/engine/season/powerRankings'
@@ -121,7 +123,7 @@ import {
 import { awardClubBFVotes } from '@/engine/awards/clubBFEngine'
 import { generateAA40Squad, selectAAFinalTeam, aaTeamToPlayerIds } from '@/engine/awards/allAustralianEngine'
 import { computeMatchRatings } from '@/engine/match/matchRatings'
-import { addDays, buildSeasonCalendar, computeDefaultGameStartDate, getYear } from '@/engine/calendar/calendarEngine'
+import { addDays, buildSeasonCalendar, computeDefaultGameStartDate, getYear, injectReservesEvents } from '@/engine/calendar/calendarEngine'
 import { getFixtureDateIso, toRoundWeekMonday } from '@/engine/season/fixtureDateUtils'
 import {
   initializeStateLeagues,
@@ -348,7 +350,6 @@ import {
   getTradeDeadlineDate,
   getDeadlinePressure,
 } from '@/engine/trades/tradeNegotiationEngine'
-import type { NegotiationThread } from '@/types/negotiation'
 import { computeClubLeverage } from '@/engine/trades/leverageEngine'
 import {
   createNegotiationThread,
@@ -824,7 +825,7 @@ function applyCaptaincyChangeResult(state: GameState, result: CaptaincyChangeRes
       disruptionLevel,
       roundsRemaining: roundsToRecover,
       roundsToRecover,
-      wasPreseason: state.gamePhase === 'preseason',
+      wasPreseason: state.phase === 'preseason',
       outgoingCaptainName: `${stripped.firstName} ${stripped.lastName}`,
       incomingCaptainName: newCaptainPlayer
         ? `${newCaptainPlayer.firstName} ${newCaptainPlayer.lastName}`
@@ -1014,6 +1015,9 @@ const createDefaultState = (): GameState => ({
   ladder: [],
   powerRankings: [],
   matchResults: [],
+  pendingMatchResults: [],
+  roundPrep: null,
+  roundPrepRound: null,
   newsLog: [],
   emailLog: [],
   rngSeed: Date.now(),
@@ -1024,6 +1028,7 @@ const createDefaultState = (): GameState => ({
   selectedLineup: null,
   selectedSubstituteId: null,
   savedLineups: [],
+  weeklySquadRoles: {},
   draft: null,
   scouts: [],
   tradeHistory: [],
@@ -1229,6 +1234,58 @@ function resolveLinkedBidMatch(params: {
   }
 }
 
+/**
+ * Simulate non-user fixtures in the current round whose scheduled date is on
+ * or before `upToDate`. Called from day-advance actions so that other clubs'
+ * results are immediately visible in the fixture page.
+ * Does NOT update the ladder — that happens in simCurrentRound.
+ */
+function backgroundSimPassedFixtures(
+  state: GameState,
+  upToDate: string,
+): Match[] {
+  if (state.phase !== 'regular-season') return []
+  const round = state.season.rounds[state.currentRound]
+  if (!round) return []
+  const seasonStartDate = state.settings.seasonStartDate ?? '2026-03-20'
+
+  const backgroundMatches: Match[] = []
+  for (let i = 0; i < round.fixtures.length; i++) {
+    const fixture = round.fixtures[i]
+    if (fixture.homeClubId === state.playerClubId || fixture.awayClubId === state.playerClubId) continue
+    const fixtureDate = getFixtureDateIso(seasonStartDate, state.currentRound, fixture.matchDay)
+    // Only sim games from dates strictly before the landing date.
+    // Games ON the landing date are shown as "upcoming" when the user arrives.
+    if (fixtureDate >= upToDate) continue
+    const alreadySimmed = state.matchResults.some(
+      (m) =>
+        !m.isFinal &&
+        m.round === state.currentRound &&
+        ((m.homeClubId === fixture.homeClubId && m.awayClubId === fixture.awayClubId) ||
+          (m.homeClubId === fixture.awayClubId && m.awayClubId === fixture.homeClubId)),
+    )
+    if (alreadySimmed) continue
+    const match = simulateMatch({
+      homeClubId: fixture.homeClubId,
+      awayClubId: fixture.awayClubId,
+      venue: fixture.venue,
+      round: state.currentRound,
+      players: state.players,
+      clubs: state.clubs,
+      seed: state.rngSeed + state.currentRound * 100 + i,
+      isFinal: false,
+      matchRules: state.settings.matchRules,
+      realism: state.settings.realism,
+      matchDay: fixture.matchDay,
+      month: state.currentDate ? parseInt(state.currentDate.split('-')[1]) : undefined,
+      venueRoofOverrides: state.settings.venueRoofOverrides,
+      customStadiums: state.settings.customStadiums,
+    })
+    backgroundMatches.push(match)
+  }
+  return backgroundMatches
+}
+
 function buildSimLineupForClub(
   state: GameState,
   clubId: string,
@@ -1317,6 +1374,227 @@ function buildStaffImpactMaps(state: GameState): {
   }
 
   return { tacticalByClub, scoutingByClub, draftByClub }
+}
+
+/**
+ * Compute and cache pre-round snapshot data in state.roundPrep.
+ * Idempotent — re-enters are a no-op when roundPrepRound === currentRound.
+ *
+ * Side-effects applied exactly once per round:
+ *  - Expiry of pending user tribunal cases
+ *  - Role dispute morale adjustments
+ *  - AI/user gameplan + weeklyGameplans assignment
+ *  - Broadcast tier assignment
+ */
+function runPreRoundSetupIfNeeded(
+  get: () => GameState,
+  set: (fn: (state: GameState) => void) => void,
+): void {
+  let state = get()
+  if (state.roundPrepRound === state.currentRound) return
+  const round = state.season.rounds[state.currentRound]
+  if (!round) return
+
+  // ── Pre-round career stats snapshot ─────────────────────────────────────
+  const preRoundCareerStats: RoundPrepSnapshot['preRoundCareerStats'] = {}
+  for (const player of Object.values(state.players)) {
+    preRoundCareerStats[player.id] = {
+      gamesPlayed: player.careerStats.gamesPlayed,
+      goals: player.careerStats.goals,
+      disposals: player.careerStats.disposals,
+      marks: player.careerStats.marks,
+      tackles: player.careerStats.tackles,
+    }
+  }
+  const preRoundMomentSnapshot = buildPreRoundMomentSnapshot(state.players)
+
+  // ── Tribunal expiry ──────────────────────────────────────────────────────
+  const expiredCases = expirePendingUserTribunalCases(state.tribunalInbox, state.currentRound)
+    .filter((c, idx) =>
+      state.tribunalInbox[idx] &&
+      state.tribunalInbox[idx].status === 'pending-user' &&
+      c.status === 'expired',
+    )
+  if (expiredCases.length > 0) {
+    set((s) => {
+      for (const expired of expiredCases) {
+        const idx = s.tribunalInbox.findIndex((c) => c.id === expired.id)
+        if (idx >= 0) s.tribunalInbox[idx] = expired
+        const player = s.players[expired.playerId]
+        if (!player) continue
+        applyTribunalOutcomeToPlayer(player, expired)
+        appendNewsItem(s, {
+          id: crypto.randomUUID(),
+          date: s.currentDate,
+          headline: `Tribunal deadline missed: ${player.firstName} ${player.lastName}`,
+          body:
+            `No club response was lodged for ${player.firstName} ${player.lastName}. ` +
+            `${expired.outcomeSummary ?? 'Automatic sanction applied.'}`,
+          category: 'discipline',
+          clubIds: [player.clubId],
+          playerIds: [player.id],
+        })
+      }
+    })
+    state = get()
+  }
+
+  // ── Fixture club IDs + role disputes ────────────────────────────────────
+  const fixtureClubIds = new Set<string>()
+  for (const f of round.fixtures) {
+    fixtureClubIds.add(f.homeClubId)
+    fixtureClubIds.add(f.awayClubId)
+  }
+  set((s) => {
+    applyRoleDisputesForFixtures(s, fixtureClubIds)
+  })
+  state = get()
+
+  // ── Gameplan building ────────────────────────────────────────────────────
+  const gameplanOverrides: Record<string, ClubGameplan> = {}
+  const matchupTacticsByClub: Record<string, WeeklyMatchupTactics | undefined> = {}
+  const weeklyEntriesNext: Record<string, import('@/types/game').WeeklyGameplan | undefined> = {
+    ...state.weeklyGameplans,
+  }
+  const { tacticalByClub } = buildStaffImpactMaps(state)
+  const tacticalRng = new SeededRNG(state.rngSeed + state.currentRound * 4591)
+  for (const fixture of round.fixtures) {
+    const pair: [string, string][] = [
+      [fixture.homeClubId, fixture.awayClubId],
+      [fixture.awayClubId, fixture.homeClubId],
+    ]
+    for (const [clubId, opponentId] of pair) {
+      const club = state.clubs[clubId]
+      const opponent = state.clubs[opponentId]
+      if (!club || !opponent) continue
+      const userEntry = state.weeklyGameplans[clubId]
+      if (
+        clubId === state.playerClubId &&
+        userEntry &&
+        userEntry.round === state.currentRound &&
+        userEntry.opponentClubId === opponentId
+      ) {
+        gameplanOverrides[clubId] = applyGameplanAdjustment(club.gameplan, userEntry.overrides)
+        matchupTacticsByClub[clubId] = userEntry.matchupTactics
+        weeklyEntriesNext[clubId] = userEntry
+        continue
+      }
+      const tacticalContext = tacticalByClub[club.id] ?? { tacticalAdjustment: 0.7, discipline: 60 }
+      const autoOverride = buildCounterAdjustment(club, opponent.gameplan, tacticalRng, tacticalContext)
+      gameplanOverrides[clubId] = applyGameplanAdjustment(club.gameplan, autoOverride)
+      if (clubId !== state.playerClubId) {
+        weeklyEntriesNext[clubId] = {
+          round: state.currentRound,
+          opponentClubId: opponentId,
+          overrides: autoOverride,
+          source: 'ai-auto',
+        }
+      }
+    }
+  }
+  set((s) => {
+    s.weeklyGameplans = weeklyEntriesNext
+  })
+  state = get()
+
+  // ── Lineup building ──────────────────────────────────────────────────────
+  const lineupsByClub: Record<string, Record<string, string>> = {}
+  const substitutesByClub: Record<string, string | null> = {}
+  for (const fixture of round.fixtures) {
+    const homeLineup = buildSimLineupForClub(state, fixture.homeClubId)
+    const awayLineup = buildSimLineupForClub(state, fixture.awayClubId)
+    lineupsByClub[fixture.homeClubId] = homeLineup
+    lineupsByClub[fixture.awayClubId] = awayLineup
+    substitutesByClub[fixture.homeClubId] = buildSimSubstituteForClub(state, fixture.homeClubId, homeLineup)
+    substitutesByClub[fixture.awayClubId] = buildSimSubstituteForClub(state, fixture.awayClubId, awayLineup)
+  }
+
+  // ── Broadcast tier assignment ─────────────────────────────────────────────
+  set((s) => {
+    const currentRound = s.season.rounds[s.currentRound]
+    if (currentRound) {
+      currentRound.fixtures = assignRoundBroadcasts(currentRound.fixtures, s.clubs, s.ladder)
+    }
+  })
+  state = get()
+
+  // ── Ladder snapshot ───────────────────────────────────────────────────────
+  const preLadderPositions: Record<string, number> = {}
+  state.ladder.forEach((e, i) => { preLadderPositions[e.clubId] = i + 1 })
+
+  // ── Rotation / scout / training focuses ───────────────────────────────────
+  const rotationPlanByClub: Record<string, RotationEvent[]> = {}
+  const playerRotations = state.weeklyGameplans[state.playerClubId]?.rotationPlan
+  if (playerRotations && playerRotations.length > 0) {
+    rotationPlanByClub[state.playerClubId] = playerRotations
+  }
+  const scoutCounterByClub: Record<string, string | null> = {}
+  const playerScoutCounter = state.weeklyGameplans[state.playerClubId]?.scoutCounterId
+  if (playerScoutCounter != null) {
+    scoutCounterByClub[state.playerClubId] = playerScoutCounter
+  }
+  const trainingFocusesByClub: Record<string, TrainingFocus[]> = {}
+  if (state.trainingWeekPlan?.slots) {
+    const focuses = extractFocusesFromSlots(state.trainingWeekPlan.slots)
+    if (focuses.length > 0) {
+      trainingFocusesByClub[state.playerClubId] = focuses
+    }
+  }
+
+  // ── Pre-match fatigue/fitness snapshot ────────────────────────────────────
+  const preMatchFatigueById: Record<string, number> = {}
+  const userClubActivePlayers = Object.values(state.players).filter(
+    (p) => p.clubId === state.playerClubId && !p.injury,
+  )
+  for (const p of userClubActivePlayers) {
+    preMatchFatigueById[p.id] = p.fatigue
+  }
+  const avgPreMatchFatigue = userClubActivePlayers.length > 0
+    ? userClubActivePlayers.reduce((sum, p) => sum + p.fatigue, 0) / userClubActivePlayers.length
+    : 50
+  const avgPreMatchFitness = userClubActivePlayers.length > 0
+    ? userClubActivePlayers.reduce((sum, p) => sum + p.fitness, 0) / userClubActivePlayers.length
+    : 70
+
+  // ── Training week plan intensity flags ────────────────────────────────────
+  let hasHeavySession = false
+  let hasRecoverySession = false
+  const twp = state.trainingWeekPlan
+  if (twp) {
+    for (const slot of Object.values(twp.slots)) {
+      for (const period of [slot.morning, slot.afternoon]) {
+        for (const group of period.groups) {
+          if (group.intensity === 'intense') hasHeavySession = true
+          if (group.intensity === 'light') hasRecoverySession = true
+        }
+      }
+    }
+  }
+  const avgFatigueChange = state.lastTrainingReport?.avgFatigueChange ?? 0
+  if (!twp && avgFatigueChange > 12) hasHeavySession = true
+
+  // ── Store snapshot ────────────────────────────────────────────────────────
+  const roundPrep: RoundPrepSnapshot = {
+    preRoundCareerStats,
+    preRoundMomentSnapshot,
+    preMatchFatigueById,
+    avgPreMatchFatigue,
+    avgPreMatchFitness,
+    preLadderPositions,
+    trainingWeekPlanDetails: { hasHeavySession, hasRecoverySession },
+    gameplanOverrides,
+    matchupTacticsByClub,
+    lineupsByClub,
+    substitutesByClub,
+    rotationPlanByClub,
+    scoutCounterByClub,
+    trainingFocusesByClub,
+    fixtureClubIds: Array.from(fixtureClubIds),
+  }
+  set((s) => {
+    s.roundPrep = roundPrep
+    s.roundPrepRound = s.currentRound
+  })
 }
 
 function getOffseasonProgressionError(state: GameState): string | null {
@@ -1626,6 +1904,7 @@ interface GameActions {
   setClubLeadership: (clubId: string, leadership: ClubLeadership) => void
   confirmLeadershipSelection: () => void
   delegateLeadershipToStaff: () => void
+  setLeadershipDelegated: (clubId: string, delegated: boolean) => void
   applyLeadershipChange: (clubId: string, newLeadership: ClubLeadership) => void
   addMatchResult: (match: Match) => void
   updateLadder: (ladder: LadderEntry[]) => void
@@ -1643,6 +1922,8 @@ interface GameActions {
   fixVenueConflict: (roundIndex: number, fixtureIndex: number) => void
   setSelectedLineup: (lineup: Record<string, string> | null) => void
   setSelectedSubstitute: (playerId: string | null) => void
+  setWeeklySquadRole: (playerId: string, role: 'lineup' | 'reserves' | 'rest' | null) => void
+  autoAssignWeeklySquadRoles: () => void
   saveNamedLineup: (input: {
     name: string
     lineup: Record<string, string>
@@ -1704,6 +1985,13 @@ interface GameActions {
   setManagedReservesLineup: (playerIds: string[]) => void
   setManagedReservesLineupSlots: (assignments: Partial<Record<LineupSlot, string>>) => void
   setReservesPlayerAvailability: (playerId: string, assignment: 'play' | 'rest') => void
+  batchSetReservesPlayerAvailability: (assignments: Record<string, 'play' | 'rest'>) => void
+  applyLineupAutoAssign: (params: {
+    aflLineup: Record<LineupSlot, string>
+    reservesLineup: Partial<Record<LineupSlot, string>>
+    substituteId: string | null
+    availability: Record<string, 'play' | 'rest'>
+  }) => void
   setReservesLeadership: (leadership: {
     captainId: string | null
     viceCaptainId: string | null
@@ -1751,8 +2039,18 @@ interface GameActions {
   advanceDateToNextCalendarEvent: () => void
   advanceOneDay: () => void
 
+  // Pending match results (individually resolved, not yet round-committed)
+  addPendingMatchResult: (match: Match) => void
+  clearPendingMatchResults: () => void
+
   // Season progression
-  simCurrentRound: (options?: { internal?: boolean; precomputedUserMatch?: Match; precomputedMatches?: Match[] }) => { userMatch: Match | null; reviewPayload: PostMatchReviewPayload | null }
+  simCurrentRound: (options?: { internal?: boolean; precomputedUserMatch?: Match; precomputedMatches?: Match[]; allMatchesPrecomputed?: boolean }) => { userMatch: Match | null; reviewPayload: PostMatchReviewPayload | null }
+  /**
+   * Commit a single resolved fixture to matchResults.
+   * Runs pre-round setup (idempotent) and triggers finalizeRound once all
+   * fixtures in the current round have results.
+   */
+  commitSingleFixture: (match: Match, isUserMatch?: boolean) => { userMatch: Match | null; reviewPayload: PostMatchReviewPayload | null }
   simToEnd: () => void
   startFinals: () => void
   simFinalsRound: () => { userMatch: Match | null; seasonOver: boolean; reviewPayload: PostMatchReviewPayload | null }
@@ -2177,6 +2475,18 @@ export const useGameStore = create<GameStore>()(
             initializedStateLeagues,
             gameSettings.stateLeagueAffiliations,
           )
+
+          // Inject reserves match events now that state leagues are initialised
+          if (state.stateLeagues && gameSettings.seasonStartDate) {
+            injectReservesEvents(
+              state.calendar,
+              state.stateLeagues,
+              initialClubId,
+              gameSettings.seasonStartDate,
+              season.rounds.length,
+              gameSettings.stateLeagueAffiliations,
+            )
+          }
 
           // Initialize youth pathway (U16/U18 competitions)
           if (gameSettings.includePathwayLeagues) {
@@ -2956,8 +3266,9 @@ export const useGameStore = create<GameStore>()(
           const club = state.clubs[clubId]
           if (!club) return
 
-          // For the user's own club, generate captaincy event flow when a captain/VC is stripped
-          if (clubId === state.playerClubId) {
+          // For the user's own club, generate captaincy event flow when a captain/VC is stripped.
+          // Skip on initial appointment (leadershipPending) — no penalties for first-time selection.
+          if (clubId === state.playerClubId && !state.leadershipPending) {
             const old = club.leadership
             const rng = new SeededRNG(state.rngSeed + Date.now())
 
@@ -3017,6 +3328,23 @@ export const useGameStore = create<GameStore>()(
         })
       },
 
+      setLeadershipDelegated: (clubId: string, delegated: boolean) => {
+        const state = get()
+        const club = state.clubs[clubId]
+        if (!club) return
+        if (delegated) {
+          // Auto-select best leaders and mark as delegated
+          const auto = autoSelectLeadership(state.players, clubId)
+          get().applyLeadershipChange(clubId, { ...auto, delegated: true })
+        } else {
+          set((s) => {
+            if (s.clubs[clubId]) {
+              s.clubs[clubId].leadership.delegated = false
+            }
+          })
+        }
+      },
+
       applyLeadershipChange: (clubId: string, newLeadership: ClubLeadership) => {
         set((state) => {
           const club = state.clubs[clubId]
@@ -3024,7 +3352,7 @@ export const useGameStore = create<GameStore>()(
 
           const previousLeadership = { ...club.leadership }
           const isFinals = state.season.rounds[state.currentRound]?.isFinals ?? false
-          const isPreseason = state.gamePhase === 'preseason'
+          const isPreseason = state.phase === 'preseason'
 
           // Compute all consequences
           const ctx = {
@@ -3589,6 +3917,46 @@ export const useGameStore = create<GameStore>()(
             return
           }
           state.selectedSubstituteId = playerId
+        })
+      },
+
+      setWeeklySquadRole: (playerId: string, role: 'lineup' | 'reserves' | 'rest' | null) => {
+        set((state) => {
+          if (role === null) {
+            delete state.weeklySquadRoles[playerId]
+          } else {
+            state.weeklySquadRoles[playerId] = role
+          }
+        })
+      },
+
+      autoAssignWeeklySquadRoles: () => {
+        const state = get()
+        if (!state.playerClubId) return
+        const clubId = state.playerClubId
+        const allPlayers = Object.values(state.players)
+
+        // Build AI best-lineup to identify top 22 selected players
+        const { selectedPlayerIds } = selectBestLineup(allPlayers, clubId, {
+          interchangePlayers: state.settings.matchRules.interchangePlayers,
+          club: state.clubs[clubId],
+        })
+        const lineupSet = new Set(selectedPlayerIds)
+
+        set((s) => {
+          const roles: Record<string, 'lineup' | 'reserves' | 'rest'> = {}
+          for (const player of allPlayers) {
+            if (player.clubId !== clubId) continue
+            if (!isAflListedPlayer(player)) continue
+            if (player.injury || isPlayerSuspended(player) || player.fitness < 50) {
+              roles[player.id] = 'rest'
+            } else if (lineupSet.has(player.id)) {
+              roles[player.id] = 'lineup'
+            } else {
+              roles[player.id] = 'reserves'
+            }
+          }
+          s.weeklySquadRoles = roles
         })
       },
 
@@ -4377,19 +4745,15 @@ export const useGameStore = create<GameStore>()(
       // ---- Negotiation Threads ----
       startNegotiationThread: (partnerClubId: string, sendPlayerIds: string[], receivePlayerIds: string[]) => {
         const state = get()
-        if (state.offseasonState.currentPhase !== 'trade-period') return { success: false, error: 'Not in trade period' }
+        if (!state.offseasonState || state.offseasonState.currentPhase !== 'trade-period') return { success: false, error: 'Not in trade period' }
         const rng = new SeededRNG(state.rngSeed + Date.now())
         const baseOffer = proposeUserTrade(
           state.playerClubId,
           partnerClubId,
           sendPlayerIds,
           receivePlayerIds,
-          [],
-          state.players,
-          state.clubs,
-          state.settings,
           state.currentDate,
-          state.rngSeed,
+          rng,
         )
         if (!baseOffer) return { success: false, error: 'Could not construct offer' }
         const deadlineDate = getTradeDeadlineDate(new Date(state.currentDate).getFullYear())
@@ -4483,7 +4847,7 @@ export const useGameStore = create<GameStore>()(
 
       tickTradeNegotiations: () => {
         const state = get()
-        if (state.offseasonState.currentPhase !== 'trade-period') return
+        if (!state.offseasonState || state.offseasonState.currentPhase !== 'trade-period') return
         const deadlineDate = getTradeDeadlineDate(new Date(state.currentDate).getFullYear())
         const deadlinePressure = getDeadlinePressure(state.currentDate, deadlineDate)
         const rng = new SeededRNG(state.rngSeed + Date.now())
@@ -7378,6 +7742,17 @@ export const useGameStore = create<GameStore>()(
             if (s.specialEvents) {
               injectSpecialEvents(s.calendar, s.specialEvents)
             }
+            // Inject reserves match events
+            if (s.stateLeagues && s.settings.seasonStartDate) {
+              injectReservesEvents(
+                s.calendar,
+                s.stateLeagues,
+                s.playerClubId,
+                s.settings.seasonStartDate,
+                season.rounds.length,
+                s.settings.stateLeagueAffiliations,
+              )
+            }
           })
 
           const refreshed = get()
@@ -8889,6 +9264,54 @@ export const useGameStore = create<GameStore>()(
         })
       },
 
+      batchSetReservesPlayerAvailability: (assignments: Record<string, 'play' | 'rest'>) => {
+        set((state) => {
+          for (const [playerId, assignment] of Object.entries(assignments)) {
+            const player = state.players[playerId]
+            if (!player || player.clubId !== state.playerClubId) continue
+            const effective =
+              assignment === 'play' && isStateLeagueContracted(player) && !hasActiveStateLeagueContract(player)
+                ? 'rest'
+                : assignment
+            state.reserves.playerAvailabilityAssignments[playerId] = effective
+            if (effective === 'rest') {
+              state.reserves.managedLineupPlayerIds = state.reserves.managedLineupPlayerIds.filter((id) => id !== playerId)
+              for (const [slot, id] of Object.entries(state.reserves.managedLineupSlotAssignments) as Array<[LineupSlot, string]>) {
+                if (id === playerId) delete state.reserves.managedLineupSlotAssignments[slot]
+              }
+            }
+          }
+        })
+      },
+
+      applyLineupAutoAssign: ({ aflLineup, reservesLineup, substituteId, availability }) => {
+        set((state) => {
+          // AFL lineup
+          state.selectedLineup = aflLineup
+          // Substitute
+          state.selectedSubstituteId = substituteId
+          // Reserves lineup slots
+          state.reserves.managedLineupSlotAssignments = reservesLineup as Record<LineupSlot, string>
+          state.reserves.managedLineupPlayerIds = Object.values(reservesLineup).filter((id): id is string => Boolean(id))
+          // Availability — apply same logic as batchSetReservesPlayerAvailability
+          for (const [playerId, assignment] of Object.entries(availability)) {
+            const player = state.players[playerId]
+            if (!player || player.clubId !== state.playerClubId) continue
+            const effective =
+              assignment === 'play' && isStateLeagueContracted(player) && !hasActiveStateLeagueContract(player)
+                ? 'rest'
+                : assignment
+            state.reserves.playerAvailabilityAssignments[playerId] = effective
+            if (effective === 'rest') {
+              state.reserves.managedLineupPlayerIds = state.reserves.managedLineupPlayerIds.filter((id) => id !== playerId)
+              for (const [slot, id] of Object.entries(state.reserves.managedLineupSlotAssignments) as Array<[LineupSlot, string]>) {
+                if (id === playerId) delete state.reserves.managedLineupSlotAssignments[slot]
+              }
+            }
+          }
+        })
+      },
+
       setReservesLeadership: (leadership: {
         captainId: string | null
         viceCaptainId: string | null
@@ -9297,27 +9720,48 @@ export const useGameStore = create<GameStore>()(
        * preseason special event to move on to the next preseason event or Round 1.
        */
       advanceDateToNextCalendarEvent: () => {
+        const state = get()
+        // If the current date is already at (or past) an unresolved match event,
+        // don't advance any further — the match must be played first.
+        const blockedByMatch = state.calendar.events.some(
+          (e) => !e.resolved && (e.type === 'match' || e.type === 'special-event') && e.date <= state.currentDate,
+        )
+        if (blockedByMatch) return
+
+        const next = state.calendar.events.find(
+          (e) => !e.resolved && e.date > state.currentDate,
+        )
+        if (!next) return
+
+        // If the next event is past an unresolved match, only advance to that match.
+        const nextUnresolvedMatch = state.calendar.events.find(
+          (e) => !e.resolved && (e.type === 'match' || e.type === 'special-event') && e.date > state.currentDate,
+        )
+        let nextDate = nextUnresolvedMatch && nextUnresolvedMatch.date <= next.date
+          ? nextUnresolvedMatch.date
+          : next.date
+
+        // Don't vault past intermediate game days — stop at the first round fixture
+        // date that falls between today and the calendar event. This prevents
+        // "Skip to Next Event" from jumping from Monday directly to a Saturday match
+        // and auto-simming all Thursday/Friday games along the way.
+        if (state.phase === 'regular-season') {
+          const currentRound = state.season.rounds[state.currentRound]
+          if (currentRound) {
+            const seasonStartDate = state.settings.seasonStartDate ?? '2026-03-20'
+            const firstIntermediateGameDay = [...new Set(
+              currentRound.fixtures.map(f => getFixtureDateIso(seasonStartDate, state.currentRound, f.matchDay))
+            )]
+              .filter(d => d > state.currentDate && d < nextDate)
+              .sort((a, b) => a.localeCompare(b))[0]
+            if (firstIntermediateGameDay) nextDate = firstIntermediateGameDay
+          }
+        }
+
+        // Auto-sim non-user fixtures whose scheduled date has now passed.
+        const backgroundMatches = backgroundSimPassedFixtures(state, nextDate)
+
         set((s) => {
-          // If the current date is already at (or past) an unresolved match event,
-          // don't advance any further — the match must be played first.
-          const blockedByMatch = s.calendar.events.some(
-            (e) => !e.resolved && (e.type === 'match' || e.type === 'special-event') && e.date <= s.currentDate,
-          )
-          if (blockedByMatch) return
-
-          const next = s.calendar.events.find(
-            (e) => !e.resolved && e.date > s.currentDate,
-          )
-          if (!next) return
-
-          // If the next event is past an unresolved match, only advance to that match.
-          const nextUnresolvedMatch = s.calendar.events.find(
-            (e) => !e.resolved && (e.type === 'match' || e.type === 'special-event') && e.date > s.currentDate,
-          )
-          const nextDate = nextUnresolvedMatch && nextUnresolvedMatch.date <= next.date
-            ? nextUnresolvedMatch.date
-            : next.date
-
           s.currentDate = nextDate
           s.calendar.currentDate = nextDate
 
@@ -9331,21 +9775,33 @@ export const useGameStore = create<GameStore>()(
             s.jumperManagement.seasonYear = s.currentYear
           }
         })
+
+        // Commit each background match via commitSingleFixture so pre-round setup runs
+        // exactly once and ladder/round finalization are handled correctly.
+        for (const m of backgroundMatches) {
+          get().commitSingleFixture(m, false)
+        }
       },
 
       advanceOneDay: () => {
+        const state = get()
+        // Don't advance past an unresolved match event
+        const blockedByMatch = state.calendar.events.some(
+          (e) => !e.resolved && (e.type === 'match' || e.type === 'special-event') && e.date <= state.currentDate,
+        )
+        if (blockedByMatch) return
+
+        const tomorrow = addDays(state.currentDate, 1)
+        // Stop at an upcoming match date rather than skipping past it
+        const nextMatch = state.calendar.events.find(
+          (e) => !e.resolved && (e.type === 'match' || e.type === 'special-event') && e.date > state.currentDate && e.date <= tomorrow,
+        )
+        const nextDate = nextMatch ? nextMatch.date : tomorrow
+
+        // Auto-sim non-user fixtures whose scheduled date has now passed.
+        const backgroundMatches = backgroundSimPassedFixtures(state, nextDate)
+
         set((s) => {
-          // Don't advance past an unresolved match event
-          const blockedByMatch = s.calendar.events.some(
-            (e) => !e.resolved && (e.type === 'match' || e.type === 'special-event') && e.date <= s.currentDate,
-          )
-          if (blockedByMatch) return
-          const tomorrow = addDays(s.currentDate, 1)
-          // Stop at an upcoming match date rather than skipping past it
-          const nextMatch = s.calendar.events.find(
-            (e) => !e.resolved && (e.type === 'match' || e.type === 'special-event') && e.date > s.currentDate && e.date <= tomorrow,
-          )
-          const nextDate = nextMatch ? nextMatch.date : tomorrow
           s.currentDate = nextDate
           s.calendar.currentDate = nextDate
 
@@ -9359,9 +9815,86 @@ export const useGameStore = create<GameStore>()(
             s.jumperManagement.seasonYear = s.currentYear
           }
         })
+
+        // Commit each background match via commitSingleFixture so pre-round setup runs
+        // exactly once and ladder/round finalization are handled correctly.
+        for (const m of backgroundMatches) {
+          get().commitSingleFixture(m, false)
+        }
       },
 
-      simCurrentRound: (options?: { internal?: boolean; precomputedUserMatch?: Match; precomputedMatches?: Match[] }) => {
+      addPendingMatchResult: (match: Match) => {
+        set((s) => {
+          const key = `${match.homeClubId}-${match.awayClubId}`
+          const idx = s.pendingMatchResults.findIndex(
+            (m) => `${m.homeClubId}-${m.awayClubId}` === key || `${m.awayClubId}-${m.homeClubId}` === key,
+          )
+          if (idx >= 0) s.pendingMatchResults[idx] = match
+          else s.pendingMatchResults.push(match)
+        })
+      },
+
+      clearPendingMatchResults: () => {
+        set((s) => { s.pendingMatchResults = [] })
+      },
+
+      commitSingleFixture: (match: Match, isUserMatch?: boolean) => {
+        // 1. Run pre-round setup (idempotent — no-op if already done for this round)
+        runPreRoundSetupIfNeeded(get, set)
+
+        const state = get()
+        const round = state.season.rounds[state.currentRound]
+        if (!round) return { userMatch: null, reviewPayload: null }
+
+        // 2. Guard against double-committing the same fixture
+        const alreadyCommitted = state.matchResults.some(
+          (m) =>
+            !m.isFinal &&
+            m.round === state.currentRound &&
+            ((m.homeClubId === match.homeClubId && m.awayClubId === match.awayClubId) ||
+              (m.homeClubId === match.awayClubId && m.awayClubId === match.homeClubId)),
+        )
+        if (alreadyCommitted) {
+          return { userMatch: isUserMatch ? match : null, reviewPayload: null }
+        }
+
+        // 3. Commit match to store immediately so fixture list updates
+        set((s) => { s.matchResults.push(match) })
+
+        // 4. Update ladder for this single match
+        processMatchResults(
+          [match],
+          get as () => GameState,
+          set as unknown as (fn: (state: GameState) => void) => void,
+          state.settings.ladderPoints,
+        )
+
+        // 5. Check if ALL fixtures in this round now have results
+        const updatedState = get()
+        const allDone = round.fixtures.every((f) =>
+          updatedState.matchResults.some(
+            (m) =>
+              !m.isFinal &&
+              m.round === state.currentRound &&
+              m.result !== null &&
+              ((m.homeClubId === f.homeClubId && m.awayClubId === f.awayClubId) ||
+                (m.homeClubId === f.awayClubId && m.awayClubId === f.homeClubId)),
+          ),
+        )
+
+        if (!allDone) {
+          // Round not yet complete — return the user match if applicable
+          return { userMatch: isUserMatch ? match : null, reviewPayload: null }
+        }
+
+        // 6. All fixtures done — finalize the round via simCurrentRound (allMatchesPrecomputed path)
+        return get().simCurrentRound({
+          allMatchesPrecomputed: true,
+          precomputedUserMatch: isUserMatch ? match : undefined,
+        })
+      },
+
+      simCurrentRound: (options?: { internal?: boolean; precomputedUserMatch?: Match; precomputedMatches?: Match[]; allMatchesPrecomputed?: boolean }) => {
         const internal = options?.internal === true
         let state = get()
         if (state.simulation.active && !internal) return { userMatch: null, reviewPayload: null }
@@ -9377,7 +9910,7 @@ export const useGameStore = create<GameStore>()(
         // Auto-sim special events that were missed (scheduled BEFORE today's date).
         // Events scheduled for the current week or later are left for the user to
         // watch on the State of Origin page — they'll be caught here next round if skipped.
-        if (state.specialEvents) {
+        if (!options?.allMatchesPrecomputed && state.specialEvents) {
           for (const spe of state.specialEvents.events) {
             if (spe.status === 'scheduled' && spe.scheduledDate < state.currentDate) {
               get().simSpecialEvent(spe.id)
@@ -9388,162 +9921,50 @@ export const useGameStore = create<GameStore>()(
 
         const round = state.season.rounds[state.currentRound]
         if (!round) return { userMatch: null, reviewPayload: null }
-        const preRoundCareerStats: Record<string, Pick<Player['careerStats'], 'gamesPlayed' | 'goals' | 'disposals' | 'marks' | 'tackles'>> = {}
-        for (const player of Object.values(state.players)) {
-          preRoundCareerStats[player.id] = {
-            gamesPlayed: player.careerStats.gamesPlayed,
-            goals: player.careerStats.goals,
-            disposals: player.careerStats.disposals,
-            marks: player.careerStats.marks,
-            tackles: player.careerStats.tackles,
-          }
-        }
-        const preRoundMomentSnapshot = buildPreRoundMomentSnapshot(state.players)
 
-        const expiredCases = expirePendingUserTribunalCases(state.tribunalInbox, state.currentRound)
-          .filter((c, idx) =>
-            state.tribunalInbox[idx] &&
-            state.tribunalInbox[idx].status === 'pending-user' &&
-            c.status === 'expired',
-          )
-        if (expiredCases.length > 0) {
-          set((s) => {
-            for (const expired of expiredCases) {
-              const idx = s.tribunalInbox.findIndex((c) => c.id === expired.id)
-              if (idx >= 0) s.tribunalInbox[idx] = expired
-              const player = s.players[expired.playerId]
-              if (!player) continue
-              applyTribunalOutcomeToPlayer(player, expired)
-              appendNewsItem(s, {
-                id: crypto.randomUUID(),
-                date: s.currentDate,
-                headline: `Tribunal deadline missed: ${player.firstName} ${player.lastName}`,
-                body:
-                  `No club response was lodged for ${player.firstName} ${player.lastName}. ` +
-                  `${expired.outcomeSummary ?? 'Automatic sanction applied.'}`,
-                category: 'discipline',
-                clubIds: [player.clubId],
-                playerIds: [player.id],
-              })
-            }
-          })
-          state = get()
-        }
-
-        const fixtureClubIds = new Set<string>()
-        for (const f of round.fixtures) {
-          fixtureClubIds.add(f.homeClubId)
-          fixtureClubIds.add(f.awayClubId)
-        }
-        set((s) => {
-          applyRoleDisputesForFixtures(s, fixtureClubIds)
-        })
+        // Run pre-round setup (idempotent — guards internally).
+        // In the allMatchesPrecomputed path, setup was already run by commitSingleFixture.
+        runPreRoundSetupIfNeeded(get, set)
         state = get()
+        const prep = state.roundPrep
+        if (!prep) return { userMatch: null, reviewPayload: null }
 
-        const gameplanOverrides: Record<string, ClubGameplan> = {}
-        const matchupTacticsByClub: Record<string, WeeklyMatchupTactics | undefined> = {}
-        const weeklyEntriesNext: Record<string, import('@/types/game').WeeklyGameplan | undefined> = {
-          ...state.weeklyGameplans,
-        }
-        const { tacticalByClub } = buildStaffImpactMaps(state)
-        const tacticalRng = new SeededRNG(state.rngSeed + state.currentRound * 4591)
-        for (const fixture of round.fixtures) {
-          const pair: [string, string][] = [
-            [fixture.homeClubId, fixture.awayClubId],
-            [fixture.awayClubId, fixture.homeClubId],
-          ]
-          for (const [clubId, opponentId] of pair) {
-            const club = state.clubs[clubId]
-            const opponent = state.clubs[opponentId]
-            if (!club || !opponent) continue
-
-            const userEntry = state.weeklyGameplans[clubId]
-            if (clubId === state.playerClubId && userEntry && userEntry.round === state.currentRound && userEntry.opponentClubId === opponentId) {
-              gameplanOverrides[clubId] = applyGameplanAdjustment(club.gameplan, userEntry.overrides)
-              matchupTacticsByClub[clubId] = userEntry.matchupTactics
-              weeklyEntriesNext[clubId] = userEntry
-              continue
-            }
-
-            const tacticalContext = tacticalByClub[club.id] ?? { tacticalAdjustment: 0.7, discipline: 60 }
-            const autoOverride = buildCounterAdjustment(club, opponent.gameplan, tacticalRng, tacticalContext)
-            gameplanOverrides[clubId] = applyGameplanAdjustment(club.gameplan, autoOverride)
-            if (clubId !== state.playerClubId) {
-              weeklyEntriesNext[clubId] = {
-                round: state.currentRound,
-                opponentClubId: opponentId,
-                overrides: autoOverride,
-                source: 'ai-auto',
-              }
-            }
-          }
-        }
-        set((s) => {
-          s.weeklyGameplans = weeklyEntriesNext
-        })
-        state = get()
-
-        const lineupsByClub: Record<string, Record<string, string>> = {}
-        const substitutesByClub: Record<string, string | null> = {}
-        for (const fixture of round.fixtures) {
-          const homeLineup = buildSimLineupForClub(state, fixture.homeClubId)
-          const awayLineup = buildSimLineupForClub(state, fixture.awayClubId)
-          lineupsByClub[fixture.homeClubId] = homeLineup
-          lineupsByClub[fixture.awayClubId] = awayLineup
-          substitutesByClub[fixture.homeClubId] = buildSimSubstituteForClub(state, fixture.homeClubId, homeLineup)
-          substitutesByClub[fixture.awayClubId] = buildSimSubstituteForClub(state, fixture.awayClubId, awayLineup)
-        }
-
-        // Re-assign broadcast tiers using current ladder before simulating
-        set((s) => {
-          const currentRound = s.season.rounds[s.currentRound]
-          if (currentRound) {
-            currentRound.fixtures = assignRoundBroadcasts(currentRound.fixtures, s.clubs, s.ladder)
-          }
-        })
-        state = get()
-
-        const preLadderPositions: Record<string, number> = {}
-        state.ladder.forEach((e, i) => { preLadderPositions[e.clubId] = i + 1 })
-
+        // Read snapshot data from cached prep
+        const {
+          preRoundCareerStats,
+          preRoundMomentSnapshot,
+          preMatchFatigueById,
+          avgPreMatchFatigue,
+          avgPreMatchFitness,
+          preLadderPositions,
+          trainingWeekPlanDetails,
+          gameplanOverrides,
+          matchupTacticsByClub,
+          lineupsByClub,
+          substitutesByClub,
+          rotationPlanByClub,
+          scoutCounterByClub,
+          trainingFocusesByClub,
+          fixtureClubIds: fixtureClubIdsArr,
+        } = prep
+        const fixtureClubIds = new Set(fixtureClubIdsArr)
         const precomputed = options?.precomputedUserMatch
-        const rotationPlanByClub: Record<string, RotationEvent[]> = {}
-        const playerRotations = state.weeklyGameplans[state.playerClubId]?.rotationPlan
-        if (playerRotations && playerRotations.length > 0) {
-          rotationPlanByClub[state.playerClubId] = playerRotations
-        }
 
-        const scoutCounterByClub: Record<string, string | null> = {}
-        const playerScoutCounter = state.weeklyGameplans[state.playerClubId]?.scoutCounterId
-        if (playerScoutCounter != null) {
-          scoutCounterByClub[state.playerClubId] = playerScoutCounter
-        }
-
-        // Extract training focuses from this week's plan for impact analysis
-        const trainingFocusesByClub: Record<string, TrainingFocus[]> = {}
-        if (state.trainingWeekPlan?.slots) {
-          const focuses = extractFocusesFromSlots(state.trainingWeekPlan.slots)
-          if (focuses.length > 0) {
-            trainingFocusesByClub[state.playerClubId] = focuses
-          }
-        }
-
-        // Pre-match readiness snapshot (captured before applyPostRoundEffects mutates fatigue/fitness)
-        const preMatchFatigueById: Record<string, number> = {}
-        const userClubActivePlayers = Object.values(state.players).filter(
-          (p) => p.clubId === state.playerClubId && !p.injury,
-        )
-        for (const p of userClubActivePlayers) {
-          preMatchFatigueById[p.id] = p.fatigue
-        }
-        const avgPreMatchFatigue = userClubActivePlayers.length > 0
-          ? userClubActivePlayers.reduce((sum, p) => sum + p.fatigue, 0) / userClubActivePlayers.length
-          : 50
-        const avgPreMatchFitness = userClubActivePlayers.length > 0
-          ? userClubActivePlayers.reduce((sum, p) => sum + p.fitness, 0) / userClubActivePlayers.length
-          : 70
-
-        const result = simulateRound({
+        // ── Build match result set ───────────────────────────────────────────
+        // allMatchesPrecomputed: all fixtures already committed via commitSingleFixture;
+        // just read them from matchResults and skip re-simulation.
+        let result: import('@/engine/season/advanceRound').SimRoundResult
+        if (options?.allMatchesPrecomputed) {
+          const allRoundMatches = get().matchResults.filter(
+            (m) => !m.isFinal && m.round === state.currentRound,
+          )
+          const effectiveUserMatch = precomputed ??
+            allRoundMatches.find(
+              (m) => m.homeClubId === state.playerClubId || m.awayClubId === state.playerClubId,
+            ) ?? null
+          result = { matches: allRoundMatches, userMatch: effectiveUserMatch }
+        } else {
+        result = simulateRound({
           round: state.season.rounds[state.currentRound] ?? round,
           roundIndex: state.currentRound,
           players: state.players,
@@ -9571,6 +9992,8 @@ export const useGameStore = create<GameStore>()(
               getLeadershipDisruptionMult(d.disruptionLevel, d.roundsRemaining, d.roundsToRecover),
             ]),
           ),
+          venueRoofOverrides: state.settings.venueRoofOverrides,
+          customStadiums: state.settings.customStadiums,
         })
 
         // Replace the null placeholder with precomputed user match if provided
@@ -9584,45 +10007,37 @@ export const useGameStore = create<GameStore>()(
           result.userMatch = precomputed
         }
 
-        // Replace any other precomputed matches (e.g. non-user fixtures watched/simmed individually)
-        if (options?.precomputedMatches) {
-          for (const pm of options.precomputedMatches) {
-            const idx = result.matches.findIndex(
-              (m) => m !== null && m.homeClubId === pm.homeClubId && m.awayClubId === pm.awayClubId,
-            )
-            if (idx >= 0) result.matches[idx] = pm
-          }
+        // Replace any other precomputed matches — merge store pendingMatchResults first,
+        // then any explicitly passed precomputedMatches (explicit takes priority).
+        const allPrecomputed = [...get().pendingMatchResults, ...(options?.precomputedMatches ?? [])]
+        for (const pm of allPrecomputed) {
+          const idx = result.matches.findIndex(
+            (m) => m !== null && m.homeClubId === pm.homeClubId && m.awayClubId === pm.awayClubId,
+          )
+          if (idx >= 0) result.matches[idx] = pm
         }
 
-        // Attach PrepAnalysis to the user match simulationContext
+        // Clear pending results — they're now committed to the round
+        set((s) => { s.pendingMatchResults = [] })
+        } // end else (non-allMatchesPrecomputed path)
+
+        // Attach PrepAnalysis to the user match simulationContext.
+        // For non-precomputed path: mutate local match object directly (not yet in store).
+        // For allMatchesPrecomputed path: defer to inside the set() callback below.
+        let prepAnalysisDeferred: { matchId: string; analysis: import('@/engine/match/prepAnalysis').PrepAnalysis } | null = null
         if (result.userMatch?.result?.simulationContext) {
           const um = result.userMatch
           const isUserHome = um.homeClubId === state.playerClubId
-          const userScore = isUserHome ? um.result.homeTotalScore : um.result.awayTotalScore
-          const oppScore  = isUserHome ? um.result.awayTotalScore  : um.result.homeTotalScore
-          const travelCtx = um.result.simulationContext.travelFatigue
+          const userScore = isUserHome ? um.result!.homeTotalScore : um.result!.awayTotalScore
+          const oppScore  = isUserHome ? um.result!.awayTotalScore  : um.result!.homeTotalScore
+          const travelCtx = um.result!.simulationContext!.travelFatigue
           const travelFatigueApplied = isUserHome ? (travelCtx?.home ?? 0) : (travelCtx?.away ?? 0)
-          const weatherCondition = um.result.simulationContext.weather ?? 'clear'
+          const weatherCondition = um.result!.simulationContext!.weather ?? 'clear'
 
-          // Derive training intensity flags from this week's plan
-          const twp = state.trainingWeekPlan
-          let hasHeavySession = false
-          let hasRecoverySession = false
-          if (twp) {
-            for (const slot of Object.values(twp.slots)) {
-              for (const period of [slot.morning, slot.afternoon]) {
-                for (const group of period.groups) {
-                  if (group.intensity === 'intense') hasHeavySession = true
-                  if (group.intensity === 'light')   hasRecoverySession = true
-                }
-              }
-            }
-          }
-          // Also infer from avgFatigueChange if plan isn't set
-          const avgFatigueChange = state.lastTrainingReport?.avgFatigueChange ?? 0
-          if (!twp && avgFatigueChange > 12) hasHeavySession = true
+          // Use training intensity flags from the cached prep snapshot
+          const { hasHeavySession, hasRecoverySession } = trainingWeekPlanDetails
 
-          const userStats = isUserHome ? um.result.homePlayerStats : um.result.awayPlayerStats
+          const userStats = isUserHome ? um.result!.homePlayerStats : um.result!.awayPlayerStats
           const playerHighlightCandidates = userStats
             .filter((ps) => ps.participated && ps.matchRating !== undefined)
             .map((ps) => ({
@@ -9640,7 +10055,7 @@ export const useGameStore = create<GameStore>()(
             margin: Math.abs(userScore - oppScore),
             avgPreMatchFatigue,
             avgPreMatchFitness,
-            avgFatigueChange,
+            avgFatigueChange: state.lastTrainingReport?.avgFatigueChange ?? 0,
             hasHeavySession,
             hasRecoverySession,
             travelFatigueApplied,
@@ -9649,7 +10064,12 @@ export const useGameStore = create<GameStore>()(
             playerHighlightCandidates,
           })
 
-          um.result.simulationContext.prepAnalysis = prepAnalysis
+          if (options?.allMatchesPrecomputed) {
+            // Match is already in store (frozen) — defer mutation to inside set()
+            prepAnalysisDeferred = { matchId: um.id, analysis: prepAnalysis }
+          } else {
+            um.result!.simulationContext!.prepAnalysis = prepAnalysis
+          }
         }
 
         // Accumulate venue revenue
@@ -9674,9 +10094,23 @@ export const useGameStore = create<GameStore>()(
           })
         }
 
+        // Identify matches already stored from background day-advance sims so we
+        // don't double-push them or double-count them on the ladder.
+        const preExistingMatchKeys = new Set<string>()
+        for (const m of get().matchResults) {
+          if (!m.isFinal && m.round === state.currentRound) {
+            preExistingMatchKeys.add(`${m.homeClubId}-${m.awayClubId}`)
+          }
+        }
+        const newlyCommittedMatches = result.matches.filter(
+          (m) =>
+            !preExistingMatchKeys.has(`${m.homeClubId}-${m.awayClubId}`) &&
+            !preExistingMatchKeys.has(`${m.awayClubId}-${m.homeClubId}`),
+        )
+
         // Commit results to store
         set((s) => {
-          for (const m of result.matches) {
+          for (const m of newlyCommittedMatches) {
             s.matchResults.push(m)
           }
           s.history.recordsBook = updateRecordsBookForMatches({
@@ -9709,9 +10143,10 @@ export const useGameStore = create<GameStore>()(
           }
         })
 
-        // Update ladder with settings-driven points
+        // Update ladder only for newly committed matches (pre-simmed ones were
+        // already counted when they were background-simmed on day advance).
         processMatchResults(
-          result.matches,
+          newlyCommittedMatches,
           get as () => GameState,
           set as unknown as (fn: (state: GameState) => void) => void,
           state.settings.ladderPoints,
@@ -9831,6 +10266,9 @@ export const useGameStore = create<GameStore>()(
           rng: tribunalRng,
         })
         const pendingUserCases = newTribunalCases.filter((c) => c.status === 'pending-user')
+
+        // Declared at outer scope so review payload can reference it after set()
+        let newMoments: Record<string, import('@/types/player').PlayerMoment[]> = {}
 
         set((s) => {
           applyPostRoundEffects(s.players, playedStats, travelFatigueByClub)
@@ -10282,6 +10720,14 @@ export const useGameStore = create<GameStore>()(
             }
           }
 
+          // Attach deferred prepAnalysis (allMatchesPrecomputed path: match is in store as Immer draft)
+          if (prepAnalysisDeferred) {
+            const storedPaMatch = s.matchResults.find((mr) => mr.id === prepAnalysisDeferred!.matchId)
+            if (storedPaMatch?.result?.simulationContext) {
+              storedPaMatch.result.simulationContext.prepAnalysis = prepAnalysisDeferred.analysis
+            }
+          }
+
           // Award Brownlow/B&F votes and compute match ratings for each match
           const playerMap = new Map(Object.entries(s.players))
           for (const m of result.matches) {
@@ -10289,11 +10735,23 @@ export const useGameStore = create<GameStore>()(
             const allPlayerStats = [...m.result.homePlayerStats, ...m.result.awayPlayerStats]
             // Compute FM-style match ratings and stamp onto stats
             const ratings = computeMatchRatings(allPlayerStats, playerMap)
+            // Find the stored match in s.matchResults (Immer cloned it on commit, so we
+            // must update the stored copy — not just the local result.matches reference).
+            // In the allMatchesPrecomputed path, result.matches comes from the frozen state
+            // snapshot so we CANNOT mutate ps directly — only update via the Immer draft.
+            const storedMatch = s.matchResults.find((mr) => mr.id === m.id)
             for (const statList of [m.result.homePlayerStats, m.result.awayPlayerStats]) {
               for (const ps of statList) {
                 const r = ratings.get(ps.playerId)
                 if (r !== undefined) {
-                  ps.matchRating = r
+                  // Only mutate the local copy if it's not from the frozen snapshot
+                  if (!options?.allMatchesPrecomputed) ps.matchRating = r
+                  // Always update the persisted Immer draft copy
+                  if (storedMatch?.result) {
+                    const storedPs = [...storedMatch.result.homePlayerStats, ...storedMatch.result.awayPlayerStats]
+                      .find((sp) => sp.playerId === ps.playerId)
+                    if (storedPs) storedPs.matchRating = r
+                  }
                   const player = s.players[ps.playerId]
                   if (player) {
                     if (!player.matchRatingHistory) player.matchRatingHistory = []
@@ -10343,7 +10801,7 @@ export const useGameStore = create<GameStore>()(
           }
 
           // Detect and store narrative player moments for this round.
-          const newMoments = detectPlayerMoments(
+          newMoments = detectPlayerMoments(
             preRoundMomentSnapshot,
             s.players,
             result.matches,
@@ -10645,8 +11103,24 @@ export const useGameStore = create<GameStore>()(
           // Without this, match events remain "upcoming" forever since currentDate
           // jumps straight to the next round's date.
           const playedRoundDate = s.currentDate
+          const playedRoundIdx = s.currentRound // still the just-played round (not yet incremented)
           for (const evt of s.calendar.events) {
-            if (!evt.resolved && evt.date <= playedRoundDate) {
+            if (evt.resolved) continue
+            if (evt.date <= playedRoundDate) {
+              evt.resolved = true
+              continue
+            }
+            // Also resolve the match/bye event for the round just simulated.
+            // It is dated to the actual match day (Thu/Sat/Mon of the round week),
+            // which is always after playedRoundDate (Monday anchor of that week).
+            // Without this, the event stays unresolved until the NEXT round sim
+            // runs — causing findSkippedMatch to block day-advance with a
+            // spurious "simulate the whole round" prompt (especially for Monday
+            // games whose event falls exactly on the new currentDate).
+            if (
+              (evt.type === 'match' || evt.type === 'bye') &&
+              (evt.data as Record<string, unknown>)?.roundIndex === playedRoundIdx
+            ) {
               evt.resolved = true
             }
           }
@@ -10654,21 +11128,41 @@ export const useGameStore = create<GameStore>()(
           const nextRound = s.currentRound + 1
           s.currentRound = nextRound
           const seasonStartDate = s.settings.seasonStartDate ?? '2026-03-20'
-          // Compute next date using the same Monday-anchor + match-day formula
-          // as getFixtureDateIso so that currentDate matches calendar badges.
-          const nextRoundData = s.season?.rounds[nextRound]
-          const nextFixture = nextRoundData?.fixtures.find(
-            (f) => f.homeClubId === s.playerClubId || f.awayClubId === s.playerClubId,
-          )
-          const isBye = (nextRoundData?.byeClubIds ?? []).includes(s.playerClubId)
-          const nextDate = isBye || !nextRoundData
-            ? addDays(toRoundWeekMonday(seasonStartDate), nextRound * 7) // bye → Monday
-            : getFixtureDateIso(seasonStartDate, nextRound, nextFixture?.matchDay)
+          // Always land on Monday of the next round's week so that "Match Day"
+          // indicators and "Play Live" buttons don't reappear immediately after
+          // simulating — the user should have time to browse before seeing them.
+          // Bye weeks already used Monday; now all rounds do the same.
+          const nextDate = addDays(toRoundWeekMonday(seasonStartDate), nextRound * 7)
           s.currentDate = nextDate
           s.calendar.currentDate = nextDate
           s.weeklyGameplans = {}
+          // Clear the pre-round cache — it's only valid for the round just finalized
+          s.roundPrep = null
+          s.roundPrepRound = null
           s.meta.lastSaved = new Date().toISOString()
         })
+
+        // After the round-advance jump, auto-sim any new-round AI fixtures whose
+        // scheduled date falls on or before the new currentDate. This handles the
+        // case where currentDate skips directly to (e.g.) Friday, leaving Thursday
+        // games unplayed in the fixture page until the user's next match.
+        {
+          const jumpState = get()
+          if (jumpState.phase === 'regular-season') {
+            const jumpMatches = backgroundSimPassedFixtures(jumpState, jumpState.currentDate)
+            if (jumpMatches.length > 0) {
+              set((s) => {
+                for (const m of jumpMatches) s.matchResults.push(m)
+              })
+              processMatchResults(
+                jumpMatches,
+                get as () => GameState,
+                set as unknown as (fn: (state: GameState) => void) => void,
+                jumpState.settings.ladderPoints,
+              )
+            }
+          }
+        }
 
         // Check if regular season is over (settings-driven round count)
         const updatedState = get()
@@ -10797,8 +11291,8 @@ export const useGameStore = create<GameStore>()(
           // Detect overtraining impact: starters with high pre-match fatigue who underperformed
           const isUserHomeForReview = um.homeClubId === finalState.playerClubId
           const userStatsForReview = isUserHomeForReview
-            ? um.result.homePlayerStats
-            : um.result.awayPlayerStats
+            ? um.result!.homePlayerStats
+            : um.result!.awayPlayerStats
           const overtrainingImpact: import('@/types/postMatch').OvertrainingImpactEntry[] = []
           for (const pStats of userStatsForReview) {
             if (!pStats.participated || pStats.matchRating == null) continue
@@ -10821,8 +11315,8 @@ export const useGameStore = create<GameStore>()(
           // Push match result toast notification
           {
             const isUserHome = um.homeClubId === finalState.playerClubId
-            const userScore = isUserHome ? um.result!.homeScore.total : um.result!.awayScore.total
-            const oppScore  = isUserHome ? um.result!.awayScore.total : um.result!.homeScore.total
+            const userScore = isUserHome ? um.result!.homeTotalScore : um.result!.awayTotalScore
+            const oppScore  = isUserHome ? um.result!.awayTotalScore : um.result!.homeTotalScore
             const oppClubId = isUserHome ? um.awayClubId : um.homeClubId
             const oppClub   = finalState.clubs[oppClubId]
             const userStats = isUserHome ? um.result!.homePlayerStats : um.result!.awayPlayerStats
@@ -11016,6 +11510,8 @@ export const useGameStore = create<GameStore>()(
             lineupsByClub: finalsLineupsByClub,
             substitutesByClub: finalsSubstitutesByClub,
             month: state.currentDate ? parseInt(state.currentDate.split('-')[1]) : undefined,
+            venueRoofOverrides: state.settings.venueRoofOverrides,
+            customStadiums: state.settings.customStadiums,
           })
 
           // Mark finals matches
@@ -11093,6 +11589,9 @@ export const useGameStore = create<GameStore>()(
             rng: finalsTribunalRng,
           })
           const pendingUserCases = newTribunalCases.filter((c) => c.status === 'pending-user')
+
+          // Hoisted so review payload can reference it after set() closes
+          let finalsMoments: Record<string, import('@/types/player').PlayerMoment[]> = {}
 
           set((s) => {
             applyPostRoundEffects(s.players, playedStats)
@@ -11244,7 +11743,7 @@ export const useGameStore = create<GameStore>()(
                   ? gfWinner.homeClubId
                   : gfWinner.awayClubId)
               : undefined
-            const finalsMoments = detectPlayerMoments(
+            finalsMoments = detectPlayerMoments(
               preFinalssMomentSnapshot,
               s.players,
               finalsResults,
@@ -11697,7 +12196,7 @@ export const useGameStore = create<GameStore>()(
                   s.newsLog.unshift(buildDynastyRewardNews(quest, clubName, s.currentDate))
                   // Small morale boost for all healthy players at the club
                   Object.values(s.players)
-                    .filter((p) => p.clubId === s.playerClubId && !p.injured)
+                    .filter((p) => p.clubId === s.playerClubId && p.listStatus !== 'injured-list')
                     .forEach((p) => { p.morale = Math.min(100, (p.morale ?? 50) + 3) })
                 }
               }
@@ -12014,7 +12513,7 @@ export const useGameStore = create<GameStore>()(
         }
         // Backfill missing reserves sub-fields on old saves
         if (merged.reserves) {
-          const res = merged.reserves as Record<string, unknown>
+          const res = merged.reserves as unknown as Record<string, unknown>
           if (!res.seasonStatsByPlayer || typeof res.seasonStatsByPlayer !== 'object') res.seasonStatsByPlayer = {}
           if (!res.managedLineupSlotAssignments || typeof res.managedLineupSlotAssignments !== 'object') res.managedLineupSlotAssignments = {}
           if (!res.playerAvailabilityAssignments || typeof res.playerAvailabilityAssignments !== 'object') res.playerAvailabilityAssignments = {}
@@ -12025,7 +12524,7 @@ export const useGameStore = create<GameStore>()(
         }
         // Backfill autoResolveMatches / liveSimMode if notifications exists but is missing these fields
         if (merged.settings?.notifications) {
-          const notifs = merged.settings.notifications as Record<string, unknown>
+          const notifs = merged.settings.notifications as unknown as Record<string, unknown>
           if (!('autoResolveMatches' in notifs)) notifs.autoResolveMatches = false
           if (!('liveSimMode' in notifs)) notifs.liveSimMode = 'always-live'
         }
@@ -12090,12 +12589,13 @@ export const useGameStore = create<GameStore>()(
           merged.trainingWeekPlan = null
         }
         if (!('lastTrainingReport' in merged)) {
-          merged.lastTrainingReport = null
+          ;(merged as Record<string, unknown>).lastTrainingReport = null
         }
         // Backfill new overtraining fields on existing training reports
         if (merged.lastTrainingReport && !('overtrained' in merged.lastTrainingReport)) {
-          merged.lastTrainingReport.overtrained = []
-          merged.lastTrainingReport.loadLevel = 'moderate'
+          const ltr = merged.lastTrainingReport as Record<string, unknown>
+          ltr.overtrained = []
+          ltr.loadLevel = 'moderate'
         }
 
         // Sync currentSpend for all clubs on load (old saves may have stale values)
@@ -12227,6 +12727,9 @@ export const useGameStore = create<GameStore>()(
         }
         if ((merged as Record<string, unknown>).savedLineups === undefined) {
           (merged as Record<string, unknown>).savedLineups = []
+        }
+        if ((merged as Record<string, unknown>).weeklySquadRoles === undefined) {
+          (merged as Record<string, unknown>).weeklySquadRoles = {}
         }
         const savedLineupsObj = (merged as Record<string, unknown>).savedLineups
         if (Array.isArray(savedLineupsObj)) {
@@ -12827,7 +13330,7 @@ export const useGameStore = create<GameStore>()(
             enabled: false,
             ageGateAccepted: false,
             margin: 0.05,
-            totalPointsMarkets: false,
+            totalPointsMarkets: true,
           }
         }
 
@@ -12844,6 +13347,25 @@ export const useGameStore = create<GameStore>()(
         // Leadership changelog migration
         if (!merged.history.leadershipChangelog) {
           merged.history.leadershipChangelog = []
+        }
+
+        // Retroactively resolve past match/bye calendar events.
+        // Before this fix, simCurrentRound only resolved events with
+        // date <= currentDate (Monday anchor), leaving the actual match/bye
+        // event (dated Thu/Sat/Mon of the same week) unresolved. This caused
+        // findSkippedMatch to block day-advance with a spurious "simulate the
+        // whole round" prompt on the next session, and handleSimToDate to
+        // accidentally double-sim rounds. Resolve all past rounds here.
+        if (merged.calendar?.events && typeof merged.currentRound === 'number') {
+          const resolvedRound = merged.currentRound // rounds 0..currentRound-1 are done
+          for (const evt of merged.calendar.events) {
+            if (evt.resolved) continue
+            if (evt.type !== 'match' && evt.type !== 'bye') continue
+            const roundIdx = (evt.data as Record<string, unknown> | undefined)?.roundIndex
+            if (typeof roundIdx === 'number' && roundIdx < resolvedRound) {
+              evt.resolved = true
+            }
+          }
         }
 
         return merged as GameStore

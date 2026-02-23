@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import type { Player, LineupSlot } from '@/types/player'
 import { getPositionSuitabilityForSlot } from '@/engine/player/positionEligibility'
 import { getOverallRating, getPlayerPositionRating } from '@/engine/player/playerRating'
@@ -22,7 +23,7 @@ export function getPositionSuitability(
   return getPositionSuitabilityForSlot(player, slot as LineupSlot)
 }
 
-export function PlayerMagnet({ player, slot, suitability, onProfileClick }: PlayerMagnetProps) {
+export function PlayerMagnet({ player, slot, suitability: _suitability, onProfileClick }: PlayerMagnetProps) {
   // Use the rich fit display from emergencyRoles for accurate colouring
   const fitDisplay = slot && !/^I\d$/.test(slot)
     ? getFitDisplay(player, slot as LineupSlot)
@@ -72,7 +73,11 @@ export function PlayerMagnet({ player, slot, suitability, onProfileClick }: Play
         #{player.jerseyNumber}
       </span>
       <div className="flex-1 min-w-0 leading-tight">
-        <span className="block truncate text-[clamp(7px,0.82vw,10px)] text-zinc-100">{displayName}</span>
+        <Link
+          to={`/player/${player.id}`}
+          onClick={(e) => e.stopPropagation()}
+          className="block truncate text-[clamp(7px,0.82vw,10px)] text-zinc-100 hover:underline"
+        >{displayName}</Link>
         <span className="block truncate text-[clamp(6px,0.72vw,9px)] text-zinc-300">
           <span className={`rounded border px-1 py-0 ${getPositionBadgeStrongClass(position)}`}>{position}</span>{' '}
           {slotPrimaryPos ? `${slotPrimaryPos} ${slotOverall}` : `OVR ${overall}`}

@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { useBlocker } from 'react-router-dom'
+import { useBlocker, type Location } from 'react-router-dom'
 
 /**
  * Intercepts route navigation while `isDirty` is true, blocking the transition
@@ -12,7 +12,7 @@ import { useBlocker } from 'react-router-dom'
 export function useNavigationGuard(isDirty: boolean) {
   const blocker = useBlocker(
     useCallback(
-      ({ currentLocation, nextLocation }) =>
+      ({ currentLocation, nextLocation }: { currentLocation: Location; nextLocation: Location }) =>
         isDirty && currentLocation.pathname !== nextLocation.pathname,
       [isDirty],
     ),

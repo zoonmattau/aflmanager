@@ -19,6 +19,7 @@ import {
   Handshake,
   Sparkles,
   Scale,
+  Crown,
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -34,11 +35,12 @@ const CATEGORY_CONFIG: Record<NewsCategory, { icon: React.ElementType; color: st
   discipline:{ icon: Scale,          color: 'bg-orange-500/15 text-orange-400', label: 'Tribunal' },
   draft:    { icon: GraduationCap,   color: 'bg-green-500/15 text-green-400', label: 'Draft' },
   contract: { icon: FileText,        color: 'bg-amber-500/15 text-amber-400', label: 'Contract' },
-  milestone:{ icon: Sparkles,        color: 'bg-cyan-500/15 text-cyan-400',  label: 'Milestone' },
-  general:  { icon: Newspaper,       color: 'bg-zinc-500/15 text-zinc-400',  label: 'General' },
+  milestone:  { icon: Sparkles,  color: 'bg-cyan-500/15 text-cyan-400',    label: 'Milestone' },
+  leadership: { icon: Crown,     color: 'bg-yellow-500/15 text-yellow-400', label: 'Leadership' },
+  general:    { icon: Newspaper, color: 'bg-zinc-500/15 text-zinc-400',    label: 'General' },
 }
 
-const ALL_CATEGORIES: NewsCategory[] = ['match', 'trade', 'injury', 'discipline', 'draft', 'contract', 'milestone', 'general']
+const ALL_CATEGORIES: NewsCategory[] = ['match', 'trade', 'injury', 'discipline', 'draft', 'contract', 'milestone', 'leadership', 'general']
 
 function formatByline(item: NewsItem): string | null {
   if (!item.media?.reporterName || !item.media?.outletName) return null

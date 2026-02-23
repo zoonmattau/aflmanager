@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { Star, MapPin, Users, ArrowUpDown } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Star, ArrowUpDown } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import {
@@ -11,6 +12,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { Match, MatchPlayerStats } from '@/types/match'
 import type { Player } from '@/types/player'
 import type { Club } from '@/types/club'
@@ -24,6 +26,7 @@ type SortDir = 'asc' | 'desc'
 interface ColDef {
   key: SortKey
   label: string
+  title: string
   /** If true, zero values are shown as '' unless the stat is always meaningful */
   hideZero?: boolean
 }
@@ -40,9 +43,9 @@ const EFFICIENCY_COLS: EfficiencyColDef[] = [
   {
     id: 'de_pct',
     label: 'DE%',
-    title: 'Disposal Efficiency — effective disposals as % of total',
-    compute: (s) => fmtPct(calcDisposalEfficiency(s.disposals, s.clangers)),
-    numericValue: (s) => calcDisposalEfficiency(s.disposals, s.clangers) ?? 0,
+    title: 'Disposal Efficiency — (disposals − turnovers) / disposals. Min 5 disposals.',
+    compute: (s) => fmtPct(calcDisposalEfficiency(s.disposals, s.turnovers)),
+    numericValue: (s) => calcDisposalEfficiency(s.disposals, s.turnovers) ?? 0,
   },
   {
     id: 'ka_pct',
@@ -69,37 +72,43 @@ const EFFICIENCY_COLS: EfficiencyColDef[] = [
 
 const COLUMN_GROUPS: Record<ColumnGroup, ColDef[]> = {
   possession: [
-    { key: 'disposals', label: 'D' },
-    { key: 'kicks', label: 'K' },
-    { key: 'handballs', label: 'HB' },
-    { key: 'contestedPossessions', label: 'CP' },
-    { key: 'uncontestedPossessions', label: 'UP' },
-    { key: 'clearances', label: 'CL' },
-    { key: 'insideFifties', label: 'I50' },
-    { key: 'rebound50s', label: 'R50' },
-    { key: 'metresGained', label: 'MG' },
-    { key: 'turnovers', label: 'TO', hideZero: true },
-    { key: 'clangers', label: 'CLG', hideZero: true },
+    { key: 'disposals', label: 'D', title: 'Disposals' },
+    { key: 'kicks', label: 'K', title: 'Kicks' },
+    { key: 'handballs', label: 'HB', title: 'Handballs' },
+    { key: 'marks', label: 'M', title: 'Marks' },
+    { key: 'tackles', label: 'T', title: 'Tackles' },
+    { key: 'contestedPossessions', label: 'CP', title: 'Contested Possessions' },
+    { key: 'uncontestedPossessions', label: 'UP', title: 'Uncontested Possessions' },
+    { key: 'clearances', label: 'CL', title: 'Clearances' },
+    { key: 'insideFifties', label: 'I50', title: 'Inside 50s' },
+    { key: 'rebound50s', label: 'R50', title: 'Rebound 50s' },
+    { key: 'metresGained', label: 'MG', title: 'Metres Gained' },
+    { key: 'bounces', label: 'BO', title: 'Bounces', hideZero: true },
+    { key: 'turnovers', label: 'TO', title: 'Turnovers', hideZero: true },
+    { key: 'clangers', label: 'CLG', title: 'Clangers', hideZero: true },
   ],
   scoring: [
-    { key: 'goals', label: 'G', hideZero: true },
-    { key: 'behinds', label: 'B', hideZero: true },
-    { key: 'goalAssists', label: 'GA', hideZero: true },
-    { key: 'scoreInvolvements', label: 'SI' },
-    { key: 'insideFifties', label: 'I50' },
+    { key: 'goals', label: 'G', title: 'Goals', hideZero: true },
+    { key: 'behinds', label: 'B', title: 'Behinds', hideZero: true },
+    { key: 'goalAssists', label: 'GA', title: 'Goal Assists', hideZero: true },
+    { key: 'scoreInvolvements', label: 'SI', title: 'Score Involvements' },
+    { key: 'insideFifties', label: 'I50', title: 'Inside 50s' },
   ],
   defensive: [
-    { key: 'tackles', label: 'T' },
-    { key: 'intercepts', label: 'INT' },
-    { key: 'rebound50s', label: 'R50' },
-    { key: 'onePercenters', label: '1%', hideZero: true },
-    { key: 'marks', label: 'M' },
-    { key: 'contestedMarks', label: 'CM', hideZero: true },
+    { key: 'tackles', label: 'T', title: 'Tackles' },
+    { key: 'hitouts', label: 'HO', title: 'Hitouts', hideZero: true },
+    { key: 'intercepts', label: 'INT', title: 'Intercepts' },
+    { key: 'rebound50s', label: 'R50', title: 'Rebound 50s' },
+    { key: 'onePercenters', label: '1%', title: 'One Percenters', hideZero: true },
+    { key: 'marks', label: 'M', title: 'Marks' },
+    { key: 'contestedMarks', label: 'CM', title: 'Contested Marks', hideZero: true },
+    { key: 'freesFor', label: 'FF', title: 'Frees For', hideZero: true },
+    { key: 'freesAgainst', label: 'FA', title: 'Frees Against', hideZero: true },
   ],
   fantasy: [
-    { key: 'aflFantasyPoints', label: 'AF' },
-    { key: 'superCoachPoints', label: 'SC' },
-    { key: 'minutesPlayed', label: 'MIN' },
+    { key: 'aflFantasyPoints', label: 'AF', title: 'AFL Fantasy Points' },
+    { key: 'superCoachPoints', label: 'SC', title: 'SuperCoach Points' },
+    { key: 'minutesPlayed', label: 'MIN', title: 'Minutes Played' },
   ],
   efficiency: [],
 }
@@ -151,6 +160,8 @@ export function PostMatchBoxScore({
   players,
   playerClubId,
 }: PostMatchBoxScoreProps) {
+  const navigate = useNavigate()
+
   const [group, setGroup] = useState<ColumnGroup>('possession')
   const [sortKey, setSortKey] = useState<SortKey>('disposals')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
@@ -161,19 +172,23 @@ export function PostMatchBoxScore({
   const homeClub = clubs[match.homeClubId]
   const awayClub = clubs[match.awayClubId]
 
+  const totalRunningMinutes = result.quarterRunningMinutes
+    ? result.quarterRunningMinutes.reduce((s, m) => s + m, 0)
+    : 80
+
+  const efficiencyCols: EfficiencyColDef[] = [
+    ...EFFICIENCY_COLS,
+    {
+      id: 'tog_pct',
+      label: 'TOG%',
+      title: `Time on Ground % — running minutes / ${totalRunningMinutes} total`,
+      compute: (s) => s.minutesPlayed > 0 ? `${Math.round((s.minutesPlayed / totalRunningMinutes) * 100)}%` : '-',
+      numericValue: (s) => s.minutesPlayed / totalRunningMinutes,
+    },
+  ]
+
   const homeBOG = useMemo(() => getBOG(result.homePlayerStats), [result])
   const awayBOG = useMemo(() => getBOG(result.awayPlayerStats), [result])
-
-  const homeKH = useMemo(() => {
-    const kicks = result.homePlayerStats.reduce((s, p) => s + p.kicks, 0)
-    const handballs = result.homePlayerStats.reduce((s, p) => s + p.handballs, 0)
-    return { kicks, handballs }
-  }, [result])
-  const awayKH = useMemo(() => {
-    const kicks = result.awayPlayerStats.reduce((s, p) => s + p.kicks, 0)
-    const handballs = result.awayPlayerStats.reduce((s, p) => s + p.handballs, 0)
-    return { kicks, handballs }
-  }, [result])
 
   const bogIds = useMemo(
     () => new Set([homeBOG?.playerId, awayBOG?.playerId].filter(Boolean) as string[]),
@@ -193,13 +208,13 @@ export function PostMatchBoxScore({
       isUser: match.awayClubId === playerClubId,
     }))
 
-    let merged = [...home, ...away].filter((s) => s.participated)
+    let merged = [...home, ...away].filter((s) => s.participated || s.disposals > 0 || s.minutesPlayed > 0)
 
     if (teamFilter === 'home') merged = merged.filter((s) => s.clubId === match.homeClubId)
     else if (teamFilter === 'away') merged = merged.filter((s) => s.clubId === match.awayClubId)
 
     if (group === 'efficiency') {
-      const effCol = EFFICIENCY_COLS.find((c) => c.id === effSortId) ?? EFFICIENCY_COLS[0]
+      const effCol = efficiencyCols.find((c) => c.id === effSortId) ?? efficiencyCols[0]
       return [...merged].sort((a, b) =>
         sortDir === 'desc'
           ? effCol.numericValue(b) - effCol.numericValue(a)
@@ -235,94 +250,9 @@ export function PostMatchBoxScore({
   }
 
   return (
-    <div className="space-y-4">
-      {/* Match Summary Banner */}
-      <Card>
-        <CardContent className="py-6">
-          <div className="flex items-center justify-center gap-8">
-            {/* Home Club */}
-            <div className="flex flex-col items-center gap-1">
-              <div
-                className="h-12 w-12 rounded-full border border-border"
-                style={{ backgroundColor: homeClub?.colors.primary }}
-              />
-              <span className="font-bold">{homeClub?.abbreviation}</span>
-              {homeBOG && (
-                <div className="flex items-center gap-1 text-xs text-amber-500">
-                  <Star className="h-3 w-3" />
-                  <span>
-                    {players[homeBOG.playerId]
-                      ? `${players[homeBOG.playerId].firstName.charAt(0)}. ${players[homeBOG.playerId].lastName}`
-                      : 'BOG'}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Score */}
-            <div className="text-center">
-              <div className="text-3xl font-bold tabular-nums">
-                {result.homeTotalScore} – {result.awayTotalScore}
-              </div>
-              <div className="mt-1 text-xs text-muted-foreground font-mono">
-                {result.homeScores.map((q) => `${q.goals}.${q.behinds}`).join(' | ')}
-                <br />
-                {result.awayScores.map((q) => `${q.goals}.${q.behinds}`).join(' | ')}
-              </div>
-            </div>
-
-            {/* Away Club */}
-            <div className="flex flex-col items-center gap-1">
-              <div
-                className="h-12 w-12 rounded-full border border-border"
-                style={{ backgroundColor: awayClub?.colors.primary }}
-              />
-              <span className="font-bold">{awayClub?.abbreviation}</span>
-              {awayBOG && (
-                <div className="flex items-center gap-1 text-xs text-amber-500">
-                  <Star className="h-3 w-3" />
-                  <span>
-                    {players[awayBOG.playerId]
-                      ? `${players[awayBOG.playerId].firstName.charAt(0)}. ${players[awayBOG.playerId].lastName}`
-                      : 'BOG'}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Team K:H summary */}
-          <div className="mt-3 flex items-center justify-center gap-6 text-xs text-muted-foreground">
-            <span className="font-mono">{homeKH.kicks}:{homeKH.handballs} K:H</span>
-            <span className="text-muted-foreground/40">·</span>
-            <span className="font-mono">{awayKH.kicks}:{awayKH.handballs} K:H</span>
-          </div>
-
-          {result.simulationContext && (
-            <div className="mt-2 flex flex-wrap items-center justify-center gap-3 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1">
-                <MapPin className="h-3 w-3" />
-                {match.venue}
-              </span>
-              {result.simulationContext.attendance != null && (
-                <span className="inline-flex items-center gap-1">
-                  <Users className="h-3 w-3" />
-                  {result.simulationContext.attendance.toLocaleString()}
-                  {result.simulationContext.capacityPct != null && (
-                    <span> ({result.simulationContext.capacityPct}%)</span>
-                  )}
-                </span>
-              )}
-              <span className="capitalize">
-                {result.simulationContext.weather}, {result.simulationContext.groundCondition}
-              </span>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
+    <div className="space-y-4 w-full min-w-0">
       {/* Box Score Table */}
-      <Card>
+      <Card className="overflow-hidden">
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <CardTitle>Player Box Score</CardTitle>
@@ -385,40 +315,47 @@ export function PostMatchBoxScore({
                     Team
                   </TableHead>
                   {group === 'efficiency'
-                    ? EFFICIENCY_COLS.map((col) => (
-                        <TableHead
-                          key={col.id}
-                          title={col.title}
-                          className={cn(
-                            'text-center cursor-pointer select-none min-w-[60px] hover:bg-muted/50 transition-colors',
-                            effSortId === col.id && 'bg-muted/40',
-                          )}
-                          onClick={() => handleEffSort(col.id)}
-                        >
-                          <div className="flex items-center justify-center gap-0.5">
-                            {col.label}
-                            {effSortId === col.id && (
-                              <ArrowUpDown className="h-3 w-3 opacity-60" />
-                            )}
-                          </div>
-                        </TableHead>
+                    ? efficiencyCols.map((col) => (
+                        <Tooltip key={col.id}>
+                          <TooltipTrigger asChild>
+                            <TableHead
+                              className={cn(
+                                'text-center cursor-pointer select-none min-w-[60px] hover:bg-muted/50 transition-colors',
+                                effSortId === col.id && 'bg-muted/40',
+                              )}
+                              onClick={() => handleEffSort(col.id)}
+                            >
+                              <div className="flex items-center justify-center gap-0.5">
+                                {col.label}
+                                {effSortId === col.id && (
+                                  <ArrowUpDown className="h-3 w-3 opacity-60" />
+                                )}
+                              </div>
+                            </TableHead>
+                          </TooltipTrigger>
+                          <TooltipContent>{col.title}</TooltipContent>
+                        </Tooltip>
                       ))
                     : activeCols.map((col) => (
-                        <TableHead
-                          key={col.key}
-                          className={cn(
-                            'text-center cursor-pointer select-none min-w-[40px] hover:bg-muted/50 transition-colors',
-                            sortKey === col.key && 'bg-muted/40',
-                          )}
-                          onClick={() => handleSort(col.key)}
-                        >
-                          <div className="flex items-center justify-center gap-0.5">
-                            {col.label}
-                            {sortKey === col.key && (
-                              <ArrowUpDown className="h-3 w-3 opacity-60" />
-                            )}
-                          </div>
-                        </TableHead>
+                        <Tooltip key={col.key}>
+                          <TooltipTrigger asChild>
+                            <TableHead
+                              className={cn(
+                                'text-center cursor-pointer select-none min-w-[40px] hover:bg-muted/50 transition-colors',
+                                sortKey === col.key && 'bg-muted/40',
+                              )}
+                              onClick={() => handleSort(col.key)}
+                            >
+                              <div className="flex items-center justify-center gap-0.5">
+                                {col.label}
+                                {sortKey === col.key && (
+                                  <ArrowUpDown className="h-3 w-3 opacity-60" />
+                                )}
+                              </div>
+                            </TableHead>
+                          </TooltipTrigger>
+                          <TooltipContent>{col.title}</TooltipContent>
+                        </Tooltip>
                       ))
                   }
                 </TableRow>
@@ -445,11 +382,14 @@ export function PostMatchBoxScore({
                           {isBOG && (
                             <Star className="h-3 w-3 text-amber-400 shrink-0" />
                           )}
-                          <span>
+                          <button
+                            className="hover:underline hover:text-primary transition-colors text-left"
+                            onClick={() => navigate(`/player/${stat.playerId}`)}
+                          >
                             {player
                               ? `${player.firstName.charAt(0)}. ${player.lastName}`
                               : stat.playerId}
-                          </span>
+                          </button>
                         </div>
                       </TableCell>
 
@@ -464,7 +404,7 @@ export function PostMatchBoxScore({
                       </TableCell>
 
                       {group === 'efficiency'
-                        ? EFFICIENCY_COLS.map((col) => (
+                        ? efficiencyCols.map((col) => (
                             <TableCell
                               key={col.id}
                               className={cn(

@@ -12,6 +12,7 @@ export type WeekSchedule = Record<string, DaySchedule>
 
 export type GameEventType =
   | 'match'
+  | 'reserves-match'
   | 'training'
   | 'contract-deadline'
   | 'trade-deadline'

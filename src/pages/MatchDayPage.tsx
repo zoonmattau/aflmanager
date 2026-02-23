@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { h2hKey, isRivalryMatch } from '@/engine/history/h2hTracker'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -12,11 +13,12 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
+
 import { simulateMatch, previewMatchWeather } from '@/engine/match/simulateMatch'
 import type { SimulateMatchInput, WeatherModifiers } from '@/engine/match/simulateMatch'
 import { LiveMatchView } from '@/components/match/LiveMatchView'
 import { PostMatchBoxScore } from '@/components/match/PostMatchBoxScore'
+import { ScoreWorm } from '@/components/match/MatchCharts'
 import { selectBestLineup } from '@/engine/ai/lineupSelection'
 import { MatchReportModal } from '@/components/match/MatchReportModal'
 import { PlayByPlayPanel } from '@/components/match/PlayByPlayPanel'
@@ -34,7 +36,6 @@ import {
   getBroadcastChannelShort,
   getBroadcastChannelColor,
   getBroadcastTierLabel,
-  getBroadcastTierColor,
   getBroadcastChannelLabel,
 } from '@/engine/season/broadcastEngine'
 import type { Player, PlayerPreferredRole } from '@/types/player'
@@ -49,10 +50,6 @@ import {
   BarChart3,
   Target,
   Shield,
-  GripVertical,
-  Save,
-  ArrowUpDown,
-  Settings2,
   ChevronLeft,
   ChevronRight,
   Users,
@@ -67,6 +64,8 @@ import {
   ShieldAlert,
 } from 'lucide-react'
 import { useNotificationStore } from '@/stores/notificationStore'
+import { useNavigationGuard } from '@/hooks/useNavigationGuard'
+import { NavigationGuardDialog } from '@/components/common/NavigationGuardDialog'
 
 const EMPTY_H2H: Record<string, import('@/types/history').H2HRecord> = {}
 
@@ -84,6 +83,8 @@ const MATCH_DAY_ORDER: MatchDay[] = [
 ]
 
 const MATCH_DAY_LABELS: Record<MatchDay, string> = {
+  Tuesday: 'Tuesday',
+  Wednesday: 'Wednesday',
   Thursday: 'Thursday Night',
   Friday: 'Friday Night',
   'Saturday-Early': 'Saturday Early',
@@ -152,23 +153,6 @@ function fixtureKey(fixture: Fixture): string {
   return `${fixture.homeClubId}-${fixture.awayClubId}`
 }
 
-type EditableFixtureForm = {
-  homeClubId: string
-  awayClubId: string
-  matchDay: MatchDay
-  scheduledTime: string
-  venue: string
-}
-
-function toEditableFixtureForm(fixture: Fixture): EditableFixtureForm {
-  return {
-    homeClubId: fixture.homeClubId,
-    awayClubId: fixture.awayClubId,
-    matchDay: fixture.matchDay ?? 'Saturday-Twilight',
-    scheduledTime: fixture.scheduledTime ?? '',
-    venue: fixture.venue ?? '',
-  }
-}
 
 function TeamBadge({
   club,
@@ -189,6 +173,27 @@ function TeamBadge({
       title={club?.fullName ?? fallback}
     >
       {(club?.abbreviation ?? fallback).slice(0, 3)}
+    </div>
+  )
+}
+
+function InjuryRow({ player }: { player: Player }) {
+  const inj = player.injury!
+  const sev = inj.severity
+  const color =
+    sev === 'severe'   ? 'text-red-500' :
+    sev === 'major'    ? 'text-red-400' :
+    sev === 'moderate' ? 'text-orange-400' : 'text-amber-400'
+  return (
+    <div className="space-y-0.5">
+      <div className="flex items-center gap-1 text-[11px]">
+        <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">{player.position.primary}</Badge>
+        <span className="flex-1 min-w-0 truncate font-medium">{player.firstName[0]}. {player.lastName}</span>
+      </div>
+      <div className="flex items-center justify-between gap-1 pl-0.5 text-[10px]">
+        <span className="truncate text-muted-foreground">{inj.type}</span>
+        <span className={`shrink-0 tabular-nums font-semibold ${color}`}>{inj.weeksRemaining}w</span>
+      </div>
     </div>
   )
 }
@@ -358,33 +363,42 @@ export function MatchDayPage() {
   const rngSeed = useGameStore((s) => s.rngSeed)
   const currentDate = useGameStore((s) => s.currentDate)
   const simCurrentRound = useGameStore((s) => s.simCurrentRound)
-  const updateFixtureGame = useGameStore((s) => s.updateFixtureGame)
-  const moveFixtureInRound = useGameStore((s) => s.moveFixtureInRound)
-  const swapFixturesInRound = useGameStore((s) => s.swapFixturesInRound)
+  const commitSingleFixture = useGameStore((s) => s.commitSingleFixture)
+
+  const clearPendingMatchResults = useGameStore((s) => s.clearPendingMatchResults)
+  const pendingMatchResults = useGameStore((s) => s.pendingMatchResults)
 
   const selectedLineup = useGameStore((s) => s.selectedLineup)
+  const setSelectedLineup = useGameStore((s) => s.setSelectedLineup)
   const weeklyGameplans = useGameStore((s) => s.weeklyGameplans)
+  const setWeeklyMatchupTactics = useGameStore((s) => s.setWeeklyMatchupTactics)
 
   const matchReports = useGameStore((s) => s.history.matchReports)
   const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
+  const bettingMarkets = useGameStore((s) => s.bettingMarkets)
+  const bettingEnabled = useGameStore((s) => s.settings.betting?.enabled ?? false)
 
   const [lastMatchResult, setLastMatchResult] = useState<Match | null>(null)
   const [reviewPayload, setReviewPayload] = useState<PostMatchReviewPayload | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
-  const [viewingRound, setViewingRound] = useState<number | null>(null)
-  const [selectedFixtureKey, setSelectedFixtureKey] = useState<string | null>(null)
-  const [editorFixtureIndex, setEditorFixtureIndex] = useState<number>(0)
-  const [editorForm, setEditorForm] = useState<EditableFixtureForm | null>(null)
-  const [draggingFixtureIndex, setDraggingFixtureIndex] = useState<number | null>(null)
-  const [swapTargetIndex, setSwapTargetIndex] = useState<string>('')
-  const [editorNotice, setEditorNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null)
-  const [fixtureEditorOpen, setFixtureEditorOpen] = useState<boolean>(false)
+  // Round and fixture selection live in URL params so back-navigation restores the exact spot.
+  const viewingRoundParam = searchParams.get('round')
+  const viewingRound: number | null = viewingRoundParam !== null ? parseInt(viewingRoundParam, 10) : null
+  const selectedFixtureKey: string | null = searchParams.get('fixture')
+
   const [liveMatchActive, setLiveMatchActive] = useState(false)
   // stepThrough mode: quarters now start paused automatically via LiveMatchView
   const [liveOtherMatches, setLiveOtherMatches] = useState<Match[]>([])
 
+  // Block navigation while a live match is in progress — prevents losing match state
+  const navGuard = useNavigationGuard(liveMatchActive)
+
   // Per-fixture watch/sim state for non-user matches
-  const [resolvedMatches, setResolvedMatches] = useState<Map<string, Match>>(new Map())
+  const resolvedMatches = useMemo(() => {
+    const map = new Map<string, Match>()
+    for (const m of pendingMatchResults) map.set(fixtureKey(m), m)
+    return map
+  }, [pendingMatchResults])
   const [watchingSpectator, setWatchingSpectator] = useState<{
     fixture: Fixture
     fixtureIndex: number
@@ -410,13 +424,13 @@ export function MatchDayPage() {
     if (searchParams.get('review') !== 'pending') return
     const pending = claimPendingReview()
     if (pending) setReviewPayload(pending)
-    setSearchParams({}, { replace: true })
+    setSearchParams((prev) => { prev.delete('review'); return prev }, { replace: true })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Reset per-fixture resolved state whenever the round advances
   useEffect(() => {
-    setResolvedMatches(new Map())
+    clearPendingMatchResults()
     setWatchingSpectator(null)
   }, [currentRound])
 
@@ -429,8 +443,7 @@ export function MatchDayPage() {
   const displayRoundIdx = viewingRound ?? defaultRound
   const round = season?.rounds?.[displayRoundIdx]
   const isCurrentRound = displayRoundIdx === currentRound
-  const canEditFixture = currentRound === 0 && !matchResults.some((m) => m.result !== null)
-  const editableRoundFixtures = round?.fixtures ?? []
+
   const playerFixture = round?.fixtures.find(
     (f) => f.homeClubId === playerClubId || f.awayClubId === playerClubId,
   )
@@ -509,6 +522,15 @@ export function MatchDayPage() {
     const weather = previewMatchWeather(weatherSeed, venueId, selectedFixture.matchDay, month)
     const venueData = venueId ? VENUES[venueId] : undefined
 
+    const homeInjuries = Object.values(players)
+      .filter((p) => p.clubId === selectedFixture.homeClubId && p.injury !== null)
+      .sort((a, b) => getOverallRating(b) - getOverallRating(a))
+      .slice(0, 4)
+    const awayInjuries = Object.values(players)
+      .filter((p) => p.clubId === selectedFixture.awayClubId && p.injury !== null)
+      .sort((a, b) => getOverallRating(b) - getOverallRating(a))
+      .slice(0, 4)
+
     return {
       homeForm,
       awayForm,
@@ -521,6 +543,8 @@ export function MatchDayPage() {
       keyMatchups,
       weather,
       venueData,
+      homeInjuries,
+      awayInjuries,
     }
   }, [ladderByClub, matchResults, players, selectedFixture, round, rngSeed, currentRound, currentDate])
 
@@ -539,70 +563,6 @@ export function MatchDayPage() {
     return Array.from(groups.values()).sort((a, b) => a.iso.localeCompare(b.iso))
   }, [displayRoundIdx, settings.seasonStartDate, sortedFixtures])
 
-  const venueOptions = useMemo(
-    () => Object.values(VENUES).map((v) => v.name).sort((a, b) => a.localeCompare(b)),
-    [],
-  )
-  const normalizedEditorFixtureIndex = Math.min(
-    Math.max(editorFixtureIndex, 0),
-    Math.max(0, editableRoundFixtures.length - 1),
-  )
-  const editorSelectedFixture = editableRoundFixtures[normalizedEditorFixtureIndex]
-  const activeEditorForm = editorForm ?? (editorSelectedFixture ? toEditableFixtureForm(editorSelectedFixture) : null)
-
-  const homeClubOptionsForEditor = useMemo(() => {
-    if (!round || !activeEditorForm) return []
-    const locked = new Set<string>()
-    round.fixtures.forEach((fixture, idx) => {
-      if (idx === normalizedEditorFixtureIndex) return
-      locked.add(fixture.homeClubId)
-      locked.add(fixture.awayClubId)
-    })
-    return Object.values(clubs)
-      .filter((club) => !locked.has(club.id) || club.id === activeEditorForm.homeClubId)
-      .sort((a, b) => a.name.localeCompare(b.name))
-  }, [activeEditorForm, clubs, normalizedEditorFixtureIndex, round])
-
-  const awayClubOptionsForEditor = useMemo(() => {
-    if (!round || !activeEditorForm) return []
-    const locked = new Set<string>()
-    round.fixtures.forEach((fixture, idx) => {
-      if (idx === normalizedEditorFixtureIndex) return
-      locked.add(fixture.homeClubId)
-      locked.add(fixture.awayClubId)
-    })
-    return Object.values(clubs)
-      .filter((club) => club.id !== activeEditorForm.homeClubId && (!locked.has(club.id) || club.id === activeEditorForm.awayClubId))
-      .sort((a, b) => a.name.localeCompare(b.name))
-  }, [activeEditorForm, clubs, normalizedEditorFixtureIndex, round])
-
-  if (!season?.rounds?.length || !round) {
-    return (
-      <div className="space-y-4">
-        <h1 className="text-2xl font-bold">Fixture</h1>
-        <Card>
-          <CardContent className="py-8 text-center text-muted-foreground">
-            No more matches to play this season.
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
-
-  // Post-match review gate — renders instead of fixture list until dismissed
-  if (reviewPayload) {
-    return (
-      <PostMatchReview
-        payload={reviewPayload}
-        clubs={clubs}
-        players={players}
-        playerClubId={playerClubId}
-        onContinue={() => setReviewPayload(null)}
-      />
-    )
-  }
-
-  const roundPlayed = matchResults.some((m) => m.round === displayRoundIdx && m.result !== null)
 
   // The earliest match in this round (Thursday games start the week)
   const earliestRoundMatchDate = useMemo(() => {
@@ -619,112 +579,16 @@ export function MatchDayPage() {
   const isLeadershipBlocked = leadershipPending && currentRound === 0
   const canSimulate = isMatchDay && !isLeadershipBlocked
 
-  const setDisplayRound = (idx: number) => {
-    const clamped = Math.max(0, Math.min(season.rounds.length - 1, idx))
-    setViewingRound(clamped === defaultRound ? null : clamped)
-    setEditorFixtureIndex(0)
-    setEditorForm(null)
-    setSwapTargetIndex('')
-    setEditorNotice(null)
-  }
+  // Gate the Play Live button to the player's own match day specifically.
+  // The round's earliest game (e.g. Thursday) should not make Play Live available
+  // for a team whose game is not until Saturday.
+  const playerMatchDate =
+    playerFixture && settings?.seasonStartDate
+      ? getFixtureDateIso(settings.seasonStartDate, displayRoundIdx, playerFixture.matchDay)
+      : null
+  const isPlayerMatchDay = playerMatchDate ? (currentDate ?? '') >= playerMatchDate : isMatchDay
 
-  const handleSelectFixtureForEdit = (fixtureIdx: number) => {
-    if (!round?.fixtures[fixtureIdx]) return
-    setEditorFixtureIndex(fixtureIdx)
-    setEditorForm(toEditableFixtureForm(round.fixtures[fixtureIdx]))
-    setSwapTargetIndex('')
-    setEditorNotice(null)
-  }
-
-  const handleSaveFixtureEdit = () => {
-    const form = editorForm ?? activeEditorForm
-    if (!form) return
-    const result = updateFixtureGame(displayRoundIdx, normalizedEditorFixtureIndex, {
-      homeClubId: form.homeClubId,
-      awayClubId: form.awayClubId,
-      matchDay: form.matchDay,
-      scheduledTime: form.scheduledTime,
-      venue: form.venue,
-    })
-    if (!result.success) {
-      setEditorNotice({ type: 'error', message: result.error ?? 'Unable to update fixture.' })
-      return
-    }
-    setEditorNotice({ type: 'success', message: 'Fixture updated.' })
-    const refreshed = useGameStore.getState().season.rounds[displayRoundIdx]?.fixtures?.[normalizedEditorFixtureIndex]
-    if (refreshed) {
-      setEditorForm(toEditableFixtureForm(refreshed))
-      setSelectedFixtureKey(getFixtureKey(refreshed))
-    }
-  }
-
-  const handleSwapFixtures = () => {
-    if (!swapTargetIndex) return
-    const target = parseInt(swapTargetIndex, 10)
-    const result = swapFixturesInRound(displayRoundIdx, normalizedEditorFixtureIndex, target)
-    if (!result.success) {
-      setEditorNotice({ type: 'error', message: result.error ?? 'Unable to swap fixtures.' })
-      return
-    }
-    setEditorNotice({ type: 'success', message: 'Games swapped.' })
-    setSwapTargetIndex('')
-  }
-
-  const handleDropFixture = (toIndex: number) => {
-    if (draggingFixtureIndex === null) return
-    const result = moveFixtureInRound(displayRoundIdx, draggingFixtureIndex, toIndex)
-    setDraggingFixtureIndex(null)
-    if (!result.success) {
-      setEditorNotice({ type: 'error', message: result.error ?? 'Unable to move fixture.' })
-      return
-    }
-    setEditorFixtureIndex(toIndex)
-    const refreshed = useGameStore.getState().season.rounds[displayRoundIdx]?.fixtures?.[toIndex]
-    if (refreshed) setEditorForm(toEditableFixtureForm(refreshed))
-    setEditorNotice({ type: 'success', message: 'Fixture order updated.' })
-  }
-
-  const handleSimRound = () => {
-    const result = simCurrentRound({
-      precomputedMatches: resolvedMatches.size > 0 ? [...resolvedMatches.values()] : undefined,
-    })
-    if (result.reviewPayload) {
-      setReviewPayload(result.reviewPayload)
-    } else if (result.userMatch) {
-      setLastMatchResult(result.userMatch)
-    }
-  }
-
-  const handlePlayLive = () => {
-    // Pre-simulate all other fixtures in this round so the user can see concurrent
-    // scores while playing their own game live. Uses the exact same seeds that
-    // simCurrentRound will use, so results will match when the round is committed.
-    if (round) {
-      const otherMatches: Match[] = []
-      round.fixtures.forEach((fixture, i) => {
-        if (fixture.homeClubId === playerClubId || fixture.awayClubId === playerClubId) return
-        const match = simulateMatch({
-          homeClubId: fixture.homeClubId,
-          awayClubId: fixture.awayClubId,
-          venue: fixture.venue,
-          venueId: fixture.venueId,
-          matchDay: fixture.matchDay,
-          month: currentDate ? parseInt(currentDate.split('-')[1]) : undefined,
-          round: currentRound,
-          players,
-          clubs,
-          seed: rngSeed + currentRound * 100 + i,
-          matchRules: settings.matchRules,
-          realism: settings.realism,
-          injuryFrequency: settings.injuryFrequency,
-        })
-        otherMatches.push(match)
-      })
-      setLiveOtherMatches(otherMatches)
-    }
-    setLiveMatchActive(true)
-  }
-
+  // ── Hooks above early-returns (Rules of Hooks) ─────────────────────────
   const handleSimOtherFixture = useCallback((fixture: Fixture) => {
     if (!round) return
     const fixtureIdx = round.fixtures.findIndex(
@@ -744,15 +608,21 @@ export function MatchDayPage() {
       matchRules: settings.matchRules,
       realism: settings.realism,
       injuryFrequency: settings.injuryFrequency,
+      venueRoofOverrides: settings.venueRoofOverrides,
+      customStadiums: settings.customStadiums,
     })
-    setResolvedMatches((prev) => new Map(prev).set(fixtureKey(fixture), match))
-  }, [round, currentRound, players, clubs, rngSeed, settings])
+    const result = commitSingleFixture(match, false)
+    if (result.reviewPayload) setReviewPayload(result.reviewPayload)
+  }, [round, currentRound, players, clubs, rngSeed, settings, commitSingleFixture])
 
   const handleWatchOtherFixture = useCallback((fixture: Fixture) => {
     if (!round) return
     const fixtureIdx = round.fixtures.findIndex(
       (f) => f.homeClubId === fixture.homeClubId && f.awayClubId === fixture.awayClubId,
     )
+    const opts = { interchangePlayers: settings.matchRules.interchangePlayers }
+    const homeLineupSlots = selectBestLineup(Object.values(players), fixture.homeClubId, { ...opts, club: clubs[fixture.homeClubId] }).lineup
+    const awayLineupSlots = selectBestLineup(Object.values(players), fixture.awayClubId, { ...opts, club: clubs[fixture.awayClubId] }).lineup
     setWatchingSpectator({
       fixture,
       fixtureIndex: fixtureIdx,
@@ -770,22 +640,23 @@ export function MatchDayPage() {
         matchRules: settings.matchRules,
         realism: settings.realism,
         injuryFrequency: settings.injuryFrequency,
+        homeLineupSlots,
+        awayLineupSlots,
       },
     })
   }, [round, currentRound, players, clubs, rngSeed, settings])
 
   const handleSpectatorComplete = useCallback((match: Match) => {
     if (!watchingSpectator) return
-    setResolvedMatches((prev) => new Map(prev).set(fixtureKey(watchingSpectator.fixture), match))
+    const result = commitSingleFixture(match, false)
     setWatchingSpectator(null)
-  }, [watchingSpectator])
+    if (result.reviewPayload) setReviewPayload(result.reviewPayload)
+  }, [watchingSpectator, commitSingleFixture])
 
   const handleLiveMatchComplete = useCallback((match: Match) => {
-    // Route through the full post-round pipeline via simCurrentRound
-    const result = simCurrentRound({
-      precomputedUserMatch: match,
-      precomputedMatches: resolvedMatches.size > 0 ? [...resolvedMatches.values()] : undefined,
-    })
+    // Commit the user's match via commitSingleFixture.
+    // If all other fixtures are done, this triggers full round finalization.
+    const result = commitSingleFixture(match, true)
     setLiveMatchActive(false)
     setLiveOtherMatches([])
     if (result.reviewPayload) {
@@ -793,7 +664,7 @@ export function MatchDayPage() {
     } else {
       setLastMatchResult(result.userMatch ?? match)
     }
-  }, [simCurrentRound, resolvedMatches])
+  }, [commitSingleFixture, resolvedMatches])
 
   // Build SimulateMatchInput for the user's fixture (used by LiveMatchView)
   const userFixtureSimInput: SimulateMatchInput | null = useMemo(() => {
@@ -823,14 +694,26 @@ export function MatchDayPage() {
     : null
 
   const userLineupForField = useMemo<Record<string, string>>(() => {
-    if (!playerClubId || !selectedLineup) return {}
-    // Only return on-field slots (exclude interchange)
+    if (!playerClubId) return {}
+    // Mirror getLineupForClub: user's selections first, then fill any missing slots
+    // (especially interchange/bench) from selectBestLineup so bench is never empty.
     const result: Record<string, string> = {}
-    for (const [slot, pid] of Object.entries(selectedLineup)) {
-      if (pid && !slot.startsWith('I')) result[slot] = pid
+    for (const [slot, pid] of Object.entries(selectedLineup ?? {})) {
+      if (pid) result[slot] = pid
+    }
+    const best = selectBestLineup(Object.values(players), playerClubId, {
+      interchangePlayers: settings.matchRules.interchangePlayers,
+      club: clubs[playerClubId],
+    }).lineup
+    const usedIds = new Set(Object.values(result).filter(Boolean))
+    for (const [slot, pid] of Object.entries(best)) {
+      if (!result[slot] && pid && !usedIds.has(pid)) {
+        result[slot] = pid
+        usedIds.add(pid)
+      }
     }
     return result
-  }, [playerClubId, selectedLineup])
+  }, [playerClubId, selectedLineup, players, clubs, settings.matchRules.interchangePlayers])
 
   const opponentLineupForField = useMemo<Record<string, string>>(() => {
     if (!opponentClubId) return {}
@@ -838,10 +721,9 @@ export function MatchDayPage() {
       interchangePlayers: settings.matchRules.interchangePlayers,
       club: clubs[opponentClubId],
     })
-    // Only on-field slots
     const result: Record<string, string> = {}
     for (const [slot, pid] of Object.entries(lineup)) {
-      if (pid && !slot.startsWith('I')) result[slot] = pid
+      if (pid) result[slot] = pid
     }
     return result
   }, [opponentClubId, players, settings.matchRules.interchangePlayers, clubs])
@@ -854,6 +736,114 @@ export function MatchDayPage() {
   const userGameplanForField = playerClubId ? clubs[playerClubId]?.gameplan ?? null : null
   const opponentGameplanForField = opponentClubId ? clubs[opponentClubId]?.gameplan ?? null : null
   const userMatchupTacticsForField = userWeeklyGameplan?.matchupTactics ?? null
+
+  // The round is "played" only when ALL fixtures have been committed to matchResults.
+  // This ensures the "Simulate Remaining" button stays visible until the last game is done,
+  // and the post-match box score only appears once the round is fully finalized.
+  const roundPlayed = useMemo(() => {
+    if (!round || displayRoundIdx !== currentRound) return false
+    return round.fixtures.every((f) =>
+      matchResults.some(
+        (m) =>
+          m.round === displayRoundIdx &&
+          m.result !== null &&
+          ((m.homeClubId === f.homeClubId && m.awayClubId === f.awayClubId) ||
+            (m.homeClubId === f.awayClubId && m.awayClubId === f.homeClubId)),
+      ),
+    )
+  }, [round, displayRoundIdx, currentRound, matchResults])
+
+  // Fall back to the persisted store result when lastMatchResult is cleared by navigation.
+  // This means the box score survives clicking into a player profile and pressing Back.
+  const effectiveLastMatch = useMemo(() => {
+    if (lastMatchResult) return lastMatchResult
+    if (!playerFixture || !roundPlayed) return null
+    return getFixtureResult(matchResults, displayRoundIdx, playerFixture) ?? null
+  }, [lastMatchResult, playerFixture, roundPlayed, matchResults, displayRoundIdx])
+
+  // ─────────────────────────────────────────────────────────────────────────
+
+  if (!season?.rounds?.length || !round) {
+    return (
+      <div className="space-y-4">
+        <h1 className="text-2xl font-bold">Fixture</h1>
+        <Card>
+          <CardContent className="py-8 text-center text-muted-foreground">
+            No more matches to play this season.
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  // Post-match review gate — renders instead of fixture list until dismissed
+  if (reviewPayload) {
+    return (
+      <PostMatchReview
+        payload={reviewPayload}
+        clubs={clubs}
+        players={players}
+        playerClubId={playerClubId}
+        onContinue={() => setReviewPayload(null)}
+      />
+    )
+  }
+
+  const setDisplayRound = (idx: number) => {
+    const clamped = Math.max(0, Math.min(season.rounds.length - 1, idx))
+    setSearchParams((prev) => {
+      if (clamped === defaultRound) {
+        prev.delete('round')
+      } else {
+        prev.set('round', String(clamped))
+      }
+      // Changing round resets fixture selection
+      prev.delete('fixture')
+      return prev
+    }, { replace: true })
+  }
+
+
+  const handleSimRound = () => {
+    const result = simCurrentRound()
+    if (result.reviewPayload) {
+      setReviewPayload(result.reviewPayload)
+    } else if (result.userMatch) {
+      setLastMatchResult(result.userMatch)
+    }
+  }
+
+  const handlePlayLive = () => {
+    // Pre-simulate all other fixtures in this round so the user can see concurrent
+    // scores while playing their own game live. Uses the exact same seeds that
+    // simCurrentRound will use, so results will match when the round is committed.
+    if (round) {
+      const otherMatches: Match[] = []
+      round.fixtures.forEach((fixture, i) => {
+        if (fixture.homeClubId === playerClubId || fixture.awayClubId === playerClubId) return
+        const match = simulateMatch({
+          homeClubId: fixture.homeClubId,
+          awayClubId: fixture.awayClubId,
+          venue: fixture.venue,
+          venueId: fixture.venueId,
+          matchDay: fixture.matchDay,
+          month: currentDate ? parseInt(currentDate.split('-')[1]) : undefined,
+          round: currentRound,
+          players,
+          clubs,
+          seed: rngSeed + currentRound * 100 + i,
+          matchRules: settings.matchRules,
+          realism: settings.realism,
+          injuryFrequency: settings.injuryFrequency,
+          venueRoofOverrides: settings.venueRoofOverrides,
+          customStadiums: settings.customStadiums,
+        })
+        otherMatches.push(match)
+      })
+      setLiveOtherMatches(otherMatches)
+    }
+    setLiveMatchActive(true)
+  }
 
   return (
     <div className="space-y-6">
@@ -900,14 +890,6 @@ export function MatchDayPage() {
           </Button>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={() => setFixtureEditorOpen((v) => !v)}
-            className="flex items-center gap-2"
-          >
-            <Settings2 className="h-4 w-4" />
-            {fixtureEditorOpen ? 'Hide Fixture Editor' : 'Edit Fixture'}
-          </Button>
           {isCurrentRound && !roundPlayed && !liveMatchActive && (() => {
             const liveSimMode = settings.notifications.liveSimMode ?? 'always-live'
             const isFinalsRound = round?.isFinals ?? false
@@ -941,7 +923,7 @@ export function MatchDayPage() {
                     </button>
                   </div>
                 )}
-                {showLive && playerFixture && userFixtureSimInput && (
+                {showLive && isPlayerMatchDay && playerFixture && userFixtureSimInput && (
                   <Button
                     variant={liveIsPrimary ? 'default' : 'secondary'}
                     onClick={handlePlayLive}
@@ -962,7 +944,7 @@ export function MatchDayPage() {
                     className="flex items-center gap-2"
                   >
                     <Play className="h-4 w-4" />
-                    {liveSimMode === 'quick-sim' ? 'Quick Simulate' : 'Simulate Round'}
+                    {liveSimMode === 'quick-sim' ? 'Quick Simulate' : 'Simulate Remaining'}
                   </Button>
                 )}
               </>
@@ -980,21 +962,45 @@ export function MatchDayPage() {
         </Card>
       )}
 
-      {liveMatchActive && playerFixture && userFixtureSimInput && (
-        <LiveMatchView
-          simInput={userFixtureSimInput}
-          userClubId={playerClubId}
-          homeClub={clubs[playerFixture.homeClubId]}
-          awayClub={clubs[playerFixture.awayClubId]}
-          onComplete={handleLiveMatchComplete}
-          onCancel={() => { setLiveMatchActive(false); setLiveOtherMatches([]) }}
-          homeSlotLineup={homeSlotLineupForField}
-          awaySlotLineup={awaySlotLineupForField}
-          homeGameplan={userIsHomeForField ? userGameplanForField : opponentGameplanForField}
-          awayGameplan={userIsHomeForField ? opponentGameplanForField : userGameplanForField}
-          homeMatchupTactics={userIsHomeForField ? userMatchupTacticsForField : null}
-        />
-      )}
+      {liveMatchActive && playerFixture && userFixtureSimInput && (() => {
+        const fixtureMarket = bettingEnabled
+          ? Object.values(bettingMarkets?.matchMarkets ?? {}).find(
+              (m) =>
+                m.roundIndex === currentRound &&
+                m.homeClubId === playerFixture.homeClubId &&
+                m.awayClubId === playerFixture.awayClubId,
+            )
+          : null
+        return (
+          <LiveMatchView
+            simInput={userFixtureSimInput}
+            userClubId={playerClubId}
+            homeClub={clubs[playerFixture.homeClubId]}
+            awayClub={clubs[playerFixture.awayClubId]}
+            onComplete={handleLiveMatchComplete}
+            onCancel={() => { setLiveMatchActive(false); setLiveOtherMatches([]) }}
+            homeSlotLineup={homeSlotLineupForField}
+            awaySlotLineup={awaySlotLineupForField}
+            homeGameplan={userIsHomeForField ? userGameplanForField : opponentGameplanForField}
+            awayGameplan={userIsHomeForField ? opponentGameplanForField : userGameplanForField}
+            homeMatchupTactics={userIsHomeForField ? userMatchupTacticsForField : null}
+            matchResults={matchResults}
+            h2hRecords={h2hRecords}
+            showOdds={bettingEnabled && !!fixtureMarket}
+            homeOdds={fixtureMarket?.homeOdds}
+            awayOdds={fixtureMarket?.awayOdds}
+            line={fixtureMarket?.line}
+            homeLineOdds={fixtureMarket?.homeLineOdds}
+            awayLineOdds={fixtureMarket?.awayLineOdds}
+            totalLine={fixtureMarket?.totalLine}
+            overOdds={fixtureMarket?.overOdds}
+            underOdds={fixtureMarket?.underOdds}
+            onPreMatchLineupChange={(newLineup) => setSelectedLineup(newLineup)}
+            preMatchMatchupTactics={userMatchupTacticsForField}
+            onPreMatchMatchupTactics={(tactics) => setWeeklyMatchupTactics(tactics)}
+          />
+        )
+      })()}
 
       {watchingSpectator && (
         <LiveMatchView
@@ -1005,290 +1011,129 @@ export function MatchDayPage() {
           spectatorMode={true}
           onComplete={handleSpectatorComplete}
           onCancel={() => setWatchingSpectator(null)}
+          matchResults={matchResults}
+          h2hRecords={h2hRecords}
         />
       )}
 
-      {fixtureEditorOpen && (
+
+      {/* ── Two-column main layout ─────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4 items-start">
+
+        {/* LEFT: Full Round Schedule */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <ArrowUpDown className="h-4 w-4" />
-              Fixture Editor
+              <Calendar className="h-4 w-4" />
+              Full Round Schedule
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {canEditFixture ? (
-              <>
-                <div className="text-xs text-muted-foreground">
-                  Available only before the first game of the season. Drag games to reorder, swap games, and edit matchup/day/time/venue.
+            {fixturesByDate.map((group) => (
+              <div key={group.iso} className="space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {group.label}
                 </div>
-                <div className="grid gap-4 lg:grid-cols-2">
-                <div className="space-y-2">
-                  {editableRoundFixtures.map((fixture, idx) => {
-                    const home = clubs[fixture.homeClubId]
-                    const away = clubs[fixture.awayClubId]
-                    const active = idx === normalizedEditorFixtureIndex
-                    return (
-                      <div
-                        key={`edit-fixture-${idx}-${fixture.homeClubId}-${fixture.awayClubId}`}
-                        draggable
-                        onDragStart={() => setDraggingFixtureIndex(idx)}
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={() => handleDropFixture(idx)}
-                        className={`flex items-center justify-between rounded border px-3 py-2 text-sm ${
-                          active ? 'border-primary bg-primary/10' : 'border-border'
-                        }`}
-                        onClick={() => handleSelectFixtureForEdit(idx)}
-                      >
-                        <div className="flex items-center gap-2">
-                          <GripVertical className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-medium">{home?.abbreviation ?? fixture.homeClubId}</span>
-                          <span className="text-muted-foreground">vs</span>
-                          <span className="font-medium">{away?.abbreviation ?? fixture.awayClubId}</span>
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {(fixture.matchDay ?? 'Saturday-Twilight').replace('-', ' ')}{fixture.scheduledTime ? ` · ${fixture.scheduledTime}` : ''}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-
-                <div className="space-y-3 rounded border p-3">
-                  {activeEditorForm && editorSelectedFixture ? (
-                    <>
-                      <div className="text-sm font-semibold">Edit Game</div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Home</div>
-                          <Select
-                            value={activeEditorForm.homeClubId}
-                            onValueChange={(value) => setEditorForm((prev) => ({ ...(prev ?? activeEditorForm), homeClubId: value }))}
-                          >
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              {homeClubOptionsForEditor.map((club) => (
-                                <SelectItem key={`home-${club.id}`} value={club.id}>
-                                  {club.fullName}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1">
-                          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Away</div>
-                          <Select
-                            value={activeEditorForm.awayClubId}
-                            onValueChange={(value) => setEditorForm((prev) => ({ ...(prev ?? activeEditorForm), awayClubId: value }))}
-                          >
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              {awayClubOptionsForEditor.map((club) => (
-                                <SelectItem key={`away-${club.id}`} value={club.id}>
-                                  {club.fullName}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1">
-                          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Day</div>
-                          <Select
-                            value={activeEditorForm.matchDay}
-                            onValueChange={(value) => setEditorForm((prev) => ({ ...(prev ?? activeEditorForm), matchDay: value as MatchDay }))}
-                          >
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              {MATCH_DAY_ORDER.map((day) => (
-                                <SelectItem key={day} value={day}>
-                                  {MATCH_DAY_LABELS[day]}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1">
-                          <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Time</div>
-                          <Input
-                            value={activeEditorForm.scheduledTime}
-                            onChange={(event) => setEditorForm((prev) => ({ ...(prev ?? activeEditorForm), scheduledTime: event.target.value }))}
-                            placeholder="e.g. 7:20pm"
-                          />
-                        </div>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Venue</div>
-                        <Input
-                          list="fixture-venue-options"
-                          value={activeEditorForm.venue}
-                          onChange={(event) => setEditorForm((prev) => ({ ...(prev ?? activeEditorForm), venue: event.target.value }))}
-                          placeholder="Venue"
-                        />
-                        <datalist id="fixture-venue-options">
-                          {venueOptions.map((venue) => (
-                            <option key={venue} value={venue} />
-                          ))}
-                        </datalist>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Button size="sm" onClick={handleSaveFixtureEdit} className="gap-1">
-                          <Save className="h-3.5 w-3.5" />
-                          Save Changes
-                        </Button>
-                        <Select value={swapTargetIndex} onValueChange={setSwapTargetIndex}>
-                          <SelectTrigger className="w-[180px]">
-                            <SelectValue placeholder="Swap with..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {editableRoundFixtures.map((fixture, idx) => (
-                              <SelectItem key={`swap-${idx}`} value={String(idx)} disabled={idx === normalizedEditorFixtureIndex}>
-                                Game {idx + 1}: {(clubs[fixture.homeClubId]?.abbreviation ?? fixture.homeClubId)} vs {(clubs[fixture.awayClubId]?.abbreviation ?? fixture.awayClubId)}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Button size="sm" variant="outline" onClick={handleSwapFixtures} disabled={!swapTargetIndex}>
-                          Swap Games
-                        </Button>
-                      </div>
-                      {editorNotice && (
-                        <div className={`rounded border px-2 py-1 text-xs ${
-                          editorNotice.type === 'error'
-                            ? 'border-red-500/40 text-red-300'
-                            : 'border-emerald-500/40 text-emerald-300'
-                        }`}>
-                          {editorNotice.message}
+                {group.fixtures.map((fixture, idx) => {
+                  const home = clubs[fixture.homeClubId]
+                  const away = clubs[fixture.awayClubId]
+                  const isUserMatch = fixture === playerFixture
+                  const isSelected = selectedFixture ? getFixtureKey(fixture) === getFixtureKey(selectedFixture) : false
+                  const result = getFixtureResult(matchResults, displayRoundIdx, fixture)
+                  const fKey = fixtureKey(fixture)
+                  const resolvedMatch = !result?.result ? resolvedMatches.get(fKey) : undefined
+                  const livePreview = !result?.result && !resolvedMatch && liveMatchActive
+                    ? liveOtherMatches.find(
+                        (m) => m.homeClubId === fixture.homeClubId && m.awayClubId === fixture.awayClubId,
+                      )
+                    : null
+                  const fixtureDate = getFixtureDateIso(settings.seasonStartDate, displayRoundIdx, fixture.matchDay)
+                  const fixtureReached = !!fixtureDate && (currentDate ?? '') >= fixtureDate
+                  return (
+                    <button
+                      type="button"
+                      key={`${fixture.homeClubId}-${fixture.awayClubId}-${group.iso}-${idx}`}
+                      onClick={() => setSearchParams((prev) => { prev.set('fixture', getFixtureKey(fixture)); return prev }, { replace: true })}
+                      className={`w-full rounded-md border px-3 py-2 text-left transition-colors hover:bg-muted/50 ${
+                        isSelected ? 'border-primary bg-primary/10' : ''
+                      }`}
+                    >
+                      {fixture.isBlockbuster && fixture.blockbusterName && (
+                        <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-amber-400">
+                          <Star className="h-3 w-3 fill-amber-400" />
+                          {fixture.blockbusterName}
                         </div>
                       )}
-                    </>
-                  ) : (
-                    <div className="text-sm text-muted-foreground">Select a game to edit.</div>
-                  )}
-                </div>
-                </div>
-              </>
-            ) : (
-              <div className="rounded border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
-                Fixture editing is locked after the first game of the season.
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Calendar className="h-4 w-4" />
-            Full Round Schedule
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {fixturesByDate.map((group) => (
-            <div key={group.iso} className="space-y-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {group.label}
-              </div>
-              {group.fixtures.map((fixture, idx) => {
-                const home = clubs[fixture.homeClubId]
-                const away = clubs[fixture.awayClubId]
-                const isUserMatch = fixture === playerFixture
-                const isSelected = selectedFixture ? getFixtureKey(fixture) === getFixtureKey(selectedFixture) : false
-                const result = getFixtureResult(matchResults, displayRoundIdx, fixture)
-                const fKey = fixtureKey(fixture)
-                const resolvedMatch = !result?.result ? resolvedMatches.get(fKey) : undefined
-                // During live match, show pre-simulated scores for other games
-                const livePreview = !result?.result && !resolvedMatch && liveMatchActive
-                  ? liveOtherMatches.find(
-                      (m) => m.homeClubId === fixture.homeClubId && m.awayClubId === fixture.awayClubId,
-                    )
-                  : null
-                return (
-                  <button
-                    type="button"
-                    key={`${fixture.homeClubId}-${fixture.awayClubId}-${group.iso}-${idx}`}
-                    onClick={() => setSelectedFixtureKey(getFixtureKey(fixture))}
-                    className={`w-full rounded-md border px-3 py-2 text-left transition-colors hover:bg-muted/50 ${
-                      isSelected ? 'border-primary bg-primary/10' : isUserMatch ? 'border-primary/50 bg-primary/5' : ''
-                    }`}
-                  >
-                    {fixture.isBlockbuster && fixture.blockbusterName && (
-                      <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-amber-400">
-                        <Star className="h-3 w-3 fill-amber-400" />
-                        {fixture.blockbusterName}
-                      </div>
-                    )}
+                      {/* Meta: broadcast + time */}
+                      {(fixture.broadcastChannel && fixture.broadcastChannel !== 'None') || fixture.scheduledTime ? (
+                        <div className="flex items-center gap-2 mb-1">
+                          {fixture.broadcastChannel && fixture.broadcastChannel !== 'None' && (
+                            <span
+                              className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getBroadcastChannelColor(fixture.broadcastChannel)}`}
+                              title={`${getBroadcastChannelLabel(fixture.broadcastChannel)} — ${getBroadcastTierLabel(fixture.broadcastTier)}`}
+                            >
+                              {getBroadcastChannelShort(fixture.broadcastChannel)}
+                              {fixture.broadcastTier === 'marquee' && <Star className="ml-0.5 h-2.5 w-2.5 fill-current" />}
+                            </span>
+                          )}
+                          {fixture.scheduledTime && (
+                            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                              <Clock className="h-3 w-3" />
+                              {fixture.scheduledTime}
+                            </span>
+                          )}
+                        </div>
+                      ) : null}
 
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        {isUserMatch && <Badge>Your Match</Badge>}
-                        {isSelected && <Badge variant="secondary">Previewing</Badge>}
-                        {fixture.broadcastChannel && fixture.broadcastChannel !== 'None' && (
-                          <span
-                            className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getBroadcastChannelColor(fixture.broadcastChannel)}`}
-                            title={`${getBroadcastChannelLabel(fixture.broadcastChannel)} — ${getBroadcastTierLabel(fixture.broadcastTier)}`}
-                          >
-                            {getBroadcastChannelShort(fixture.broadcastChannel)}
-                            {fixture.broadcastTier === 'marquee' && (
-                              <Star className="ml-0.5 h-2.5 w-2.5 fill-current" />
-                            )}
-                          </span>
-                        )}
-                        {fixture.scheduledTime && (
-                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                            <Clock className="h-3 w-3" />
-                            {fixture.scheduledTime}
-                          </span>
-                        )}
+                      {/* Teams */}
+                      <div className="flex items-center justify-between gap-2 text-sm">
+                        <div className="flex items-center gap-1.5">
+                          <TeamBadge club={home} fallback={fixture.homeClubId} />
+                          <span className="font-semibold">{home?.abbreviation ?? fixture.homeClubId}</span>
+                        </div>
+                        <span className="text-muted-foreground text-xs">vs</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold">{away?.abbreviation ?? fixture.awayClubId}</span>
+                          <TeamBadge club={away} fallback={fixture.awayClubId} />
+                        </div>
                       </div>
 
-                      <div className="flex items-center gap-2 text-sm">
-                        <TeamBadge club={home} fallback={fixture.homeClubId} />
-                        <span className="font-semibold">{home?.abbreviation ?? fixture.homeClubId}</span>
-                        <span className="text-muted-foreground">vs</span>
-                        <span className="font-semibold">{away?.abbreviation ?? fixture.awayClubId}</span>
-                        <TeamBadge club={away} fallback={fixture.awayClubId} />
-                      </div>
-
-                      <div className="text-right text-xs">
+                      {/* Score — below team names */}
+                      <div className="text-center text-xs mt-0.5 font-mono">
                         {result?.result ? (
-                          <span className="font-mono">
-                            {result.result.homeTotalScore} – {result.result.awayTotalScore}
-                          </span>
+                          <>
+                            <span className={result.result.homeTotalScore > result.result.awayTotalScore ? 'font-bold' : 'text-muted-foreground'}>{result.result.homeTotalScore}</span>
+                            <span className="text-muted-foreground mx-1">–</span>
+                            <span className={result.result.awayTotalScore > result.result.homeTotalScore ? 'font-bold' : 'text-muted-foreground'}>{result.result.awayTotalScore}</span>
+                          </>
                         ) : resolvedMatch?.result ? (
-                          <span className="font-mono text-muted-foreground">
-                            {resolvedMatch.result.homeTotalScore} – {resolvedMatch.result.awayTotalScore}
-                            <span className="ml-1 text-[10px] text-blue-400 font-semibold">✓</span>
-                          </span>
+                          <>
+                            <span className={resolvedMatch.result.homeTotalScore > resolvedMatch.result.awayTotalScore ? 'font-bold' : 'text-muted-foreground'}>{resolvedMatch.result.homeTotalScore}</span>
+                            <span className="text-muted-foreground mx-1">–</span>
+                            <span className={resolvedMatch.result.awayTotalScore > resolvedMatch.result.homeTotalScore ? 'font-bold' : 'text-muted-foreground'}>{resolvedMatch.result.awayTotalScore}</span>
+                          </>
                         ) : livePreview?.result ? (
-                          <span className="font-mono text-muted-foreground">
+                          <span className="text-muted-foreground">
                             {livePreview.result.homeTotalScore} – {livePreview.result.awayTotalScore}
                             <span className="ml-1 text-[10px] text-emerald-500 font-semibold">FT</span>
                           </span>
                         ) : isUserMatch && liveMatchActive ? (
                           <span className="text-[10px] text-primary font-semibold animate-pulse">LIVE</span>
-                        ) : (
-                          <span className="text-muted-foreground">Upcoming</span>
+                        ) : null}
+                      </div>
+
+                      <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                        <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{fixture.venue}</span>
+                        {(result?.result?.simulationContext?.attendance ?? resolvedMatch?.result?.simulationContext?.attendance ?? livePreview?.result?.simulationContext?.attendance) != null && (
+                          <span className="inline-flex items-center gap-1">
+                            <Users className="h-3 w-3" />
+                            {(result?.result?.simulationContext?.attendance ?? resolvedMatch?.result?.simulationContext?.attendance ?? livePreview?.result?.simulationContext?.attendance)!.toLocaleString()}
+                          </span>
                         )}
                       </div>
-                    </div>
 
-                    <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-                      <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{fixture.venue}</span>
-                      {(result?.result?.simulationContext?.attendance ?? resolvedMatch?.result?.simulationContext?.attendance ?? livePreview?.result?.simulationContext?.attendance) != null && (
-                        <span className="inline-flex items-center gap-1">
-                          <Users className="h-3 w-3" />
-                          {(result?.result?.simulationContext?.attendance ?? resolvedMatch?.result?.simulationContext?.attendance ?? livePreview?.result?.simulationContext?.attendance)!.toLocaleString()}
-                        </span>
-                      )}
-                    </div>
-
-                    {isCurrentRound && !roundPlayed && !isUserMatch && !liveMatchActive && !watchingSpectator && (
-                      resolvedMatch ? (
-                        <div className="mt-1.5 text-[11px] text-muted-foreground">
-                          Result locked in — will be committed when you advance the round.
-                        </div>
-                      ) : (
+                      {isCurrentRound && fixtureReached && !result?.result && !resolvedMatch && !isUserMatch && !liveMatchActive && !watchingSpectator && !isLeadershipBlocked && (
                         <div className="mt-1.5 flex gap-1.5" onClick={(e) => e.stopPropagation()}>
                           <Button
                             size="sm"
@@ -1307,202 +1152,361 @@ export function MatchDayPage() {
                             <Zap className="h-3 w-3 mr-1" />Sim
                           </Button>
                         </div>
-                      )
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
-      {selectedFixture && previewData && (
-        <div className="grid gap-4 lg:grid-cols-3">
-          <Card className="lg:col-span-2">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Swords className="h-4 w-4" />
-                Matchup Preview
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="rounded-md border p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 text-sm font-semibold">
-                    <TeamBadge club={homeClub} fallback={selectedFixture.homeClubId} size="md" />
-                    <span>{homeClub?.fullName ?? selectedFixture.homeClubId}</span>
-                  </div>
-                  <div className="text-xs text-muted-foreground">vs</div>
-                  <div className="flex items-center gap-2 text-sm font-semibold">
-                    <span>{awayClub?.fullName ?? selectedFixture.awayClubId}</span>
-                    <TeamBadge club={awayClub} fallback={selectedFixture.awayClubId} size="md" />
-                  </div>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                  <span className="inline-flex items-center gap-1"><Calendar className="h-3 w-3" />{MATCH_DAY_LABELS[selectedFixture.matchDay ?? 'Saturday-Twilight']}</span>
-                  {selectedFixture.scheduledTime ? <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" />{selectedFixture.scheduledTime}</span> : null}
-                  <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{selectedFixture.venue}</span>
-                  {selectedFixture.broadcastChannel && selectedFixture.broadcastChannel !== 'None' && (
-                    <span className={`inline-flex items-center gap-1 font-medium ${getBroadcastTierColor(selectedFixture.broadcastTier)}`}>
-                      <span
-                        className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getBroadcastChannelColor(selectedFixture.broadcastChannel)}`}
-                      >
-                        {getBroadcastChannelShort(selectedFixture.broadcastChannel)}
-                      </span>
-                      {getBroadcastTierLabel(selectedFixture.broadcastTier)} broadcast
-                    </span>
-                  )}
-                  {selectedFixtureResult?.result?.simulationContext?.attendance != null && (
-                    <span className="inline-flex items-center gap-1">
-                      <Users className="h-3 w-3" />
-                      {selectedFixtureResult.result.simulationContext.attendance.toLocaleString()}
-                      {selectedFixtureResult.result.simulationContext.capacityPct != null && (
-                        <span className="text-muted-foreground">({selectedFixtureResult.result.simulationContext.capacityPct}%)</span>
                       )}
-                    </span>
-                  )}
-                </div>
+                    </button>
+                  )
+                })}
               </div>
+            ))}
+          </CardContent>
+        </Card>
 
-              <div className="grid gap-3 md:grid-cols-2">
-                <Card>
-                  <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-1"><BarChart3 className="h-3.5 w-3.5" />Form (Last 5)</CardTitle></CardHeader>
-                  <CardContent className="text-xs space-y-2">
-                    <div className="flex justify-between"><span>{homeClub?.abbreviation}</span><span className="font-medium">{previewData.homeForm.wins}-{previewData.homeForm.losses}-{previewData.homeForm.draws}</span></div>
-                    <div className="flex justify-between"><span>{awayClub?.abbreviation}</span><span className="font-medium">{previewData.awayForm.wins}-{previewData.awayForm.losses}-{previewData.awayForm.draws}</span></div>
-                    <div className="text-muted-foreground">Trend: {previewData.homeForm.trend.join(' ') || 'N/A'} / {previewData.awayForm.trend.join(' ') || 'N/A'}</div>
-                  </CardContent>
-                </Card>
+        {/* RIGHT: Match info + Ladder (sticky) */}
+        <div className="space-y-2 lg:sticky lg:top-4 lg:self-start">
 
-                <Card>
-                  <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-1"><Trophy className="h-3.5 w-3.5" />Ladder Comparison</CardTitle></CardHeader>
-                  <CardContent className="text-xs space-y-2">
-                    <div className="flex justify-between"><span>{homeClub?.abbreviation} Rank</span><span className="font-medium">#{previewData.homeLadder?.rank ?? '-'}</span></div>
-                    <div className="flex justify-between"><span>{awayClub?.abbreviation} Rank</span><span className="font-medium">#{previewData.awayLadder?.rank ?? '-'}</span></div>
-                    <div className="flex justify-between"><span>Points</span><span className="font-medium">{previewData.homeLadder?.points ?? 0} - {previewData.awayLadder?.points ?? 0}</span></div>
-                    <div className="flex justify-between"><span>Percentage</span><span className="font-medium">{(previewData.homeLadder?.percentage ?? 0).toFixed(1)} - {(previewData.awayLadder?.percentage ?? 0).toFixed(1)}</span></div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <Card>
-                <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-1"><Target className="h-3.5 w-3.5" />Key Matchups</CardTitle></CardHeader>
-                <CardContent className="space-y-2">
-                  {previewData.keyMatchups.map((m) => (
-                    <div key={m.title} className="flex items-center justify-between rounded border px-2 py-1.5 text-xs">
-                      <div className="w-[42%]">
-                        {m.home ? `${m.home.firstName.charAt(0)}. ${m.home.lastName} (${getOverallRating(m.home)})` : 'TBD'}
-                      </div>
-                      <div className="w-[16%] text-center text-muted-foreground">{m.title}</div>
-                      <div className="w-[42%] text-right">
-                        {m.away ? `${m.away.firstName.charAt(0)}. ${m.away.lastName} (${getOverallRating(m.away)})` : 'TBD'}
-                      </div>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <Shield className="h-3.5 w-3.5" />
-                    H2H Record
-                    {isRivalryFixture && (
-                      <span className="ml-auto text-[10px] font-semibold uppercase tracking-wide rounded px-1.5 py-0.5 bg-red-500/15 text-red-600 border border-red-500/30">
-                        Rivalry Match
-                      </span>
-                    )}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2 text-xs">
-                  {allTimeH2H ? (
-                    <div className="mb-2 flex items-center gap-4">
-                      <div className="text-center">
-                        <p className="text-base font-bold">{allTimeH2H.wins0}</p>
-                        <p className="text-[10px] text-muted-foreground">{homeClub?.abbreviation}</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-base font-bold text-muted-foreground">{allTimeH2H.draws}</p>
-                        <p className="text-[10px] text-muted-foreground">D</p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-base font-bold">{allTimeH2H.wins1}</p>
-                        <p className="text-[10px] text-muted-foreground">{awayClub?.abbreviation}</p>
-                      </div>
-                      {allTimeH2H.streak && allTimeH2H.streak.length >= 2 && (
-                        <div className="ml-auto text-[10px] font-semibold text-muted-foreground">
-                          {clubs[allTimeH2H.streak.clubId]?.abbreviation} on {allTimeH2H.streak.length}-game streak
-                        </div>
-                      )}
-                    </div>
-                  ) : null}
-                  {previewData.meetings.length === 0 ? (
-                    <p className="text-muted-foreground">No previous meetings this season.</p>
-                  ) : (
-                    previewData.meetings.map((m) => {
-                      if (!m.result) return null
-                      const home = clubs[m.homeClubId]
-                      const away = clubs[m.awayClubId]
-                      const winner = m.result.homeTotalScore === m.result.awayTotalScore
-                        ? 'Draw'
-                        : m.result.homeTotalScore > m.result.awayTotalScore
-                          ? home?.abbreviation ?? m.homeClubId
-                          : away?.abbreviation ?? m.awayClubId
-                      return (
-                        <div key={m.id} className="flex items-center justify-between rounded border px-2 py-1.5">
-                          <span>Round {m.round + 1}: {home?.abbreviation} {m.result.homeTotalScore} - {m.result.awayTotalScore} {away?.abbreviation}</span>
-                          <span className="font-medium">{winner}</span>
-                        </div>
-                      )
-                    })
-                  )}
-                </CardContent>
-              </Card>
-            </CardContent>
-          </Card>
-
-          <div className="space-y-4">
+          {/* Match info panel */}
+          {selectedFixture && selectedFixtureResult?.result ? (
+            // ── Result overview ──
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Win Probability</CardTitle>
+              <CardHeader className="px-3 pt-3 pb-1">
+                <CardTitle className="text-sm text-muted-foreground font-normal uppercase tracking-wide">
+                  {round?.name ?? `Round ${displayRoundIdx + 1}`} · Result
+                </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span>{homeClub?.abbreviation}</span>
-                    <span className="font-semibold">{previewData.winProb.home}%</span>
-                  </div>
-                  <div className="h-2 rounded-full bg-muted overflow-hidden">
-                    <div className="h-full bg-primary" style={{ width: `${previewData.winProb.home}%` }} />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span>{awayClub?.abbreviation}</span>
-                    <span className="font-semibold">{previewData.winProb.away}%</span>
-                  </div>
-                  <div className="h-2 rounded-full bg-muted overflow-hidden">
-                    <div className="h-full bg-secondary" style={{ width: `${previewData.winProb.away}%` }} />
-                  </div>
-                </div>
-                <div className="rounded border p-2 text-xs text-muted-foreground">
-                  Model factors: ladder points/percentage, recent form, squad strength, and home-ground edge.
-                </div>
-                <div className="rounded border p-2 text-xs">
-                  <div className="flex justify-between"><span>{homeClub?.abbreviation} strength</span><span>{previewData.homeStrength.toFixed(1)}</span></div>
-                  <div className="flex justify-between"><span>{awayClub?.abbreviation} strength</span><span>{previewData.awayStrength.toFixed(1)}</span></div>
-                </div>
+              <CardContent className="space-y-3 px-3 pb-3 pt-0">
+                {(() => {
+                  const r = selectedFixtureResult.result!
+                  const homeWon = r.homeTotalScore > r.awayTotalScore
+                  const awayWon = r.awayTotalScore > r.homeTotalScore
+                  const quarters = r.homeScores.length
+                  return (
+                    <>
+                      {/* Score */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <div className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: homeClub?.colors.primary ?? '#666' }} />
+                            <span className={`text-sm font-semibold truncate ${homeWon ? '' : 'text-muted-foreground'}`}>{homeClub?.abbreviation ?? selectedFixture.homeClubId}</span>
+                          </div>
+                          <div className={`text-2xl font-bold tabular-nums mt-0.5 ${homeWon ? '' : 'text-muted-foreground'}`}>{r.homeTotalScore}</div>
+                        </div>
+                        <div className="text-xs text-muted-foreground font-medium shrink-0">FINAL</div>
+                        <div className="flex-1 min-w-0 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <span className={`text-sm font-semibold truncate ${awayWon ? '' : 'text-muted-foreground'}`}>{awayClub?.abbreviation ?? selectedFixture.awayClubId}</span>
+                            <div className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: awayClub?.colors.primary ?? '#666' }} />
+                          </div>
+                          <div className={`text-2xl font-bold tabular-nums mt-0.5 ${awayWon ? '' : 'text-muted-foreground'}`}>{r.awayTotalScore}</div>
+                        </div>
+                      </div>
+
+                      {/* Quarter by quarter */}
+                      {quarters > 0 && (
+                        <div className="rounded-md border overflow-hidden">
+                          <table className="w-full text-xs tabular-nums font-mono">
+                            <thead>
+                              <tr className="border-b bg-muted/40">
+                                <th className="py-1.5 pl-3 text-left text-muted-foreground font-normal" />
+                                {r.homeScores.map((_, qi) => (
+                                  <th key={qi} className="py-1.5 text-center text-muted-foreground font-normal">Q{qi + 1}</th>
+                                ))}
+                                <th className="py-1.5 text-center text-muted-foreground font-semibold">Final</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr className={homeWon ? 'font-semibold' : 'text-muted-foreground'}>
+                                <td className="py-1.5 pl-3">
+                                  <div className="flex items-center gap-1">
+                                    <div className="h-2 w-2 rounded-full" style={{ backgroundColor: homeClub?.colors.primary ?? '#666' }} />
+                                    {homeClub?.abbreviation}
+                                  </div>
+                                </td>
+                                {r.homeScores.map((q, qi) => (
+                                  <td key={qi} className="py-1.5 text-center">
+                                    {q.goals}.{q.behinds}
+                                    <span className="opacity-50 ml-0.5">({q.total})</span>
+                                  </td>
+                                ))}
+                                <td className="py-1.5 text-center font-bold" style={{ color: homeWon ? (homeClub?.colors.primary ?? 'inherit') : undefined }}>
+                                  {r.homeScores.reduce((s, q) => s + q.goals, 0)}.{r.homeScores.reduce((s, q) => s + q.behinds, 0)}
+                                  <span className="ml-0.5">({r.homeTotalScore})</span>
+                                </td>
+                              </tr>
+                              <tr className={awayWon ? 'font-semibold' : 'text-muted-foreground'}>
+                                <td className="py-1.5 pl-3">
+                                  <div className="flex items-center gap-1">
+                                    <div className="h-2 w-2 rounded-full" style={{ backgroundColor: awayClub?.colors.primary ?? '#666' }} />
+                                    {awayClub?.abbreviation}
+                                  </div>
+                                </td>
+                                {r.awayScores.map((q, qi) => (
+                                  <td key={qi} className="py-1.5 text-center">
+                                    {q.goals}.{q.behinds}
+                                    <span className="opacity-50 ml-0.5">({q.total})</span>
+                                  </td>
+                                ))}
+                                <td className="py-1.5 text-center font-bold" style={{ color: awayWon ? (awayClub?.colors.primary ?? 'inherit') : undefined }}>
+                                  {r.awayScores.reduce((s, q) => s + q.goals, 0)}.{r.awayScores.reduce((s, q) => s + q.behinds, 0)}
+                                  <span className="ml-0.5">({r.awayTotalScore})</span>
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {/* Score worm */}
+                      {r.keyEvents && r.keyEvents.length > 0 && (
+                        <ScoreWorm
+                          keyEvents={r.keyEvents}
+                          homeScores={r.homeScores}
+                          awayScores={r.awayScores}
+                          homeClubId={selectedFixture.homeClubId}
+                          homeColor={homeClub?.colors.primary ?? '#3b82f6'}
+                          awayColor={awayClub?.colors.primary ?? '#ef4444'}
+                          homeAbbr={homeClub?.abbreviation ?? 'HM'}
+                          awayAbbr={awayClub?.abbreviation ?? 'AW'}
+                          quartersCompleted={r.homeScores.length}
+                          height={110}
+                        />
+                      )}
+
+                      {/* Venue + attendance */}
+                      <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                        <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{selectedFixture.venue}</span>
+                        {r.simulationContext?.attendance != null && (
+                          <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" />{r.simulationContext.attendance.toLocaleString()}</span>
+                        )}
+                      </div>
+
+                      {/* Full box score */}
+                      <ScrollArea className="max-h-[60vh]">
+                        <PostMatchBoxScore
+                          match={selectedFixtureResult}
+                          clubs={clubs}
+                          players={players}
+                          playerClubId={playerClubId ?? ''}
+                        />
+                      </ScrollArea>
+                    </>
+                  )
+                })()}
               </CardContent>
             </Card>
+          ) : selectedFixture && previewData ? (
+            <div className="space-y-2">
+              <Card>
+                <CardHeader className="px-3 pt-3 pb-1">
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    <Swords className="h-3.5 w-3.5" />
+                    Matchup Preview
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 px-3 pb-3 pt-0">
+                  <div className="rounded-md border p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-sm font-semibold">
+                        <TeamBadge club={homeClub} fallback={selectedFixture.homeClubId} size="md" />
+                        <span>{homeClub?.fullName ?? selectedFixture.homeClubId}</span>
+                      </div>
+                      <div className="text-xs text-muted-foreground shrink-0">vs</div>
+                      <div className="flex items-center gap-1.5 text-sm font-semibold justify-end">
+                        <span>{awayClub?.fullName ?? selectedFixture.awayClubId}</span>
+                        <TeamBadge club={awayClub} fallback={selectedFixture.awayClubId} size="md" />
+                      </div>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span className="inline-flex items-center gap-1"><Calendar className="h-3 w-3" />{MATCH_DAY_LABELS[selectedFixture.matchDay ?? 'Saturday-Twilight']}</span>
+                      {selectedFixture.scheduledTime ? <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" />{selectedFixture.scheduledTime}</span> : null}
+                      <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{selectedFixture.venue}</span>
+                      {selectedFixture.broadcastChannel && selectedFixture.broadcastChannel !== 'None' && (
+                        <span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getBroadcastChannelColor(selectedFixture.broadcastChannel)}`}>
+                          {getBroadcastChannelShort(selectedFixture.broadcastChannel)}
+                        </span>
+                      )}
+                      {selectedFixtureResult?.result?.simulationContext?.attendance != null && (
+                        <span className="inline-flex items-center gap-1">
+                          <Users className="h-3 w-3" />
+                          {selectedFixtureResult.result.simulationContext.attendance.toLocaleString()}
+                          {selectedFixtureResult.result.simulationContext.capacityPct != null && (
+                            <span>({selectedFixtureResult.result.simulationContext.capacityPct}%)</span>
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  </div>
 
-            <MatchConditionsCard weather={previewData.weather} venueData={previewData.venueData} />
-          </div>
+                  <div className="grid gap-2 grid-cols-3">
+                    <Card>
+                      <CardHeader className="px-2.5 pt-2 pb-1"><CardTitle className="text-xs flex items-center gap-1"><BarChart3 className="h-3 w-3" />Form</CardTitle></CardHeader>
+                      <CardContent className="px-2.5 pb-2 pt-0 text-xs space-y-1">
+                        <div className="flex justify-between"><span>{homeClub?.abbreviation}</span><span className="font-medium">{previewData.homeForm.wins}-{previewData.homeForm.losses}-{previewData.homeForm.draws}</span></div>
+                        <div className="flex justify-between"><span>{awayClub?.abbreviation}</span><span className="font-medium">{previewData.awayForm.wins}-{previewData.awayForm.losses}-{previewData.awayForm.draws}</span></div>
+                        <div className="text-muted-foreground text-[10px]">{previewData.homeForm.trend.join('') || '–'} / {previewData.awayForm.trend.join('') || '–'}</div>
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardHeader className="px-2.5 pt-2 pb-1"><CardTitle className="text-xs flex items-center gap-1"><Trophy className="h-3 w-3" />Ladder</CardTitle></CardHeader>
+                      <CardContent className="px-2.5 pb-2 pt-0 text-xs space-y-1">
+                        <div className="flex justify-between"><span>{homeClub?.abbreviation}</span><span className="font-medium">#{previewData.homeLadder?.rank ?? '-'}</span></div>
+                        <div className="flex justify-between"><span>{awayClub?.abbreviation}</span><span className="font-medium">#{previewData.awayLadder?.rank ?? '-'}</span></div>
+                        <div className="flex justify-between text-muted-foreground text-[10px]"><span>{previewData.homeLadder?.points ?? 0}pts</span><span>{previewData.awayLadder?.points ?? 0}pts</span></div>
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardHeader className="px-2.5 pt-2 pb-1">
+                        <CardTitle className="text-xs flex items-center gap-1">
+                          <Shield className="h-3 w-3" />
+                          H2H
+                          {isRivalryFixture && <span className="ml-auto text-[10px] text-red-500">★</span>}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="px-2.5 pb-2 pt-0 text-xs">
+                        {allTimeH2H ? (
+                          <div className="flex items-center justify-around text-center">
+                            <div>
+                              <p className="text-sm font-bold">{allTimeH2H.wins0}</p>
+                              <p className="text-[10px] text-muted-foreground">{homeClub?.abbreviation}</p>
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-muted-foreground">{allTimeH2H.draws}</p>
+                              <p className="text-[10px] text-muted-foreground">D</p>
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold">{allTimeH2H.wins1}</p>
+                              <p className="text-[10px] text-muted-foreground">{awayClub?.abbreviation}</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-muted-foreground text-[10px]">No history</p>
+                        )}
+                        {allTimeH2H?.streak && allTimeH2H.streak.length >= 2 && (
+                          <p className="text-[10px] text-muted-foreground mt-1 text-center">{clubs[allTimeH2H.streak.clubId]?.abbreviation} {allTimeH2H.streak.length}-streak</p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <Card>
+                      <CardHeader className="px-2.5 pt-2 pb-1"><CardTitle className="text-xs flex items-center gap-1"><Target className="h-3 w-3" />Key Matchups</CardTitle></CardHeader>
+                      <CardContent className="px-2.5 pb-2 pt-0 space-y-1">
+                        {previewData.keyMatchups.map((m) => (
+                          <div key={m.title} className="rounded border px-2 py-1.5 space-y-0.5">
+                            <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{m.title}</div>
+                            <div className="flex items-center justify-between gap-1 text-[11px]">
+                              <div className="flex items-center gap-1 min-w-0">
+                                <div className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: homeClub?.colors.primary ?? '#666' }} />
+                                <span className="text-[9px] text-muted-foreground shrink-0">{homeClub?.abbreviation}</span>
+                                {m.home ? (
+                                  <button className="truncate font-medium hover:underline hover:text-primary transition-colors text-left" onClick={() => navigate(`/player/${m.home!.id}`)}>
+                                    {m.home.firstName.charAt(0)}. {m.home.lastName}
+                                  </button>
+                                ) : <span className="truncate">TBD</span>}
+                              </div>
+                              <span className="shrink-0 text-muted-foreground text-[10px]">{m.home ? `${m.home.position.primary} ${getOverallRating(m.home)}` : ''}</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-1 text-[11px] text-muted-foreground">
+                              <div className="flex items-center gap-1 min-w-0">
+                                <div className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: awayClub?.colors.primary ?? '#666' }} />
+                                <span className="text-[9px] shrink-0">{awayClub?.abbreviation}</span>
+                                {m.away ? (
+                                  <button className="truncate hover:underline hover:text-primary transition-colors text-left" onClick={() => navigate(`/player/${m.away!.id}`)}>
+                                    {m.away.firstName.charAt(0)}. {m.away.lastName}
+                                  </button>
+                                ) : <span className="truncate">TBD</span>}
+                              </div>
+                              <span className="shrink-0 text-[10px]">{m.away ? `${m.away.position.primary} ${getOverallRating(m.away)}` : ''}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardHeader className="px-2.5 pt-2 pb-1">
+                        <CardTitle className="text-xs flex items-center gap-1">
+                          <ShieldAlert className="h-3 w-3" />
+                          Key Injuries
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="px-2.5 pb-2 pt-0">
+                        <div className="grid grid-cols-2 gap-x-2">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1 mb-0.5">
+                              <div className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: homeClub?.colors.primary ?? '#666' }} />
+                              <span className="text-[10px] text-muted-foreground font-medium">{homeClub?.abbreviation}</span>
+                            </div>
+                            {previewData.homeInjuries.length === 0
+                              ? <p className="text-[10px] text-muted-foreground/50">None</p>
+                              : previewData.homeInjuries.map((p) => <InjuryRow key={p.id} player={p} />)
+                            }
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1 mb-0.5">
+                              <div className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: awayClub?.colors.primary ?? '#666' }} />
+                              <span className="text-[10px] text-muted-foreground font-medium">{awayClub?.abbreviation}</span>
+                            </div>
+                            {previewData.awayInjuries.length === 0
+                              ? <p className="text-[10px] text-muted-foreground/50">None</p>
+                              : previewData.awayInjuries.map((p) => <InjuryRow key={p.id} player={p} />)
+                            }
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="px-3 pt-2.5 pb-1">
+                  <CardTitle className="text-sm">Win Probability</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 px-3 pb-3 pt-0">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span>{homeClub?.abbreviation}</span>
+                      <span className="font-semibold">{previewData.winProb.home}%</span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div className="h-full bg-primary" style={{ width: `${previewData.winProb.home}%` }} />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span>{awayClub?.abbreviation}</span>
+                      <span className="font-semibold">{previewData.winProb.away}%</span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div className="h-full bg-secondary" style={{ width: `${previewData.winProb.away}%` }} />
+                    </div>
+                  </div>
+                  <div className="rounded border px-2 py-1 text-xs">
+                    <div className="flex justify-between text-muted-foreground"><span>{homeClub?.abbreviation} strength</span><span>{previewData.homeStrength.toFixed(1)}</span></div>
+                    <div className="flex justify-between text-muted-foreground"><span>{awayClub?.abbreviation} strength</span><span>{previewData.awayStrength.toFixed(1)}</span></div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <MatchConditionsCard weather={previewData.weather} venueData={previewData.venueData} />
+            </div>
+          ) : (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground text-sm gap-2">
+                <BarChart3 className="h-8 w-8 opacity-30" />
+                <p>Select a match to view details</p>
+              </CardContent>
+            </Card>
+          )}
+
         </div>
-      )}
+      </div>
 
-      {lastMatchResult?.result && (() => {
-        const matchReport = matchReports?.find((r: import('@/types/history').MatchReport) => r.matchId === lastMatchResult.id)
+      {effectiveLastMatch?.result && (() => {
+        const matchReport = matchReports?.find((r: import('@/types/history').MatchReport) => r.matchId === effectiveLastMatch.id)
         return (
           <>
             {matchReport && (
@@ -1510,7 +1514,7 @@ export function MatchDayPage() {
                 <Button variant="outline" onClick={() => setReportOpen(true)}>Read Report</Button>
               </div>
             )}
-            <MatchResultView match={lastMatchResult} clubs={clubs} players={players} playerClubId={playerClubId} />
+            <MatchResultView match={effectiveLastMatch} clubs={clubs} players={players} playerClubId={playerClubId} />
             {matchReport && (
               <MatchReportModal
                 report={matchReport}
@@ -1523,6 +1527,14 @@ export function MatchDayPage() {
           </>
         )
       })()}
+
+      <NavigationGuardDialog
+        {...navGuard}
+        title="Match In Progress"
+        description="A live match is in progress. Leaving now will abandon the match and your results will be lost."
+        confirmLabel="Abandon match"
+        cancelLabel="Return to match"
+      />
     </div>
   )
 }
@@ -1589,6 +1601,7 @@ function MatchResultView({
           )}
         </>
       )}
+
     </div>
   )
 }
@@ -1681,79 +1694,74 @@ function MatchConditionsCard({
 
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base flex items-center gap-2">
-          <WeatherIcon className={`h-4 w-4 ${wMeta.color}`} />
+      <CardHeader className="px-3 pt-2.5 pb-1">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <WeatherIcon className={`h-3.5 w-3.5 ${wMeta.color}`} />
           Match Conditions
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3 text-xs">
-        {/* Weather + Ground badges */}
-        <div className="flex flex-wrap gap-2">
-          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium ${wMeta.bg} ${wMeta.color}`}>
-            <WeatherIcon className="h-3 w-3" />
-            {wMeta.label}
-          </span>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 font-medium text-muted-foreground">
-            {gMeta.label} ground
-          </span>
-        </div>
+      <CardContent className="px-3 pb-3 pt-0 text-xs">
+        <div className="grid grid-cols-2 gap-x-4">
 
-        {/* Ground description */}
-        <p className="text-muted-foreground">{gMeta.desc}</p>
-
-        {/* Gameplay impacts from weather */}
-        <div className="space-y-1">
-          {wMeta.impacts.map((imp) => (
-            <div key={imp} className="flex items-start gap-1.5 text-muted-foreground">
-              <span className={`mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full ${wMeta.color.replace('text-', 'bg-')}`} />
-              {imp}
-            </div>
-          ))}
-        </div>
-
-        {/* Multiplier bars for non-clear weather */}
-        {weather.condition !== 'clear' && (
-          <div className="space-y-1.5 rounded border px-2.5 py-2">
-            {[
-              { label: 'Mark rate',    value: weather.markMult },
-              { label: 'Accuracy',     value: weather.accuracyMult },
-              { label: 'Kick efficiency', value: weather.kickingEfficiencyMult },
-              { label: 'Disposals',    value: weather.possessionMult },
-            ].map(({ label, value }) => {
-              const pct = Math.round((value - 1) * 100)
-              return (
-                <div key={label} className="flex items-center justify-between gap-2">
-                  <span className="text-muted-foreground w-28 shrink-0">{label}</span>
-                  <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${value < 1 ? 'bg-red-500' : 'bg-emerald-500'}`}
-                      style={{ width: `${Math.min(100, Math.abs(pct) * 5 + 5)}%`, marginLeft: value < 1 ? 'auto' : 0 }}
-                    />
-                  </div>
-                  <span className={`w-10 text-right font-mono ${pct < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-                    {pct >= 0 ? '+' : ''}{pct}%
-                  </span>
+          {/* ── Left: weather & condition ── */}
+          <div className="space-y-1.5">
+            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium ${wMeta.bg} ${wMeta.color}`}>
+              <WeatherIcon className="h-3 w-3" />
+              {wMeta.label}
+            </span>
+            <div className="space-y-0.5 text-muted-foreground">
+              {wMeta.impacts.map((imp) => (
+                <div key={imp} className="flex items-start gap-1">
+                  <span className={`mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full ${wMeta.color.replace('text-', 'bg-')}`} />
+                  <span>{imp}</span>
                 </div>
-              )
-            })}
-          </div>
-        )}
-
-        {/* Ground characteristics */}
-        {(scoringNote || kickNote || disposalNote || venueData?.dimensions) && (
-          <div className="space-y-1 rounded border px-2.5 py-2 text-muted-foreground">
-            {venueData?.dimensions && (
-              <div className="flex items-center gap-1.5">
-                <Ruler className="h-3 w-3 shrink-0" />
-                {venueData.dimensions.length}m × {venueData.dimensions.width}m
+              ))}
+            </div>
+            {weather.condition !== 'clear' && (
+              <div className="space-y-0.5">
+                {[
+                  { label: 'Mark rate', value: weather.markMult },
+                  { label: 'Accuracy',  value: weather.accuracyMult },
+                  { label: 'Kick eff.', value: weather.kickingEfficiencyMult },
+                  { label: 'Disposals', value: weather.possessionMult },
+                ].map(({ label, value }) => {
+                  const pct = Math.round((value - 1) * 100)
+                  return (
+                    <div key={label} className="flex items-center justify-between gap-1">
+                      <span className="text-muted-foreground/70">{label}</span>
+                      <span className={`font-mono font-semibold tabular-nums ${pct < 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                        {pct >= 0 ? '+' : ''}{pct}%
+                      </span>
+                    </div>
+                  )
+                })}
               </div>
             )}
-            {scoringNote  && <div className="flex items-start gap-1.5"><span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-500" />{scoringNote}</div>}
-            {kickNote     && <div className="flex items-start gap-1.5"><span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-500" />{kickNote}</div>}
-            {disposalNote && <div className="flex items-start gap-1.5"><span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-500" />{disposalNote}</div>}
           </div>
-        )}
+
+          {/* ── Right: ground & venue ── */}
+          <div className="space-y-1.5">
+            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 font-medium text-muted-foreground">
+              {gMeta.label} ground
+            </span>
+            <p className="text-muted-foreground/70">{gMeta.desc}</p>
+            {venueData?.dimensions && (
+              <div className="flex items-center gap-1 text-muted-foreground">
+                <Ruler className="h-3 w-3 shrink-0" />
+                <span>{venueData.dimensions.length}m × {venueData.dimensions.width}m</span>
+              </div>
+            )}
+            <div className="space-y-0.5 text-muted-foreground">
+              {[scoringNote, kickNote, disposalNote].filter(Boolean).map((note) => (
+                <div key={note} className="flex items-start gap-1">
+                  <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-500" />
+                  <span>{note}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+        </div>
       </CardContent>
     </Card>
   )

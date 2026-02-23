@@ -6,9 +6,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ChevronLeft, ChevronRight, ExternalLink, Eye, Zap, History, MapPin } from 'lucide-react'
 import {
-  getEventDatesInMonth,
   getEventsForDate,
   formatDate,
+  addDays,
   addMonths,
   getFirstOfMonth,
   getWeekday,
@@ -26,10 +26,9 @@ import type { WatchNavState } from '@/pages/MatchViewerPage'
 
 const TRAINING_FOCUS_LABELS: Record<TrainingFocus, string> = {
   kicking: 'Kicking', handball: 'Handball', marking: 'Marking',
-  physical: 'Physical Conditioning', contested: 'Contested Ball',
-  'game-sense': 'Game Sense', offensive: 'Offensive Play',
-  defensive: 'Defensive Skills', ruck: 'Ruck Craft', mental: 'Mental Strength',
-  'set-pieces': 'Set Pieces', 'match-fitness': 'Match Fitness',
+  physical: 'Physical', contested: 'Contested', 'game-sense': 'Game Sense',
+  offensive: 'Offensive', defensive: 'Defensive', ruck: 'Ruck Craft',
+  mental: 'Mental', 'set-pieces': 'Set Pieces', 'match-fitness': 'Match Fitness',
   recovery: 'Recovery', 'video-review': 'Video Review', rest: 'Rest',
 }
 
@@ -37,37 +36,57 @@ const DEADLINE_EVENT_TYPES = new Set<GameEventType>([
   'contract-deadline', 'trade-deadline', 'draft', 'tribunal',
 ])
 
+// Chip classes for non-match events shown inside calendar cells
+// Blue = match-related, Purple = reserves, Green = training, Orange = admin/deadlines, Amber = special, Gray = bye
+const EVENT_CHIP_CLS: Record<GameEventType, string> = {
+  match:               'bg-blue-500/25 text-blue-300',
+  'reserves-match':    'bg-purple-500/20 text-purple-300',
+  training:            'bg-green-500/20 text-green-300',
+  'preseason-friendly':'bg-blue-500/20 text-blue-300',
+  bye:                 'bg-zinc-500/20 text-zinc-400',
+  'contract-deadline': 'bg-orange-500/20 text-orange-300',
+  'trade-deadline':    'bg-orange-500/20 text-orange-300',
+  draft:               'bg-orange-500/20 text-orange-300',
+  tribunal:            'bg-orange-500/20 text-orange-300',
+  'jumper-management': 'bg-orange-500/20 text-orange-300',
+  milestone:           'bg-amber-500/20 text-amber-300',
+  'special-event':     'bg-amber-500/20 text-amber-300',
+}
+
+// Dot colors for the sidebar event list
 const EVENT_COLORS: Record<GameEventType, string> = {
-  match: 'bg-blue-500',
-  training: 'bg-green-500',
+  match:               'bg-blue-500',
+  'reserves-match':    'bg-purple-500',
+  training:            'bg-green-500',
+  'preseason-friendly':'bg-blue-500',
+  bye:                 'bg-gray-400',
   'contract-deadline': 'bg-orange-500',
-  'trade-deadline': 'bg-purple-500',
-  draft: 'bg-yellow-500',
-  'preseason-friendly': 'bg-teal-500',
-  bye: 'bg-gray-400',
-  milestone: 'bg-pink-500',
-  'special-event': 'bg-amber-500',
-  tribunal: 'bg-orange-500',
-  'jumper-management': 'bg-indigo-500',
+  'trade-deadline':    'bg-orange-500',
+  draft:               'bg-orange-500',
+  tribunal:            'bg-orange-500',
+  'jumper-management': 'bg-orange-500',
+  milestone:           'bg-amber-500',
+  'special-event':     'bg-amber-500',
 }
 
 const EVENT_LABELS: Record<GameEventType, string> = {
-  match: 'Match',
-  training: 'Training',
-  'contract-deadline': 'Contract',
-  'trade-deadline': 'Trade',
-  draft: 'Draft',
-  'preseason-friendly': 'Friendly',
-  bye: 'Bye',
-  milestone: 'Event',
-  'special-event': 'Exhibition',
-  tribunal: 'Tribunal',
-  'jumper-management': 'Jumpers',
+  match:               'Match',
+  'reserves-match':    'Reserves',
+  training:            'Training',
+  'contract-deadline': 'Contract Deadline',
+  'trade-deadline':    'Trade Deadline',
+  draft:               'Draft',
+  'preseason-friendly':'Friendly',
+  bye:                 'Bye',
+  milestone:           'Milestone',
+  'special-event':     'Special Event',
+  tribunal:            'Tribunal',
+  'jumper-management': 'Jumper Management',
 }
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-function eventNavLink(type: GameEventType, _data?: Record<string, unknown>): string | null {
+function eventNavLink(type: GameEventType): string | null {
   if (type === 'match') return '/match'
   if (type === 'special-event') return '/calendar'
   if (type === 'contract-deadline') return '/contracts'
@@ -78,7 +97,18 @@ function eventNavLink(type: GameEventType, _data?: Record<string, unknown>): str
   return null
 }
 
-const UPCOMING_EXCLUDED_TYPES = new Set<GameEventType>(['training'])
+const UPCOMING_EXCLUDED_TYPES = new Set<GameEventType>(['training']) // calendar.events training is replaced by planSessionMap
+
+function parseScheduledTime(t: string | undefined): number {
+  if (!t) return 9999
+  const m = t.match(/(\d+):(\d+)(am|pm)/i)
+  if (!m) return 9999
+  let h = parseInt(m[1])
+  const min = parseInt(m[2])
+  if (m[3].toLowerCase() === 'pm' && h !== 12) h += 12
+  if (m[3].toLowerCase() === 'am' && h === 12) h = 0
+  return h * 60 + min
+}
 
 // ---------------------------------------------------------------------------
 // Fixture Card
@@ -88,6 +118,7 @@ interface FixtureCardProps {
   homeClubId: string
   awayClubId: string
   venue: string
+  scheduledTime?: string
   isUserMatch: boolean
   isPast: boolean
   clubs: Record<string, { name: string; abbreviation: string; colors: { primary: string } }>
@@ -97,7 +128,7 @@ interface FixtureCardProps {
 }
 
 function FixtureCard({
-  homeClubId, awayClubId, venue,
+  homeClubId, awayClubId, venue, scheduledTime,
   isUserMatch, isPast, clubs,
   onWatch, onQuickSim, onReview,
 }: FixtureCardProps) {
@@ -122,6 +153,9 @@ function FixtureCard({
       <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
         <MapPin className="h-3 w-3 shrink-0" />
         <span className="truncate flex-1">{venue}</span>
+        {scheduledTime && (
+          <span className="font-mono tabular-nums shrink-0">{scheduledTime}</span>
+        )}
         {isUserMatch && <Badge variant="outline" className="text-[9px]">Your Match</Badge>}
       </div>
       {isPast ? (
@@ -188,18 +222,33 @@ export function CalendarPage() {
     return map
   }, [trainingWeekPlan])
 
-  const eventDots = useMemo(() => {
-    const dots = getEventDatesInMonth(calendar, viewYear, viewMonth)
-    for (const dateStr of planSessionMap.keys()) {
-      const d = new Date(dateStr + 'T00:00:00')
-      if (d.getMonth() === viewMonth && d.getFullYear() === viewYear) {
-        const day = d.getDate()
-        const existing = dots.get(day) ?? []
-        if (!existing.includes('training')) dots.set(day, [...existing, 'training'])
+  // All calendar events keyed by date
+  const dayEventsMap = useMemo(() => {
+    const map = new Map<string, typeof calendar.events>()
+    for (const evt of calendar.events) {
+      if (!map.has(evt.date)) map.set(evt.date, [])
+      map.get(evt.date)!.push(evt)
+    }
+    return map
+  }, [calendar.events])
+
+  // All season fixtures keyed by ISO date string
+  const fixturesByDate = useMemo(() => {
+    type Fixture = typeof season.rounds[0]['fixtures'][0]
+    const map = new Map<string, Array<{ fixture: Fixture; roundIdx: number; idx: number }>>()
+    if (!season || !settings.seasonStartDate) return map
+    for (let ri = 0; ri < season.rounds.length; ri++) {
+      const round = season.rounds[ri]
+      if (!round) continue
+      for (let idx = 0; idx < round.fixtures.length; idx++) {
+        const fixture = round.fixtures[idx]
+        const date = getFixtureDateIso(settings.seasonStartDate, ri, fixture.matchDay)
+        if (!map.has(date)) map.set(date, [])
+        map.get(date)!.push({ fixture, roundIdx: ri, idx })
       }
     }
-    return dots
-  }, [calendar, viewYear, viewMonth, planSessionMap])
+    return map
+  }, [season, settings.seasonStartDate])
 
   const selectedEvents = useMemo(() => {
     if (!selectedDate) return []
@@ -220,14 +269,27 @@ export function CalendarPage() {
     return [...nonTraining, ...planEvents]
   }, [calendar, selectedDate, planSessionMap])
 
-  const upcoming = useMemo(
-    () => calendar.events
-      .filter((e) => !e.resolved && !UPCOMING_EXCLUDED_TYPES.has(e.type))
-      .slice(0, 12),
-    [calendar],
-  )
+  const upcoming = useMemo(() => {
+    const calEvents = calendar.events.filter((e) => !e.resolved && !UPCOMING_EXCLUDED_TYPES.has(e.type))
 
-  // Season start date (directly on settings)
+    // Build upcoming training entries from the weekly plan
+    const trainingItems = Array.from(planSessionMap.entries())
+      .filter(([date]) => date >= currentDate)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, sessions]) => ({
+        id: `plan-training-${date}`,
+        date,
+        type: 'training' as GameEventType,
+        title: sessions.map((s) => TRAINING_FOCUS_LABELS[s.focus]).join(' · '),
+        resolved: false as const,
+        data: undefined,
+      }))
+
+    return [...calEvents, ...trainingItems]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(0, 14)
+  }, [calendar, planSessionMap, currentDate])
+
   const seasonStartDate = settings.seasonStartDate ?? ''
 
   // Today's fixtures (current round, on currentDate)
@@ -265,7 +327,7 @@ export function CalendarPage() {
         if (played) results.push({ fixture, roundIdx: ri, idx, matchId: played.id })
       })
     }
-    return results
+    return results.sort((a, b) => parseScheduledTime(a.fixture.scheduledTime) - parseScheduledTime(b.fixture.scheduledTime))
   }, [selectedDate, currentDate, season, seasonStartDate, matchResults])
 
   const calendarGrid = useMemo(() => {
@@ -326,6 +388,68 @@ export function CalendarPage() {
     setQuickSimDone(true)
   }
 
+  // Build the event chips shown inside each day cell
+  type DayChip = { label: string; cls: string }
+
+  function getDayChips(dateStr: string): DayChip[] {
+    const chips: DayChip[] = []
+    const dayFixtures = fixturesByDate.get(dateStr) ?? []
+    const dayEvents   = dayEventsMap.get(dateStr) ?? []
+
+    // --- Fixtures / round ---
+    if (dayFixtures.length > 0) {
+      const roundNum = dayFixtures[0].roundIdx + 1
+      const userFix  = dayFixtures.find(
+        (f) => f.fixture.homeClubId === playerClubId || f.fixture.awayClubId === playerClubId,
+      )
+      if (userFix) {
+        const isHome = userFix.fixture.homeClubId === playerClubId
+        const oppId  = isHome ? userFix.fixture.awayClubId : userFix.fixture.homeClubId
+        const opp    = clubs[oppId]?.abbreviation ?? '???'
+        chips.push({ label: `R${roundNum} vs ${opp} (${isHome ? 'H' : 'A'})`, cls: 'bg-primary/90 text-primary-foreground font-semibold' })
+        const others = dayFixtures.length - 1
+        if (others > 0) {
+          chips.push({ label: `+${others} other games`, cls: 'bg-muted/60 text-muted-foreground' })
+        }
+      } else {
+        chips.push({ label: `Round ${roundNum}`, cls: 'bg-blue-500/20 text-blue-300' })
+        chips.push({ label: `${dayFixtures.length} games`, cls: 'bg-muted/50 text-muted-foreground' })
+      }
+    }
+
+    // --- Non-match calendar events ---
+    for (const evt of dayEvents) {
+      if (evt.type === 'match') continue
+      if (evt.type === 'training') continue // handled below
+      const cls = EVENT_CHIP_CLS[evt.type]
+      // Use a short label for the cell
+      const label =
+        evt.type === 'bye'              ? 'Bye Week' :
+        evt.type === 'special-event'    ? (evt.title.length > 20 ? evt.title.slice(0, 18) + '…' : evt.title) :
+        evt.type === 'milestone'        ? (evt.title.length > 20 ? evt.title.slice(0, 18) + '…' : evt.title) :
+        EVENT_LABELS[evt.type]
+      chips.push({ label, cls })
+    }
+
+    // --- Training: prefer plan sessions, fall back to Tue/Thu during the season ---
+    const sessions = planSessionMap.get(dateStr)
+    if (sessions && sessions.length > 0) {
+      const focus = sessions[0].focus
+      chips.push({ label: TRAINING_FOCUS_LABELS[focus], cls: EVENT_CHIP_CLS.training })
+    } else if (chips.length === 0 && seasonStartDate && season) {
+      // Show generic training on Tue (2) and Thu (4) within the regular season
+      const dow = new Date(dateStr + 'T00:00:00').getDay()
+      const isTuOrThu = dow === 2 || dow === 4
+      const seasonEndDate = addDays(seasonStartDate, (season.rounds.length + 2) * 7)
+      const inSeason = dateStr >= seasonStartDate && dateStr <= seasonEndDate
+      if (isTuOrThu && inSeason) {
+        chips.push({ label: 'Training', cls: EVENT_CHIP_CLS.training })
+      }
+    }
+
+    return chips
+  }
+
   return (
     <div className="space-y-4">
       <div>
@@ -351,6 +475,7 @@ export function CalendarPage() {
                 homeClubId={fixture.homeClubId}
                 awayClubId={fixture.awayClubId}
                 venue={fixture.venue}
+                scheduledTime={fixture.scheduledTime}
                 isUserMatch={fixture.homeClubId === playerClubId || fixture.awayClubId === playerClubId}
                 isPast={false}
                 clubs={clubs}
@@ -394,58 +519,58 @@ export function CalendarPage() {
             </div>
 
             {/* Calendar grid */}
-            <div className="grid grid-cols-7">
+            <div className="grid grid-cols-7 border-l border-t">
               {calendarGrid.map((day, i) => {
                 if (day === null) {
-                  return <div key={`empty-${i}`} className="h-14 border-t" />
+                  return <div key={`empty-${i}`} className="min-h-[88px] border-r border-b bg-muted/10" />
                 }
 
                 const dateStr    = makeDateStr(day)
-                const dots       = eventDots.get(day) ?? []
                 const isToday    = day === currentDay
                 const isSelected = dateStr === selectedDate
                 const isPast     = dateStr < currentDate
+                const chips      = getDayChips(dateStr)
+                const visible    = chips.slice(0, 3)
+                const overflow   = chips.length - 3
 
                 return (
                   <button
                     key={day}
-                    className={`h-14 border-t px-1 pt-1 text-left transition-colors hover:bg-accent/50 ${
-                      isSelected ? 'bg-accent' : ''
-                    } ${isPast ? 'opacity-50' : ''}`}
+                    className={`min-h-[88px] border-r border-b px-1.5 pt-1.5 pb-1 text-left transition-colors hover:bg-accent/40 flex flex-col gap-1 ${
+                      isSelected ? 'bg-accent/60' : ''
+                    } ${isPast ? 'opacity-55' : ''}`}
                     onClick={() => setSelectedDate(dateStr)}
                   >
+                    {/* Day number */}
                     <span
-                      className={`text-xs font-medium ${
+                      className={`text-xs font-medium leading-none self-start ${
                         isToday
-                          ? 'bg-primary text-primary-foreground rounded-full px-1.5 py-0.5'
-                          : ''
+                          ? 'bg-primary text-primary-foreground rounded-full px-1.5 py-1'
+                          : 'text-foreground'
                       }`}
                     >
                       {day}
                     </span>
-                    {dots.length > 0 && (
-                      <div className="flex gap-0.5 mt-0.5 flex-wrap">
-                        {dots.map((type) => (
-                          <div
-                            key={type}
-                            className={`h-1.5 w-1.5 rounded-full ${EVENT_COLORS[type]}`}
-                          />
-                        ))}
-                      </div>
-                    )}
+
+                    {/* Event chips */}
+                    <div className="flex flex-col gap-0.5 w-full">
+                      {visible.map((chip, ci) => (
+                        <span
+                          key={ci}
+                          className={`rounded px-1 py-0.5 text-[9px] leading-tight truncate block ${chip.cls}`}
+                        >
+                          {chip.label}
+                        </span>
+                      ))}
+                      {overflow > 0 && (
+                        <span className="text-[9px] text-muted-foreground pl-0.5">
+                          +{overflow} more
+                        </span>
+                      )}
+                    </div>
                   </button>
                 )
               })}
-            </div>
-
-            {/* Legend */}
-            <div className="flex flex-wrap gap-3 mt-3 text-xs text-muted-foreground">
-              {Object.entries(EVENT_COLORS).map(([type, color]) => (
-                <div key={type} className="flex items-center gap-1">
-                  <div className={`h-2 w-2 rounded-full ${color}`} />
-                  <span>{EVENT_LABELS[type as GameEventType]}</span>
-                </div>
-              ))}
             </div>
           </CardContent>
         </Card>
@@ -457,35 +582,62 @@ export function CalendarPage() {
               <CardHeader className="py-3">
                 <CardTitle className="text-sm">{formatDate(selectedDate)}</CardTitle>
               </CardHeader>
-              <CardContent>
-                {/* Past match review cards */}
-                {selectedDatePastFixtures.length > 0 && (
-                  <div className="space-y-2 mb-3">
-                    <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      Matches Played
+              <CardContent className="space-y-3">
+                {/* All fixtures on that date (future or past) */}
+                {(() => {
+                  const dayFix = [...(fixturesByDate.get(selectedDate) ?? [])].sort(
+                    (a, b) => parseScheduledTime(a.fixture.scheduledTime) - parseScheduledTime(b.fixture.scheduledTime),
+                  )
+                  if (dayFix.length === 0) return null
+                  const isPast = selectedDate < currentDate
+                  return (
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        {isPast ? 'Matches Played' : `Round ${dayFix[0].roundIdx + 1} Fixtures`}
+                      </p>
+                      {isPast ? (
+                        selectedDatePastFixtures.map(({ fixture, roundIdx, idx, matchId }) => (
+                          <FixtureCard
+                            key={matchId}
+                            homeClubId={fixture.homeClubId}
+                            awayClubId={fixture.awayClubId}
+                            venue={fixture.venue}
+                            scheduledTime={fixture.scheduledTime}
+                            isUserMatch={fixture.homeClubId === playerClubId || fixture.awayClubId === playerClubId}
+                            isPast={true}
+                            clubs={clubs}
+                            onWatch={() => handleReview(roundIdx, fixture, idx, matchId)}
+                            onReview={() => handleReview(roundIdx, fixture, idx, matchId)}
+                          />
+                        ))
+                      ) : (
+                        dayFix.map(({ fixture, roundIdx, idx }) => {
+                          const isUserMatch = fixture.homeClubId === playerClubId || fixture.awayClubId === playerClubId
+                          return (
+                            <FixtureCard
+                              key={`${fixture.homeClubId}-${fixture.awayClubId}`}
+                              homeClubId={fixture.homeClubId}
+                              awayClubId={fixture.awayClubId}
+                              venue={fixture.venue}
+                              scheduledTime={fixture.scheduledTime}
+                              isUserMatch={isUserMatch}
+                              isPast={false}
+                              clubs={clubs}
+                              onWatch={() => handleWatch(roundIdx, fixture, idx)}
+                              onQuickSim={isUserMatch ? handleQuickSim : undefined}
+                            />
+                          )
+                        })
+                      )}
                     </div>
-                    {selectedDatePastFixtures.map(({ fixture, roundIdx, idx, matchId }) => (
-                      <FixtureCard
-                        key={matchId}
-                        homeClubId={fixture.homeClubId}
-                        awayClubId={fixture.awayClubId}
-                        venue={fixture.venue}
-                        isUserMatch={false}
-                        isPast={true}
-                        clubs={clubs}
-                        onWatch={() => handleReview(roundIdx, fixture, idx, matchId)}
-                        onReview={() => handleReview(roundIdx, fixture, idx, matchId)}
-                      />
-                    ))}
-                  </div>
-                )}
+                  )
+                })()}
 
-                {selectedEvents.length === 0 && selectedDatePastFixtures.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No events on this day.</p>
-                ) : selectedEvents.length > 0 ? (
-                  <div className="space-y-3">
-                    {selectedEvents.map((evt) => {
-                      const link = !evt.resolved ? eventNavLink(evt.type, evt.data) : null
+                {/* Non-match calendar events */}
+                {selectedEvents.filter((e) => e.type !== 'match').length > 0 && (
+                  <div className="space-y-2">
+                    {selectedEvents.filter((e) => e.type !== 'match').map((evt) => {
+                      const link = !evt.resolved ? eventNavLink(evt.type) : null
                       return (
                         <div key={evt.id} className="flex items-start gap-2">
                           <div className={`h-2 w-2 rounded-full mt-1.5 flex-shrink-0 ${EVENT_COLORS[evt.type]}`} />
@@ -494,11 +646,8 @@ export function CalendarPage() {
                             {evt.description && (
                               <p className="text-xs text-muted-foreground">{evt.description}</p>
                             )}
-                            <div className="flex items-center gap-2 mt-1">
-                              <Badge
-                                variant={evt.resolved ? 'secondary' : 'outline'}
-                                className="text-[10px]"
-                              >
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <Badge variant={evt.resolved ? 'secondary' : 'outline'} className="text-[10px]">
                                 {evt.resolved ? 'Completed' : 'Upcoming'}
                               </Badge>
                               {link && (
@@ -506,8 +655,7 @@ export function CalendarPage() {
                                   to={link}
                                   className="text-[10px] text-primary flex items-center gap-0.5 hover:underline"
                                 >
-                                  {evt.type === 'match' ? 'Play Match' : evt.type === 'special-event' ? 'View Event' : 'Go'}
-                                  <ExternalLink className="h-2.5 w-2.5" />
+                                  Go <ExternalLink className="h-2.5 w-2.5" />
                                 </Link>
                               )}
                             </div>
@@ -516,7 +664,13 @@ export function CalendarPage() {
                       )
                     })}
                   </div>
-                ) : null}
+                )}
+
+                {/* Empty state */}
+                {(fixturesByDate.get(selectedDate) ?? []).length === 0 &&
+                  selectedEvents.length === 0 && (
+                  <p className="text-sm text-muted-foreground">No events on this day.</p>
+                )}
               </CardContent>
             </Card>
           )}
@@ -537,7 +691,7 @@ export function CalendarPage() {
                     const urgency    = isDeadline
                       ? daysUntil <= 2 ? 'urgent' : daysUntil <= 7 ? 'warning' : null
                       : null
-                    const link = eventNavLink(evt.type, evt.data)
+                    const link = eventNavLink(evt.type)
                     return (
                       <div key={evt.id} className="flex items-start gap-2">
                         <div className={`h-2 w-2 rounded-full mt-1.5 flex-shrink-0 ${EVENT_COLORS[evt.type]}`} />

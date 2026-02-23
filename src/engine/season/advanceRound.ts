@@ -49,6 +49,10 @@ interface SimRoundInput {
    * Values < 1 reduce effective team rating during the adjustment period.
    */
   leadershipDisruptionMultByClub?: Record<string, number>
+  /** Per-venue roof overrides from game settings. venueId → hasRoof. */
+  venueRoofOverrides?: Record<string, boolean>
+  /** Custom stadiums from settings — used to resolve roof status for user-created venues. */
+  customStadiums?: Array<{ name: string; hasRoof?: boolean }>
 }
 
 export interface SimRoundResult {
@@ -146,11 +150,13 @@ export function simulateRound(input: SimRoundInput): SimRoundResult {
       playerClubId: (fixture.homeClubId === input.playerClubId || fixture.awayClubId === input.playerClubId)
         ? input.playerClubId
         : undefined,
+      venueRoofOverrides: input.venueRoofOverrides,
+      customStadiums: input.customStadiums,
     })
   })
 
   const userMatch = matches.find(
-    (m) => m.homeClubId === playerClubId || m.awayClubId === playerClubId
+    (m) => m !== null && (m.homeClubId === playerClubId || m.awayClubId === playerClubId)
   ) ?? null
 
   return { matches, userMatch }

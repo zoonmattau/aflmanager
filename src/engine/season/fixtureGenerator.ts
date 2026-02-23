@@ -850,6 +850,8 @@ const MATCH_SLOTS: { day: MatchDay; time: string }[] = [
 ]
 
 const DAY_ORDER: Record<MatchDay, number> = {
+  Tuesday: -2,
+  Wednesday: -1,
   Thursday: 0,
   Friday: 1,
   'Saturday-Early': 2,
@@ -1168,6 +1170,8 @@ function pickRoundSlots(
   if (slots.length === 0) return []
 
   const usage: Record<MatchDay, number> = {
+    Tuesday: fixedDayUsage?.Tuesday ?? 0,
+    Wednesday: fixedDayUsage?.Wednesday ?? 0,
     Thursday: fixedDayUsage?.Thursday ?? 0,
     Friday: fixedDayUsage?.Friday ?? 0,
     'Saturday-Early': fixedDayUsage?.['Saturday-Early'] ?? 0,
@@ -1195,6 +1199,8 @@ function pickRoundSlots(
   const plannedDays = filteredTemplate.slice(0, matchCount)
 
   const byDay: Record<MatchDay, { day: MatchDay; time: string }[]> = {
+    Tuesday: [],
+    Wednesday: [],
     Thursday: [],
     Friday: [],
     'Saturday-Early': [],
@@ -1212,6 +1218,8 @@ function pickRoundSlots(
   }
 
   const dayOffsets: Record<MatchDay, number> = {
+    Tuesday: byDay.Tuesday.length > 0 ? rng.nextInt(0, byDay.Tuesday.length - 1) : 0,
+    Wednesday: byDay.Wednesday.length > 0 ? rng.nextInt(0, byDay.Wednesday.length - 1) : 0,
     Thursday: byDay.Thursday.length > 0 ? rng.nextInt(0, byDay.Thursday.length - 1) : 0,
     Friday: byDay.Friday.length > 0 ? rng.nextInt(0, byDay.Friday.length - 1) : 0,
     'Saturday-Early': byDay['Saturday-Early'].length > 0 ? rng.nextInt(0, byDay['Saturday-Early'].length - 1) : 0,

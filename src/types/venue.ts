@@ -22,6 +22,10 @@ export interface Venue {
   revenueMultiplier: number
   hgaBonus: number
   isNeutral: boolean
+  /** True for covered/roofed stadiums. Prevents wet and windy weather during matches. */
+  hasRoof?: boolean
+  /** Named ends of the ground, e.g. ['Punt Road End', 'Members End']. ends[0] = home/traditional end. */
+  ends: [string, string]
   /** Multiplier applied to goal accuracy (0.7–1.3). >1.0 = high-scoring ground. */
   scoringCoefficient: number
   /** >1.0 = kick-dominant ground, <1.0 = handball-heavy. Affects possession style and stat ratios. */

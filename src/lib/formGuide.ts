@@ -4,8 +4,12 @@ export interface PlayerGameEntry {
   matchId: string
   round: number
   isFinal: boolean
+  finalType?: string
   opponentClubId: string
   playerClubId: string
+  isHome: boolean
+  playerScore: number
+  opponentScore: number
   /** true = won, false = lost, null = draw */
   won: boolean | null
   stats: MatchPlayerStats
@@ -33,13 +37,13 @@ export function getPlayerRecentGames(
     let opponentClubId!: string
 
     const homeStat = result.homePlayerStats.find((s) => s.playerId === playerId)
-    if (homeStat?.participated) {
+    if (homeStat && (homeStat.participated || homeStat.disposals > 0 || homeStat.minutesPlayed > 0)) {
       stats = homeStat
       playerClubId = match.homeClubId
       opponentClubId = match.awayClubId
     } else {
       const awayStat = result.awayPlayerStats.find((s) => s.playerId === playerId)
-      if (awayStat?.participated) {
+      if (awayStat && (awayStat.participated || awayStat.disposals > 0 || awayStat.minutesPlayed > 0)) {
         stats = awayStat
         playerClubId = match.awayClubId
         opponentClubId = match.homeClubId
@@ -58,8 +62,12 @@ export function getPlayerRecentGames(
       matchId: match.id,
       round: match.round,
       isFinal: match.isFinal,
+      finalType: match.finalType,
       opponentClubId,
       playerClubId,
+      isHome: playerWasHome,
+      playerScore,
+      opponentScore: oppScore,
       won: playerScore > oppScore ? true : playerScore < oppScore ? false : null,
       stats,
     })

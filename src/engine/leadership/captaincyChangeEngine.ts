@@ -9,7 +9,7 @@
  */
 
 import type { Player } from '@/types/player'
-import type { Club, ClubLeadership } from '@/types/club'
+import type { Club } from '@/types/club'
 import type { SeededRNG } from '@/engine/core/rng'
 import { getLeadershipScore } from '@/engine/leadership/leadershipEngine'
 

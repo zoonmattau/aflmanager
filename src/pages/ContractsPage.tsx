@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
 import type { Player, PlayerPositionType } from '@/types/player'
 import type { NegotiationOffer, ContractStructure, ActiveNegotiation, ContractClause } from '@/types/contract'
@@ -50,8 +51,10 @@ import {
 import { getInjuryRiskLevel, injuryRiskDisplay, getDurabilityRating, durabilityRatingColor, getTotalGamesMissed } from '@/lib/injuryRisk'
 import { diffDays } from '@/engine/calendar/calendarEngine'
 import { calculatePlayerValue } from '@/engine/contracts/negotiation'
+import { getOverallRating, getPlayerStarRating } from '@/engine/player/playerRating'
+import { PlayerStarRating } from '@/components/player/PlayerStarRating'
 import { buildYearByYearFromStructure, calculateIncentiveValue } from '@/engine/contracts/contractStructures'
-import { ShortlistManager } from '@/components/shortlists/ShortlistManager'
+import { ShortlistManager, ShortlistAssignMenu } from '@/components/shortlists/ShortlistManager'
 import { PlayerHoverCard } from '@/components/player/PlayerHoverCard'
 import { isAflListedPlayer } from '@/engine/players/contracts'
 import type { BoardApprovalResult } from '@/types/boardApproval'
@@ -99,9 +102,11 @@ function moodBadge(mood: ActiveNegotiation['playerMood']) {
 function NegotiationDialog({
   open,
   onOpenChange,
+  initialPlayerId,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  initialPlayerId?: string
 }) {
   const playerClubId = useGameStore((s) => s.playerClubId)
   const phase = useGameStore((s) => s.phase)
@@ -113,7 +118,7 @@ function NegotiationDialog({
   const withdrawContractNegotiation = useGameStore((s) => s.withdrawContractNegotiation)
   const previewBoardApproval = useGameStore((s) => s.previewBoardApproval)
 
-  const [selectedPlayerId, setSelectedPlayerId] = useState<string>('')
+  const [selectedPlayerId, setSelectedPlayerId] = useState<string>(initialPlayerId ?? '')
   const [activeNegId, setActiveNegId] = useState<string | null>(null)
   const [years, setYears] = useState(3)
   const [aavInput, setAavInput] = useState('')
@@ -1325,6 +1330,111 @@ function ActiveNegotiationsPanel() {
 }
 
 // ---------------------------------------------------------------------------
+// Expiring Contracts Panel
+// ---------------------------------------------------------------------------
+
+function ExpiringContractsPanel({
+  clubPlayers,
+  onNegotiate,
+}: {
+  clubPlayers: Player[]
+  onNegotiate: (playerId: string) => void
+}) {
+  const navigate = useNavigate()
+  const expiring = useMemo(
+    () =>
+      clubPlayers
+        .filter((p) => p.contract.yearsRemaining <= 2)
+        .sort((a, b) => a.contract.yearsRemaining - b.contract.yearsRemaining || a.lastName.localeCompare(b.lastName)),
+    [clubPlayers],
+  )
+
+  if (expiring.length === 0) return null
+
+  function urgencyConfig(years: number) {
+    if (years === 0) return { label: 'Out of contract', rowClass: 'bg-red-500/5', badgeClass: 'text-red-600 dark:text-red-400 font-semibold' }
+    if (years === 1) return { label: 'Final year', rowClass: 'bg-amber-500/5', badgeClass: 'text-amber-600 dark:text-amber-400 font-semibold' }
+    return { label: '2 yrs', rowClass: '', badgeClass: 'text-muted-foreground' }
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <AlertTriangle className="h-4 w-4 text-amber-500" />
+          Expiring Contracts
+          <Badge variant="secondary" className="ml-1">{expiring.length}</Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="pl-4">Player</TableHead>
+              <TableHead>Pos</TableHead>
+              <TableHead>Age</TableHead>
+              <TableHead>Overall</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right">Current AAV</TableHead>
+              <TableHead className="text-right">Market Value</TableHead>
+              <TableHead className="pr-4" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {expiring.map((player) => {
+              const { label, rowClass, badgeClass } = urgencyConfig(player.contract.yearsRemaining)
+              const marketValue = calculatePlayerValue(player)
+              const overMarket = player.contract.aav > marketValue * 1.1
+              const overall = getOverallRating(player)
+              const stars = getPlayerStarRating(player, overall)
+              return (
+                <TableRow key={player.id} className={rowClass}>
+                  <TableCell className="pl-4">
+                    <div className="flex items-center gap-2">
+                      <PlayerHoverCard player={player} side="right">
+                        <button
+                          className="font-medium text-sm hover:underline text-left"
+                          onClick={() => navigate(`/players/${player.id}`)}
+                        >
+                          {player.firstName} {player.lastName}
+                        </button>
+                      </PlayerHoverCard>
+                      {player.tradeRequest?.active && (
+                        <Badge variant="outline" className="text-orange-500 border-orange-500/30 text-[10px]">Trade Req</Badge>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{player.position.primary}</TableCell>
+                  <TableCell className="text-xs">{player.age}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1.5">
+                      <PlayerStarRating stars={stars} player={player} overall={overall} showPotentialOverlay={false} />
+                      <span className="text-xs text-muted-foreground">{overall}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <span className={`text-xs ${badgeClass}`}>{label}</span>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <span className={`text-xs ${overMarket ? 'text-red-500' : ''}`}>{formatDollars(player.contract.aav)}</span>
+                  </TableCell>
+                  <TableCell className="text-right text-xs text-muted-foreground">{formatDollars(marketValue)}</TableCell>
+                  <TableCell className="pr-4 text-right">
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => onNegotiate(player.id)}>
+                      Negotiate
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Main Page Component
 // ---------------------------------------------------------------------------
 
@@ -1341,6 +1451,12 @@ export function ContractsPage() {
   const [offerOpen, setOfferOpen] = useState(false)
   const [delistOpen, setDelistOpen] = useState(false)
   const [rookieOpen, setRookieOpen] = useState(false)
+  const [negotiateForPlayerId, setNegotiateForPlayerId] = useState<string | undefined>()
+
+  const handleNegotiateForPlayer = (playerId: string) => {
+    setNegotiateForPlayerId(playerId)
+    setOfferOpen(true)
+  }
 
   const club = clubs[playerClubId]
 
@@ -1517,6 +1633,9 @@ export function ContractsPage() {
         </Card>
       </div>
 
+      {/* Expiring Contracts */}
+      <ExpiringContractsPanel clubPlayers={clubPlayers} onNegotiate={handleNegotiateForPlayer} />
+
       {/* RFA Matching Rights */}
       {pendingRFARights.length > 0 && (
         <Card className="border-amber-500/40">
@@ -1605,7 +1724,12 @@ export function ContractsPage() {
       )}
 
       {/* Dialogs */}
-      <NegotiationDialog open={offerOpen} onOpenChange={setOfferOpen} />
+      <NegotiationDialog
+        key={negotiateForPlayerId ?? '__none'}
+        open={offerOpen}
+        onOpenChange={(v) => { setOfferOpen(v); if (!v) setNegotiateForPlayerId(undefined) }}
+        initialPlayerId={negotiateForPlayerId}
+      />
       <DelistDialog open={delistOpen} onOpenChange={setDelistOpen} />
       <RookieUpgradeDialog open={rookieOpen} onOpenChange={setRookieOpen} />
     </div>

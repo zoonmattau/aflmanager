@@ -44,11 +44,12 @@ export const navGroups: NavGroup[] = [
     label: 'Team',
     icon: Users,
     defaultTo: '/squad',
-    matchPaths: ['/squad', '/lineup', '/gameplan', '/training', '/injury-report', '/jumper-management', '/compare', '/leadership', '/preseason-leadership'],
+    matchPaths: ['/squad', '/lineup', '/gameplan', '/training', '/injury-report', '/jumper-management', '/compare', '/leadership', '/preseason-leadership', '/team-selection'],
     items: [
       { to: '/squad', label: 'Squad' },
       { to: '/leadership', label: 'Leadership', requiresOwnClub: true, badge: true },
       { to: '/lineup', label: 'Lineup' },
+      { to: '/team-selection', label: 'Team Selection', requiresOwnClub: true },
       { to: '/gameplan', label: 'Gameplan', requiresOwnClub: true },
       { to: '/training', label: 'Training', requiresOwnClub: true },
       { to: '/injury-report', label: 'Injuries' },

@@ -94,28 +94,30 @@ export interface ScoreWormProps {
   homeAbbr: string
   awayAbbr: string
   quartersCompleted: number
+  height?: number
 }
 
 export function ScoreWorm({
   keyEvents, homeScores, awayScores, homeClubId,
   homeColor, awayColor, homeAbbr, awayAbbr, quartersCompleted,
+  height = 150,
 }: ScoreWormProps) {
   const data = buildWormData(keyEvents, homeClubId, homeScores, awayScores)
 
   const margins = data.map((d) => d.margin)
   const absMax = Math.max(...margins.map(Math.abs), 6)
-  const pad    = Math.ceil(absMax * 0.2)
-  const yDomain: [number, number] = [-(absMax + pad), absMax + pad]
+  const lastMargin = margins[margins.length - 1] ?? 0
+  const wormColor = lastMargin > 0 ? homeColor : lastMargin < 0 ? awayColor : '#9ca3af'
+
+  // Build an explicit symmetric domain so 0 is always centred and + / - are equal
+  const tickStep = absMax <= 18 ? 6 : absMax <= 60 ? 12 : 24
+  const bound = (Math.floor(absMax / tickStep) + 1) * tickStep
+  const yDomain: [number, number] = [-bound, bound]
+  const yTicks: number[] = []
+  for (let v = -bound; v <= bound; v += tickStep) yTicks.push(v)
+
   const maxTime = quartersCompleted * 30
   const xTicks  = [0, 30, 60, 90, 120].filter((t) => t <= maxTime)
-
-  // Momentum badge: who won the most recent quarter?
-  const lastQHome = homeScores[quartersCompleted - 1]?.total ?? 0
-  const lastQAway = awayScores[quartersCompleted - 1]?.total ?? 0
-  const momentumLabel =
-    lastQHome > lastQAway ? `${homeAbbr} ↑`
-    : lastQAway > lastQHome ? `${awayAbbr} ↑`
-    : null
 
   return (
     <div className="space-y-1">
@@ -124,35 +126,15 @@ export function ScoreWorm({
           <span className="h-2 w-2 rounded-full" style={{ backgroundColor: homeColor }} />
           <span className="text-muted-foreground">{homeAbbr}</span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-foreground">Score Worm</span>
-          {momentumLabel && (
-            <span
-              className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
-              style={{ backgroundColor: lastQHome > lastQAway ? homeColor : awayColor, color: '#fff', opacity: 0.9 }}
-            >
-              {momentumLabel}
-            </span>
-          )}
-        </div>
+        <span className="text-xs font-medium text-foreground">Score Worm</span>
         <div className="flex items-center gap-1.5 text-xs">
           <span className="text-muted-foreground">{awayAbbr}</span>
           <span className="h-2 w-2 rounded-full" style={{ backgroundColor: awayColor }} />
         </div>
       </div>
 
-      <ResponsiveContainer width="100%" height={150}>
-        <ComposedChart data={data} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-          <defs>
-            <linearGradient id="homeWormGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={homeColor} stopOpacity={0.4} />
-              <stop offset="100%" stopColor={homeColor} stopOpacity={0.05} />
-            </linearGradient>
-            <linearGradient id="awayWormGrad" x1="0" y1="1" x2="0" y2="0">
-              <stop offset="0%" stopColor={awayColor} stopOpacity={0.4} />
-              <stop offset="100%" stopColor={awayColor} stopOpacity={0.05} />
-            </linearGradient>
-          </defs>
+      <ResponsiveContainer width="100%" height={height}>
+        <ComposedChart data={data} margin={{ top: 4, right: 8, left: 4, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="currentColor" strokeOpacity={0.08} />
           <XAxis
             dataKey="time"
@@ -164,40 +146,43 @@ export function ScoreWorm({
           />
           <YAxis
             domain={yDomain}
-            tickFormatter={(v: number) => v > 0 ? `+${v}` : String(v)}
+            ticks={yTicks}
+            tickFormatter={(v: number) => String(Math.abs(v))}
             tick={{ fontSize: 10 }}
-            width={30}
+            width={28}
           />
           <ReferenceLine y={0} stroke="currentColor" strokeOpacity={0.25} strokeDasharray="4 4" />
           {/* Quarter separator lines */}
           {xTicks.filter((t) => t > 0 && t < maxTime).map((t) => (
             <ReferenceLine key={t} x={t} stroke="currentColor" strokeOpacity={0.12} />
           ))}
-          {/* Home fill (above zero) */}
+          {/* Home fill (above zero) — solid home colour */}
           <Area
-            type="linear"
+            type="stepAfter"
             dataKey="homeArea"
-            fill="url(#homeWormGrad)"
+            fill={homeColor}
+            fillOpacity={0.22}
             stroke="none"
             isAnimationActive={false}
             baseValue={0}
             legendType="none"
           />
-          {/* Away fill (below zero) */}
+          {/* Away fill (below zero) — solid away colour */}
           <Area
-            type="linear"
+            type="stepAfter"
             dataKey="awayArea"
-            fill="url(#awayWormGrad)"
+            fill={awayColor}
+            fillOpacity={0.22}
             stroke="none"
             isAnimationActive={false}
             baseValue={0}
             legendType="none"
           />
-          {/* Main worm line */}
+          {/* Main worm line — coloured by current leader */}
           <Line
-            type="linear"
+            type="stepAfter"
             dataKey="margin"
-            stroke="#9ca3af"
+            stroke={wormColor}
             strokeWidth={2}
             dot={false}
             isAnimationActive={false}

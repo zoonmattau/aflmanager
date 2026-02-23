@@ -9,7 +9,8 @@ import type { DraftState, Scout } from './draft'
 import type { LeagueConfig } from './expansion'
 import type { GameHistory } from './history'
 import type { GameCalendar, WeekSchedule } from './calendar'
-import type { TrainingWeekPlan } from '@/engine/training/trainingEngine'
+import type { TrainingWeekPlan, TrainingFocus } from '@/engine/training/trainingEngine'
+import type { PreRoundMomentSnapshot } from '@/engine/narrative/momentEngine'
 import type { SeasonAwards, BrownlowRound, ClubBFRound } from './awards'
 import type { StateLeague, StateLeagueId, StateLeagueAffiliationSettings } from './stateLeague'
 import type { OffseasonState } from '@/engine/season/offseasonFlow'
@@ -362,6 +363,12 @@ export interface GameSettings {
    * Only set for fictional/custom leagues; real-league mode always uses defaults.
    */
   venueRules?: import('@/types/venue').VenueRuleSet
+  /**
+   * Per-venue roof overrides. Maps venueId → hasRoof boolean.
+   * When set, overrides the static Venue.hasRoof value from venues.ts.
+   * Useful for fictional/custom leagues or enabling roofed venues dynamically.
+   */
+  venueRoofOverrides?: Record<string, boolean>
 }
 
 export interface SigningNotificationPreferences {
@@ -449,6 +456,35 @@ export interface TrainingWeekReport {
   loadLevel: 'light' | 'moderate' | 'heavy' | 'excessive'
 }
 
+/**
+ * Cached pre-round snapshot data computed once at the start of each round.
+ * Stored in GameState so day-advance commits can finalize the round without
+ * re-running setup. Cleared after finalizeRound() completes.
+ */
+export interface RoundPrepSnapshot {
+  preRoundCareerStats: Record<string, {
+    gamesPlayed: number
+    goals: number
+    disposals: number
+    marks: number
+    tackles: number
+  }>
+  preRoundMomentSnapshot: Record<string, PreRoundMomentSnapshot>
+  preMatchFatigueById: Record<string, number>
+  avgPreMatchFatigue: number
+  avgPreMatchFitness: number
+  preLadderPositions: Record<string, number>
+  trainingWeekPlanDetails: { hasHeavySession: boolean; hasRecoverySession: boolean }
+  gameplanOverrides: Record<string, ClubGameplan>
+  matchupTacticsByClub: Record<string, WeeklyMatchupTactics | undefined>
+  lineupsByClub: Record<string, Record<string, string>>
+  substitutesByClub: Record<string, string | null>
+  rotationPlanByClub: Record<string, RotationEvent[]>
+  scoutCounterByClub: Record<string, string | null>
+  trainingFocusesByClub: Record<string, TrainingFocus[]>
+  fixtureClubIds: string[]
+}
+
 export interface GameState {
   meta: GameMeta
   settings: GameSettings
@@ -468,6 +504,16 @@ export interface GameState {
   ladder: LadderEntry[]
   powerRankings: PowerRankingSnapshot[]
   matchResults: Match[]
+  /** Individually-resolved matches not yet committed to a round. Used for live ladder preview. */
+  pendingMatchResults: Match[]
+
+  /**
+   * Cached pre-round setup data (computed once per round, cleared after finalizeRound).
+   * Enables commitSingleFixture to finalize the round without re-running setup.
+   */
+  roundPrep: RoundPrepSnapshot | null
+  /** Which round number roundPrep was computed for (guards against re-running setup). */
+  roundPrepRound: number | null
 
   // News & history
   newsLog: NewsItem[]
@@ -482,6 +528,10 @@ export interface GameState {
   selectedLineup: Record<string, string> | null
   selectedSubstituteId: string | null
   savedLineups: SavedLineup[]
+
+  // Weekly squad role assignment — set by the manager before each game
+  // 'lineup' = named in AFL squad, 'reserves' = playing VFL/state league, 'rest' = not playing
+  weeklySquadRoles: Record<string, 'lineup' | 'reserves' | 'rest'>
 
   // Draft data
   draft: DraftState | null

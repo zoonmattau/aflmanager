@@ -74,6 +74,8 @@ export interface PlayByPlayEvent {
 export interface MatchResult {
   homeScores: QuarterScore[]    // Q1, Q2, Q3, Q4
   awayScores: QuarterScore[]    // Q1, Q2, Q3, Q4
+  /** Running minutes per quarter (excl. stoppages). Slightly randomised ~18–22 each. */
+  quarterRunningMinutes?: number[]
   homeTotalScore: number
   awayTotalScore: number
   homePlayerStats: MatchPlayerStats[]

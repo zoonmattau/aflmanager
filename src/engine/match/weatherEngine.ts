@@ -72,7 +72,7 @@ export function getWindAccuracyMod(
 // Generator
 // ---------------------------------------------------------------------------
 
-export function generateMatchWeather(rng: SeededRNG, venueId?: string): MatchWeatherData {
+export function generateMatchWeather(rng: SeededRNG, _venueId?: string, hasRoof?: boolean): MatchWeatherData {
   // Wind direction
   const directions: WindDirection[] = ['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW']
   const windDirection = directions[Math.floor(rng.next() * directions.length)]
@@ -86,8 +86,8 @@ export function generateMatchWeather(rng: SeededRNG, venueId?: string): MatchWea
   else if (strengthRoll < 0.88) windStrength = 'strong'
   else                          windStrength = 'gale'
 
-  // Marvel Stadium and other covered venues have minimal wind
-  if (venueId === 'marvel-stadium' || venueId === 'brisbane-gabba') {
+  // Covered/roofed venues have no wind
+  if (hasRoof) {
     windStrength = 'calm'
   }
 
@@ -97,8 +97,11 @@ export function generateMatchWeather(rng: SeededRNG, venueId?: string): MatchWea
   const windAdvantageEnd: 'home' | 'away' = coinTossWinner
 
   // Base condition (mirror the weights used in simulateMatch)
+  // Roofed venues: collapse wet/windy weight into clear
+  const condWeights = hasRoof
+    ? [0.54 + 0.17 + 0.15, 0, 0, 0.08, 0.06] // wet+windy → clear
+    : [0.54, 0.17, 0.15, 0.08, 0.06]
   const conditions: WeatherConditionExt[] = ['clear', 'windy', 'wet', 'hot', 'humid']
-  const condWeights = [0.54, 0.17, 0.15, 0.08, 0.06]
   const condRoll = rng.next()
   let cumulative = 0
   let baseCondition: WeatherConditionExt = 'clear'
@@ -122,11 +125,18 @@ export function generateMatchWeather(rng: SeededRNG, venueId?: string): MatchWea
       // 20% chance of notable weather change between quarters
       const newCondRoll = rng.next()
       let newCond: WeatherConditionExt
-      if      (newCondRoll < 0.45) newCond = 'clear'
-      else if (newCondRoll < 0.62) newCond = 'wet'
-      else if (newCondRoll < 0.77) newCond = 'windy'
-      else if (newCondRoll < 0.90) newCond = 'humid'
-      else                         newCond = 'hot'
+      if (hasRoof) {
+        // Under roof: only clear ↔ hot/humid shifts
+        if      (newCondRoll < 0.55) newCond = 'clear'
+        else if (newCondRoll < 0.80) newCond = 'hot'
+        else                         newCond = 'humid'
+      } else {
+        if      (newCondRoll < 0.45) newCond = 'clear'
+        else if (newCondRoll < 0.62) newCond = 'wet'
+        else if (newCondRoll < 0.77) newCond = 'windy'
+        else if (newCondRoll < 0.90) newCond = 'humid'
+        else                         newCond = 'hot'
+      }
 
       if (newCond !== currentCondition) {
         const label =
@@ -139,8 +149,8 @@ export function generateMatchWeather(rng: SeededRNG, venueId?: string): MatchWea
         currentCondition = newCond
       }
 
-      // Wind strength may also shift slightly
-      if (rng.next() < 0.30 && windStrength !== 'calm') {
+      // Wind strength may also shift slightly (only relevant without roof)
+      if (!hasRoof && rng.next() < 0.30 && windStrength !== 'calm') {
         const strengths: WindStrength[] = ['calm', 'light', 'moderate', 'strong', 'gale']
         const idx = strengths.indexOf(currentWindStrength)
         const delta = rng.next() < 0.5 ? 1 : -1

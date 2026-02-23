@@ -10,7 +10,7 @@ import { SpeechSystem } from '@/components/matchviewer/SpeechSystem'
 import { useInterval } from '@/hooks/useInterval'
 import {
   createMatchContext,
-  simulateQuarter,
+  simulateQuarterLive,
   finalizeMatch,
 } from '@/engine/match/simulateMatch'
 import type { MatchContext, SimulateMatchInput } from '@/engine/match/simulateMatch'
@@ -23,7 +23,6 @@ import {
   generateCoachSuggestions,
   applyGameplanSliders,
 } from '@/engine/match/interactiveMatch'
-import { generateQuarterTicks } from '@/engine/match/tickEngine'
 import { SeededRNG } from '@/engine/core/rng'
 import type { Match, MatchKeyEvent, MatchPlayerStats } from '@/types/match'
 import type { MatchTick } from '@/types/matchTick'
@@ -43,8 +42,21 @@ import type {
 } from '@/types/matchEvent'
 import type { WeeklyMatchupTactics } from '@/types/game'
 import type { SpeechTone, SpeechEffect, SpeechDelivery } from '@/engine/coach/speechEngine'
-import { LiveFieldView, type FieldInstruction } from '@/components/match/LiveFieldView'
-import { Play, ChevronRight, MapPin, Users, X } from 'lucide-react'
+import { LiveFieldView, type FieldInstruction, type PlayPhase } from '@/components/match/LiveFieldView'
+import { LiveInterchangePanel } from '@/components/match/LiveInterchangePanel'
+import { FIELD_SLOTS_LANDSCAPE } from '@/components/lineup/fieldConstants'
+import { PossessionChainView } from '@/components/match/PossessionChainView'
+import { PreMatchLineupEditor } from '@/components/lineup/PreMatchLineupEditor'
+import { PreMatchStrategyPanel, DEFAULT_GAMEPLAN } from '@/components/match/PreMatchStrategyPanel'
+import { PreGameScreen } from '@/components/matchviewer/PreGameScreen'
+import { generateMatchWeather } from '@/engine/match/weatherEngine'
+import { venueHasRoof } from '@/data/venues'
+import type { MatchWeatherData } from '@/engine/match/weatherEngine'
+import type { H2HRecord } from '@/types/history'
+import { Play, ChevronRight, MapPin, Users, X, BarChart3, UserRound, Wrench, MessageSquare } from 'lucide-react'
+import { BenchTacticsPanel, type QueuedRotation } from '@/components/match/BenchTacticsPanel'
+import { getOverallRating } from '@/engine/player/playerRating'
+import { VENUES } from '@/data/venues'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -188,6 +200,26 @@ interface LiveMatchViewProps {
   homeGameplan?: ClubGameplan | null
   awayGameplan?: ClubGameplan | null
   homeMatchupTactics?: WeeklyMatchupTactics | null
+  /** All season match results — used for form guide in the pre-game screen. */
+  matchResults?: Match[]
+  /** H2H records for the pre-game screen. */
+  h2hRecords?: Record<string, H2HRecord>
+  /** Show betting odds in the pre-game screen (only when betting is enabled). */
+  showOdds?: boolean
+  homeOdds?: number
+  awayOdds?: number
+  line?: number
+  homeLineOdds?: number
+  awayLineOdds?: number
+  totalLine?: number
+  overOdds?: number
+  underOdds?: number
+  /** Called whenever the user changes the lineup in the pre-match editor. */
+  onPreMatchLineupChange?: (lineup: Record<string, string>) => void
+  /** Current matchup tactics (tags/physical) for pre-match strategy tab. */
+  preMatchMatchupTactics?: WeeklyMatchupTactics | null
+  /** Called when the user changes matchup tactics in the pre-match strategy tab. */
+  onPreMatchMatchupTactics?: (tactics: WeeklyMatchupTactics) => void
 }
 
 const SPEED_MS: Record<PlaybackSpeed, number | null> = {
@@ -210,6 +242,20 @@ export function LiveMatchView({
   homeGameplan,
   awayGameplan,
   homeMatchupTactics,
+  matchResults,
+  h2hRecords,
+  showOdds = false,
+  homeOdds,
+  awayOdds,
+  line,
+  homeLineOdds,
+  awayLineOdds,
+  totalLine,
+  overOdds,
+  underOdds,
+  onPreMatchLineupChange,
+  preMatchMatchupTactics,
+  onPreMatchMatchupTactics,
 }: LiveMatchViewProps) {
   // Core refs
   const ctxRef = useRef<MatchContext | null>(null)
@@ -235,7 +281,22 @@ export function LiveMatchView({
   const [liveMinute, setLiveMinute] = useState(0)
   const [liveQuarter, setLiveQuarter] = useState(1)
   const [stoppageState, setStoppageState] = useState<StoppageState>(null)
-  const [activeTab, setActiveTab] = useState<'field' | 'events' | 'stats'>('field')
+  const [preMatchTab, setPreMatchTab] = useState<'overview' | 'lineup' | 'strategy'>('overview')
+  const [coinTossFlipped, setCoinTossFlipped] = useState(false)
+  // Which team kicked with the wind in Q1 (= coin toss winner). Null until match begins.
+  const [kickingEndState, setKickingEndState] = useState<'home' | 'away' | null>(null)
+  // Pre-match gameplan override — user sets it in the Strategy tab, applied when match begins
+  const [preMatchGameplan, setPreMatchGameplan] = useState<ClubGameplan | null>(
+    () => (userClubId === simInput.homeClubId ? homeGameplan : awayGameplan) ?? null,
+  )
+  // Rotations planned pre-game — seeded into queuedRotations when the match starts
+  const [plannedRotations, setPlannedRotations] = useState<QueuedRotation[]>([])
+  // Live match tactical state — applied at the next quarter break via handleContinue
+  const [queuedRotations, setQueuedRotations] = useState<QueuedRotation[]>([])
+  const [pendingSliders, setPendingSliders] = useState<GameplanSliders | null>(null)
+  // Sidebar tab for the playing phase command panel
+  type SidebarTab = 'stats' | 'players' | 'tactics' | 'commentary'
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('stats')
   // Speech system state
   const [breakSubStage, setBreakSubStage] = useState<'speech' | 'strategy'>('speech')
   const [toneHistory, setToneHistory] = useState<Partial<Record<SpeechTone, number>>>({})
@@ -245,6 +306,14 @@ export function LiveMatchView({
   const homeColor = homeClub?.colors.primary ?? '#6b7280'
   const awayColor = awayClub?.colors.primary ?? '#9ca3af'
   const snapshots = quarterSnapshotsRef.current
+
+  // Pre-game weather — same seed offset as MatchViewerPage so conditions are consistent
+  const weatherData = useMemo<MatchWeatherData | null>(() => {
+    const rng = new SeededRNG(simInput.seed + 8888)
+    return generateMatchWeather(rng, simInput.venueId, venueHasRoof(simInput.venueId, simInput.venueRoofOverrides, simInput.venue, simInput.customStadiums))
+  }, [simInput.seed, simInput.venueId, simInput.venue, simInput.customStadiums])
+
+  const venueEnds = simInput.venueId ? VENUES[simInput.venueId]?.ends : undefined
 
   const matchClubs = useMemo(() => {
     const c: Record<string, typeof homeClub & object> = {}
@@ -375,52 +444,22 @@ export function LiveMatchView({
     const ctx = ctxRef.current
     if (!ctx) return
 
-    simulateQuarter(ctx, quarterIndex)
-    pushQuarterSnapshot(ctx)
-
     // Pre-roll injuries so they appear as stoppages in the tick stream
     const injuries = rollQuarterInjuries(ctx, userClubId, quarterIndex + 1, simInput.injuryFrequency)
     for (const inj of injuries) applyQuarterInjury(ctx, inj)
     allInjuriesRef.current = [...allInjuriesRef.current, ...injuries]
     currentQInjuriesRef.current = injuries
 
-    // Player name lookup
-    const playerNames: Record<string, string> = {}
-    for (const p of Object.values(simInput.players)) {
-      playerNames[p.id] = `${p.firstName} ${p.lastName}`
-    }
+    // Unified chain engine: simulates the quarter AND produces ticks directly
+    const ticks = simulateQuarterLive(ctx, quarterIndex)
+    pushQuarterSnapshot(ctx)
 
-    // Cumulative score at start of this quarter
-    let homeGoalsStart = 0, homeBehindsStart = 0
-    let awayGoalsStart = 0, awayBehindsStart = 0
+    // Cumulative score at start of this quarter (for initial display)
+    let homeStartTotal = 0, awayStartTotal = 0
     for (let q = 0; q < quarterIndex; q++) {
-      homeGoalsStart += ctx.homeScores[q].goals
-      homeBehindsStart += ctx.homeScores[q].behinds
-      awayGoalsStart += ctx.awayScores[q].goals
-      awayBehindsStart += ctx.awayScores[q].behinds
+      homeStartTotal += ctx.homeScores[q].total
+      awayStartTotal += ctx.awayScores[q].total
     }
-    const homeStartTotal = homeGoalsStart * 6 + homeBehindsStart
-    const awayStartTotal = awayGoalsStart * 6 + awayBehindsStart
-    const qHomeScore = ctx.homeScores[quarterIndex]
-    const qAwayScore = ctx.awayScores[quarterIndex]
-
-    const displayRng = new SeededRNG(simInput.seed + 9999 + quarterIndex * 1111)
-    const ticks = generateQuarterTicks(
-      {
-        keyEvents: ctx.keyEvents,
-        quarterIndex,
-        homeClubId: ctx.input.homeClubId,
-        awayClubId: ctx.input.awayClubId,
-        homeAbbr,
-        awayAbbr,
-        playerNames,
-        homeScoreAtStart: { goals: homeGoalsStart, behinds: homeBehindsStart, total: homeStartTotal },
-        awayScoreAtStart: { goals: awayGoalsStart, behinds: awayBehindsStart, total: awayStartTotal },
-        quarterHomeScore: qHomeScore,
-        quarterAwayScore: qAwayScore,
-      },
-      displayRng,
-    )
 
     ticksRef.current = ticks
     tickIndexRef.current = 0
@@ -434,21 +473,33 @@ export function LiveMatchView({
     setSpeed(quarterIndex === 0 ? 'normal' : 'paused')
     setPhase('playing')
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [simInput, userClubId, homeAbbr, awayAbbr])
+  }, [simInput, userClubId])
 
   // ---------------------------------------------------------------------------
   // Begin match
   // ---------------------------------------------------------------------------
 
-  const handleBeginMatch = useCallback(() => {
-    const ctx = createMatchContext(simInput)
+  const handleBeginMatch = useCallback((kickingEnd?: 'home' | 'away') => {
+    setKickingEndState(kickingEnd ?? null)
+    const inputWithOverride: SimulateMatchInput = preMatchGameplan
+      ? {
+          ...simInput,
+          gameplanOverrides: {
+            ...simInput.gameplanOverrides,
+            [userClubId]: preMatchGameplan,
+          },
+        }
+      : simInput
+    const ctx = createMatchContext(inputWithOverride)
     ctxRef.current = ctx
     allInjuriesRef.current = []
     allAdjustmentsRef.current = []
     quarterSnapshotsRef.current = []
     currentQInjuriesRef.current = []
+    // Seed BenchTacticsPanel's queue with any rotations planned in the Strategy tab
+    setQueuedRotations(plannedRotations)
     beginQuarter(0)
-  }, [simInput, beginQuarter])
+  }, [simInput, beginQuarter, preMatchGameplan, userClubId, plannedRotations])
 
   // ---------------------------------------------------------------------------
   // Quarter-break: continue
@@ -464,8 +515,29 @@ export function LiveMatchView({
       if (match) onComplete(match)
       return
     }
+
+    // Apply any rotations queued from the Bench & Tactics panel
+    if (queuedRotations.length > 0) {
+      const isHome = ctx.input.homeClubId === userClubId
+      const activeArr = isHome ? ctx.homeActivePlayers : ctx.awayActivePlayers
+      for (const { onId, offId } of queuedRotations) {
+        const offIdx = activeArr.findIndex((p) => p.id === offId)
+        if (offIdx >= 0) {
+          const onPlayer = Object.values(ctx.input.players).find((p) => p.id === onId)
+          if (onPlayer) activeArr[offIdx] = onPlayer
+        }
+      }
+      setQueuedRotations([])
+    }
+
+    // Apply pending gameplan slider changes from the Bench & Tactics panel
+    if (pendingSliders) {
+      applyGameplanSliders(ctx, pendingSliders, userClubId)
+      setPendingSliders(null)
+    }
+
     beginQuarter(nextQ)
-  }, [beginQuarter, onComplete])
+  }, [beginQuarter, onComplete, queuedRotations, pendingSliders, userClubId])
 
   // ---------------------------------------------------------------------------
   // Final continue
@@ -564,10 +636,113 @@ export function LiveMatchView({
   // ---------------------------------------------------------------------------
 
   const userIsHome = userClubId === simInput.homeClubId
-  const userSlotLineup = userIsHome ? (homeSlotLineup ?? {}) : (awaySlotLineup ?? {})
-  const opponentSlotLineup = userIsHome ? (awaySlotLineup ?? {}) : (homeSlotLineup ?? {})
+  // Fall back to simInput slot maps so spectator matches still have players on the field
+  const baseUserSlotLineup = userIsHome
+    ? (homeSlotLineup ?? simInput.homeLineupSlots ?? {})
+    : (awaySlotLineup ?? simInput.awayLineupSlots ?? {})
+
+  // Live interchange overrides — track swaps made during the match
+  const [liveLineupOverrides, setLiveLineupOverrides] = useState<Record<string, string>>({})
+  const [runningOffAnim, setRunningOffAnim] = useState<{ top: number; left: number; color: string } | null>(null)
+
+  // Effective lineup merges base with any live interchanges
+  const userSlotLineup = useMemo(
+    () => ({ ...baseUserSlotLineup, ...liveLineupOverrides }),
+    [baseUserSlotLineup, liveLineupOverrides],
+  )
+
+  // Handle drag-drop interchange from LiveInterchangePanel
+  const handleInterchange = useCallback((slotA: string, slotB: string) => {
+    const playerA = userSlotLineup[slotA]
+    const playerB = userSlotLineup[slotB]
+    if (!playerA || !playerB) return
+
+    // Find the field slot (not bench) for the running-off animation
+    const fieldSlotId = FIELD_SLOTS_LANDSCAPE.find((s) => s.slot === slotA || s.slot === slotB)
+      ?.slot === slotA ? slotA : slotB
+    const fieldSlotPos = FIELD_SLOTS_LANDSCAPE.find((s) => s.slot === fieldSlotId)
+    if (fieldSlotPos) {
+      setRunningOffAnim({
+        top: fieldSlotPos.top,
+        left: fieldSlotPos.left,
+        color: userIsHome ? homeColor : awayColor,
+      })
+      setTimeout(() => setRunningOffAnim(null), 1100)
+    }
+
+    setLiveLineupOverrides((prev) => ({ ...prev, [slotA]: playerB, [slotB]: playerA }))
+  }, [userSlotLineup, userIsHome, homeColor, awayColor])
+
+  // Derive current possession chain for field overlay
+  const latestChainTick = ticksRef.current[displayTickIndex - 1] ?? null
+  const currentChainId = latestChainTick?.chainId ?? -1
+  const possessionChain: MatchTick[] = displayTickIndex > 0
+    ? ticksRef.current
+        .slice(0, displayTickIndex)
+        .filter((t) =>
+          t.chainId === currentChainId &&
+          t.possessionType !== 'goal' &&
+          t.possessionType !== 'behind' &&
+          t.possessionType !== 'injury' &&
+          t.possessionType !== 'interchange',
+        )
+    : []
+  const chainTeamColor = latestChainTick
+    ? (latestChainTick.clubId === simInput.homeClubId ? homeColor : awayColor)
+    : undefined
+
+  // Derive play phase from current tick zone — drives player drift and zone overlays
+  const livePlayPhase: PlayPhase = (() => {
+    if (!latestChainTick) return 'midfield'
+    const { possessionType, zone, clubId } = latestChainTick
+    if (possessionType === 'clearance' || possessionType === 'ball-up') return 'stoppage'
+    const isUserPossession = clubId === userClubId
+    if (zone === 'forward50' || zone === 'forwardHalf') {
+      return isUserPossession ? 'attack' : 'defense'
+    }
+    if (zone === 'back50' || zone === 'backHalf') {
+      return isUserPossession ? 'defense' : 'attack'
+    }
+    return 'midfield'
+  })()
+  const opponentSlotLineup = userIsHome
+    ? (awaySlotLineup ?? simInput.awayLineupSlots ?? {})
+    : (homeSlotLineup ?? simInput.homeLineupSlots ?? {})
   const fieldGameplan = userIsHome ? (homeGameplan ?? null) : (awayGameplan ?? null)
   const fieldMatchupTactics = userIsHome ? (homeMatchupTactics ?? null) : null
+
+  // Attacking direction: coin toss winner kicks with wind in Q1. We map the winner's team to
+  // "attacks right" in Q1 and flip each subsequent quarter (teams swap ends after every quarter).
+  const userAttacksRightQ1 = kickingEndState === null
+    ? true // default before coin toss resolves
+    : (userIsHome ? kickingEndState === 'home' : kickingEndState === 'away')
+  const teamAttacksRight = userAttacksRightQ1 === (liveQuarter % 2 === 1)
+
+  // Players for strategy panel — user's assigned starters + bench, and opposition lineup
+  const userLineupPlayersForStrategy = useMemo(() => {
+    return Object.values(userSlotLineup)
+      .filter(Boolean)
+      .map((id) => simInput.players[id])
+      .filter((p): p is NonNullable<typeof p> => !!p)
+  }, [userSlotLineup, simInput.players])
+
+  const oppositionPlayersForStrategy = useMemo(() => {
+    const oppClubId = userIsHome ? simInput.awayClubId : simInput.homeClubId
+    return Object.values(simInput.players)
+      .filter((p) => p.clubId === oppClubId && !p.injury)
+      .sort((a, b) => {
+        // Starters first (in opponentSlotLineup), then bench, then rest by OVR
+        const aInLineup = Object.values(opponentSlotLineup).includes(a.id)
+        const bInLineup = Object.values(opponentSlotLineup).includes(b.id)
+        if (aInLineup !== bInLineup) return aInLineup ? -1 : 1
+        return getOverallRating(b) - getOverallRating(a)
+      })
+  }, [simInput.players, simInput.awayClubId, simInput.homeClubId, userIsHome, opponentSlotLineup])
+
+  const emptyMatchupTactics = useMemo<WeeklyMatchupTactics>(
+    () => ({ hardTags: [], physicalAttention: [], roleAssignments: [] }),
+    [],
+  )
 
   const handleFieldInstruction = useCallback((adj: FieldInstruction) => {
     const quarter = ctxRef.current?.quartersCompleted ?? liveQuarter
@@ -654,45 +829,117 @@ export function LiveMatchView({
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="flex items-center gap-2 text-base">
           <Play className="h-4 w-4" />
-          Live Match
+          {phase === 'pre-match' ? 'Pre-Match' : 'Live Match'}
         </CardTitle>
-        {phase !== 'complete' && (
+        {phase === 'pre-match' && (
           <Button variant="ghost" size="icon" onClick={onCancel} className="h-8 w-8">
             <X className="h-4 w-4" />
           </Button>
         )}
       </CardHeader>
 
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-3">
 
-        {/* PRE-MATCH */}
+        {/* PRE-MATCH — Overview | Lineup | Strategy tabs */}
         {phase === 'pre-match' && (
           <>
-            <div className="rounded-md border p-4 text-center">
-              <div className="flex items-center justify-center gap-6">
-                <div className="flex flex-col items-center gap-1">
-                  <div className="h-10 w-10 rounded-full border border-white/20" style={{ backgroundColor: homeColor }} />
-                  <span className="text-sm font-bold">{homeAbbr}</span>
-                </div>
-                <div className="text-2xl font-bold text-muted-foreground">vs</div>
-                <div className="flex flex-col items-center gap-1">
-                  <div className="h-10 w-10 rounded-full border border-white/20" style={{ backgroundColor: awayColor }} />
-                  <span className="text-sm font-bold">{awayAbbr}</span>
+            {/* Tab bar — extra tabs only for the user's own match */}
+            {!spectatorMode && (
+              <div className="flex rounded-md border border-border overflow-hidden text-xs font-medium">
+                {(['overview', 'lineup', 'strategy'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    className={`flex-1 py-1.5 capitalize transition-colors ${preMatchTab === tab ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground hover:bg-muted'}`}
+                    onClick={() => setPreMatchTab(tab)}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Overview tab — form guide, H2H, conditions, coin toss */}
+            {(spectatorMode || preMatchTab === 'overview') && (
+              <PreGameScreen
+                homeClubId={simInput.homeClubId}
+                awayClubId={simInput.awayClubId}
+                venue={simInput.venue}
+                round={(simInput.round ?? 0) + 1}
+                isUserMatch={!spectatorMode}
+                userClubId={userClubId}
+                clubs={simInput.clubs}
+                players={simInput.players}
+                matchResults={matchResults ?? []}
+                h2hRecords={h2hRecords ?? {}}
+                weatherData={weatherData}
+                seed={simInput.seed}
+                showOdds={showOdds}
+                homeOdds={homeOdds}
+                awayOdds={awayOdds}
+                line={line}
+                homeLineOdds={homeLineOdds}
+                awayLineOdds={awayLineOdds}
+                totalLine={totalLine}
+                overOdds={overOdds}
+                underOdds={underOdds}
+                venueEnds={venueEnds}
+                onKickOff={handleBeginMatch}
+                onBack={onCancel}
+                coinTossFlipped={coinTossFlipped}
+                onCoinTossFlipped={() => setCoinTossFlipped(true)}
+              />
+            )}
+
+            {/* Lineup tab — landscape field (with bench) + squad list sidebar */}
+            {!spectatorMode && preMatchTab === 'lineup' && (
+              <div className="space-y-3">
+                <PreMatchLineupEditor
+                  lineup={userSlotLineup}
+                  players={simInput.players}
+                  clubs={matchClubs}
+                  userClubId={userClubId}
+                  interchangeCount={simInput.matchRules?.interchangePlayers ?? 5}
+                  oppositionClubId={userIsHome ? simInput.awayClubId : simInput.homeClubId}
+                  onLineupChange={(newLineup) => onPreMatchLineupChange?.(newLineup)}
+                  matchupTactics={preMatchMatchupTactics ?? emptyMatchupTactics}
+                  onMatchupTacticsChange={(tactics) => onPreMatchMatchupTactics?.(tactics)}
+                />
+                <div className="flex justify-center pt-1">
+                  <button
+                    className="rounded-md bg-primary px-6 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+                    onClick={() => setPreMatchTab('overview')}
+                  >
+                    Proceed to Kick-Off →
+                  </button>
                 </div>
               </div>
-              <div className="mt-2 flex justify-center text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1">
-                  <MapPin className="h-3 w-3" />
-                  {simInput.venue}
-                </span>
+            )}
+
+            {/* Strategy tab — hard tags + physical pressure assignments */}
+            {!spectatorMode && preMatchTab === 'strategy' && (
+              <div className="space-y-3">
+                <PreMatchStrategyPanel
+                  userLineupPlayers={userLineupPlayersForStrategy}
+                  oppositionPlayers={oppositionPlayersForStrategy}
+                  matchupTactics={preMatchMatchupTactics ?? emptyMatchupTactics}
+                  onTacticsChange={(tactics) => onPreMatchMatchupTactics?.(tactics)}
+                  gameplan={preMatchGameplan ?? DEFAULT_GAMEPLAN}
+                  onGameplanChange={setPreMatchGameplan}
+                  userSlotLineup={userSlotLineup}
+                  interchangeCount={simInput.matchRules?.interchangePlayers ?? 5}
+                  plannedRotations={plannedRotations}
+                  onPlannedRotationsChange={setPlannedRotations}
+                />
+                <div className="flex justify-center pt-1">
+                  <button
+                    className="rounded-md bg-primary px-6 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+                    onClick={() => setPreMatchTab('overview')}
+                  >
+                    Proceed to Kick-Off →
+                  </button>
+                </div>
               </div>
-            </div>
-            <div className="flex justify-center">
-              <Button onClick={handleBeginMatch} size="lg" className="gap-2">
-                <Play className="h-4 w-4" />
-                Begin Match
-              </Button>
-            </div>
+            )}
           </>
         )}
 
@@ -716,7 +963,43 @@ export function LiveMatchView({
                 if (stoppageState) setStoppageState(null)
               }}
               onSkip={skipToQuarterEnd}
+              onStep={advanceTick}
             />
+
+            {/* Possession chain + commentary banner — merged into one compact row */}
+            <div className="flex flex-col lg:flex-row rounded-md border overflow-hidden">
+              <div className="flex-[3] min-w-0">
+                <PossessionChainView
+                  ticks={ticksRef.current}
+                  currentIndex={displayTickIndex}
+                  homeClubId={simInput.homeClubId}
+                  homeColor={homeColor}
+                  awayColor={awayColor}
+                  homeAbbr={homeAbbr}
+                  awayAbbr={awayAbbr}
+                  noBorder
+                />
+              </div>
+              {latestChainTick && (
+                <div
+                  key={displayTickIndex}
+                  className="flex-[2] min-w-0 border-t lg:border-t-0 lg:border-l px-3 py-2"
+                  style={{ borderLeftWidth: 3, borderLeftColor: chainTeamColor ?? '#6b7280' }}
+                >
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span
+                      className="inline-block h-2 w-2 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: chainTeamColor ?? '#6b7280' }}
+                    />
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {latestChainTick.clubId === simInput.homeClubId ? homeAbbr : awayAbbr}
+                      {' · Q'}{latestChainTick.quarter} {latestChainTick.minute}'
+                    </span>
+                  </div>
+                  <p className="text-xs font-medium leading-snug line-clamp-2">{latestChainTick.commentary}</p>
+                </div>
+              )}
+            </div>
 
             {!spectatorMode && stoppageState?.type === 'injury' && (
               <InjuryStoppagePanel
@@ -728,75 +1011,155 @@ export function LiveMatchView({
               />
             )}
 
-            {/* Tab toggle */}
-            <div className="flex rounded-md border border-border overflow-hidden text-xs font-medium">
-              {!spectatorMode && (
-                <button
-                  className={`flex-1 py-1.5 transition-colors ${activeTab === 'field' ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground hover:bg-muted'}`}
-                  onClick={() => setActiveTab('field')}
-                >
-                  Field
-                </button>
-              )}
-              <button
-                className={`flex-1 py-1.5 transition-colors ${activeTab === 'events' ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground hover:bg-muted'}`}
-                onClick={() => setActiveTab('events')}
-              >
-                Events
-              </button>
-              <button
-                className={`flex-1 py-1.5 transition-colors ${activeTab === 'stats' ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground hover:bg-muted'}`}
-                onClick={() => setActiveTab('stats')}
-              >
-                Stats
-              </button>
+            {/* ── Main play area: field (left) + tabbed command panel (right) ── */}
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-2 items-start">
+
+              {/* Left column: animated field view */}
+              <div>
+                <LiveFieldView
+                  userSlotLineup={userSlotLineup}
+                  opponentSlotLineup={opponentSlotLineup}
+                  players={simInput.players}
+                  userClub={userIsHome ? homeClub : awayClub}
+                  opponentClub={userIsHome ? awayClub : homeClub}
+                  userClubId={userClubId}
+                  userGameplan={fieldGameplan}
+                  userMatchupTactics={spectatorMode ? null : fieldMatchupTactics}
+                  matchPhase="simulating-quarter"
+                  quartersCompleted={liveQuarter - 1}
+                  recentKeyEvents={[]}
+                  ballCarrierPlayerId={ticksRef.current[displayTickIndex - 1]?.playerId}
+                  ballZone={ticksRef.current[displayTickIndex - 1]?.zone}
+                  possessionChain={possessionChain}
+                  chainTeamColor={chainTeamColor}
+                  livePlayPhase={livePlayPhase}
+                  teamAttacksRight={teamAttacksRight}
+                  runningOffAnim={spectatorMode ? null : runningOffAnim}
+                  paused={speed === 'paused'}
+                  onInstruction={spectatorMode ? () => {} : handleFieldInstruction}
+                />
+
+                {/* Interchange panel — below the field, user only */}
+                {!spectatorMode && (
+                  <LiveInterchangePanel
+                    slotLineup={userSlotLineup}
+                    players={simInput.players}
+                    club={userIsHome ? homeClub : awayClub}
+                    interchangeCount={simInput.matchRules?.interchangePlayers ?? 4}
+                    onInterchange={handleInterchange}
+                  />
+                )}
+              </div>
+
+              {/* Right column: tabbed command panel */}
+              <div className="rounded-md border bg-card overflow-hidden lg:sticky lg:top-2 flex flex-col" style={{ maxHeight: 'calc(100vh - 8rem)' }}>
+                {/* Tab bar */}
+                <div className="flex border-b text-[11px] font-medium shrink-0">
+                  {([
+                    { id: 'stats' as const, icon: BarChart3, label: 'Stats' },
+                    { id: 'players' as const, icon: UserRound, label: 'Players' },
+                    ...(!spectatorMode ? [{ id: 'tactics' as const, icon: Wrench, label: 'Tactics' }] : []),
+                    { id: 'commentary' as const, icon: MessageSquare, label: 'Feed' },
+                  ] as Array<{ id: SidebarTab; icon: typeof BarChart3; label: string }>).map(({ id, icon: Icon, label }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setSidebarTab(id)}
+                      className={[
+                        'flex-1 py-1.5 flex items-center justify-center gap-1 transition-colors',
+                        sidebarTab === id
+                          ? 'bg-muted/60 text-foreground border-b-2 border-primary'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-muted/30',
+                      ].join(' ')}
+                    >
+                      <Icon className="h-3 w-3" />
+                      <span>{label}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Tab content — fills available height with scrolling */}
+                <div className="flex-1 overflow-y-auto p-2.5">
+                  {/* Stats tab */}
+                  {sidebarTab === 'stats' && (
+                    <LiveStatsDashboard
+                      ctx={ctxRef.current}
+                      liveQuarter={liveQuarter}
+                      liveMinute={liveMinute}
+                      displayTickIndex={displayTickIndex}
+                      totalTicks={ticksRef.current.length}
+                      quarterSnapshots={snapshots}
+                      homeClub={homeClub}
+                      awayClub={awayClub}
+                      homeColor={homeColor}
+                      awayColor={awayColor}
+                      homeAbbr={homeAbbr}
+                      awayAbbr={awayAbbr}
+                      userClubId={userClubId}
+                      players={simInput.players}
+                      activeView="match"
+                    />
+                  )}
+
+                  {/* Players tab */}
+                  {sidebarTab === 'players' && (
+                    <LiveStatsDashboard
+                      ctx={ctxRef.current}
+                      liveQuarter={liveQuarter}
+                      liveMinute={liveMinute}
+                      displayTickIndex={displayTickIndex}
+                      totalTicks={ticksRef.current.length}
+                      quarterSnapshots={snapshots}
+                      homeClub={homeClub}
+                      awayClub={awayClub}
+                      homeColor={homeColor}
+                      awayColor={awayColor}
+                      homeAbbr={homeAbbr}
+                      awayAbbr={awayAbbr}
+                      userClubId={userClubId}
+                      players={simInput.players}
+                      activeView="players"
+                    />
+                  )}
+
+                  {/* Tactics tab (user matches only) */}
+                  {sidebarTab === 'tactics' && !spectatorMode && (
+                    <BenchTacticsPanel
+                      ctx={ctxRef.current}
+                      userIsHome={userIsHome}
+                      userSlotLineup={userSlotLineup}
+                      players={simInput.players}
+                      interchangeCount={simInput.matchRules?.interchangePlayers ?? 5}
+                      homeColor={homeColor}
+                      awayColor={awayColor}
+                      homeAbbr={homeAbbr}
+                      awayAbbr={awayAbbr}
+                      queuedRotations={queuedRotations}
+                      onQueueRotation={(onId, offId) =>
+                        setQueuedRotations((prev) => [...prev, { onId, offId }])
+                      }
+                      onCancelRotation={(idx) =>
+                        setQueuedRotations((prev) => prev.filter((_, i) => i !== idx))
+                      }
+                      pendingSliders={pendingSliders}
+                      onSlidersChange={setPendingSliders}
+                      embedded
+                    />
+                  )}
+
+                  {/* Commentary tab */}
+                  {sidebarTab === 'commentary' && (
+                    <CommentaryFeed
+                      ticks={ticksRef.current}
+                      currentIndex={displayTickIndex}
+                      homeColor={homeColor}
+                      awayColor={awayColor}
+                      homeClubId={simInput.homeClubId}
+                    />
+                  )}
+                </div>
+              </div>
             </div>
-
-            {!spectatorMode && activeTab === 'field' && (
-              <LiveFieldView
-                userSlotLineup={userSlotLineup}
-                opponentSlotLineup={opponentSlotLineup}
-                players={simInput.players}
-                userClub={userIsHome ? homeClub : awayClub}
-                opponentClub={userIsHome ? awayClub : homeClub}
-                userClubId={userClubId}
-                userGameplan={fieldGameplan}
-                userMatchupTactics={fieldMatchupTactics}
-                matchPhase="simulating-quarter"
-                quartersCompleted={liveQuarter - 1}
-                recentKeyEvents={[]}
-                onInstruction={handleFieldInstruction}
-              />
-            )}
-
-            {activeTab === 'events' && (
-              <CommentaryFeed
-                ticks={ticksRef.current}
-                currentIndex={displayTickIndex}
-                homeColor={homeColor}
-                awayColor={awayColor}
-                homeClubId={simInput.homeClubId}
-              />
-            )}
-
-            {activeTab === 'stats' && (
-              <LiveStatsDashboard
-                ctx={ctxRef.current}
-                liveQuarter={liveQuarter}
-                liveMinute={liveMinute}
-                displayTickIndex={displayTickIndex}
-                totalTicks={ticksRef.current.length}
-                quarterSnapshots={snapshots}
-                homeClub={homeClub}
-                awayClub={awayClub}
-                homeColor={homeColor}
-                awayColor={awayColor}
-                homeAbbr={homeAbbr}
-                awayAbbr={awayAbbr}
-                userClubId={userClubId}
-                players={simInput.players}
-              />
-            )}
           </>
         )}
 
@@ -918,19 +1281,6 @@ export function LiveMatchView({
               )}
             </div>
 
-            <div className="space-y-1">
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Match Goals</div>
-              <div className="max-h-48 overflow-y-auto space-y-0.5">
-                {breakDisplay.keyEvents
-                  .filter((e) => e.type === 'goal')
-                  .map((e, i) => (
-                    <div key={i} className="flex items-center gap-2 text-xs">
-                      <Badge variant="outline" className="text-[10px]">Q{e.quarter}</Badge>
-                      <span className="text-muted-foreground">{e.description}</span>
-                    </div>
-                  ))}
-              </div>
-            </div>
 
             {breakDisplay.adjustmentsMade.length > 0 && (
               <div className="space-y-1">

@@ -7,6 +7,7 @@
  */
 
 import { useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid,
   ReferenceLine, ResponsiveContainer, Tooltip,
@@ -16,6 +17,7 @@ import type { MatchContext } from '@/engine/match/simulateMatch'
 import type { MatchKeyEvent, MatchPlayerStats } from '@/types/match'
 import type { Player } from '@/types/player'
 import type { Club } from '@/types/club'
+import type { RotationEvent } from '@/types/game'
 import type { QuarterSnapshot } from './QuarterStatsSummary'
 
 // ---------------------------------------------------------------------------
@@ -37,6 +39,8 @@ export interface LiveStatsDashboardProps {
   awayAbbr: string
   userClubId: string
   players: Record<string, Player>
+  /** When provided, hide internal tab bar and render only this view. */
+  activeView?: 'match' | 'players'
 }
 
 // Flat team-total shape used for the stat bars
@@ -82,6 +86,62 @@ function sumStats(arr: MatchPlayerStats[]): TeamTotals {
     z.metresGained         += s.metresGained
   }
   return z
+}
+
+/**
+ * Compute how many minutes a player has been on the ground up to `liveMatchMinute`
+ * (0–120 scale) using the rotation event log.
+ *
+ * Starters (in `starterIds`) are on from minute 0; when a rotation removes them
+ * they stop accumulating; when they come back on they resume accumulating.
+ * Bench players start at 0 and only accumulate after a rotation brings them on.
+ */
+function computeTogMinutes(
+  playerId: string,
+  starterIds: Set<string>,
+  rotationEvents: RotationEvent[],
+  liveMatchMinute: number,
+): number {
+  const sorted = [...rotationEvents].sort((a, b) =>
+    ((a.quarter - 1) * 30 + a.minute) - ((b.quarter - 1) * 30 + b.minute),
+  )
+  let onFieldSince: number | null = starterIds.has(playerId) ? 0 : null
+  let total = 0
+  for (const ev of sorted) {
+    const evMin = (ev.quarter - 1) * 30 + ev.minute
+    if (evMin > liveMatchMinute) break
+    if (ev.playerOnId === playerId && onFieldSince === null) {
+      onFieldSince = evMin
+    }
+    if (ev.playerOffId === playerId && onFieldSince !== null) {
+      total += evMin - onFieldSince
+      onFieldSince = null
+    }
+  }
+  if (onFieldSince !== null) total += liveMatchMinute - onFieldSince
+  return Math.max(0, total)
+}
+
+/**
+ * Returns true if the player is currently on the ground at `liveMatchMinute`.
+ */
+function isOnGround(
+  playerId: string,
+  starterIds: Set<string>,
+  rotationEvents: RotationEvent[],
+  liveMatchMinute: number,
+): boolean {
+  const sorted = [...rotationEvents].sort((a, b) =>
+    ((a.quarter - 1) * 30 + a.minute) - ((b.quarter - 1) * 30 + b.minute),
+  )
+  let onField = starterIds.has(playerId)
+  for (const ev of sorted) {
+    const evMin = (ev.quarter - 1) * 30 + ev.minute
+    if (evMin > liveMatchMinute) break
+    if (ev.playerOnId === playerId) onField = true
+    if (ev.playerOffId === playerId) onField = false
+  }
+  return onField
 }
 
 /**
@@ -223,7 +283,7 @@ function StatBar({
 // ---------------------------------------------------------------------------
 
 function PlayerRow({
-  stat, player, teamColor, fatigueEst, togMinutes, totalMatchMinutes,
+  stat, player, teamColor: _teamColor, fatigueEst, togMinutes, totalMatchMinutes, onGround, onPlayerClick,
 }: {
   stat: MatchPlayerStats
   player: Player | undefined
@@ -231,6 +291,8 @@ function PlayerRow({
   fatigueEst: number
   togMinutes: number
   totalMatchMinutes: number
+  onGround: boolean
+  onPlayerClick: (playerId: string) => void
 }) {
   const name = player
     ? `${player.firstName[0]}. ${player.lastName}`
@@ -241,20 +303,29 @@ function PlayerRow({
 
   return (
     <div className="flex items-center gap-1.5 text-[11px] py-0.5">
-      {/* Team colour dot */}
-      <div className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: teamColor }} />
+      {/* On-ground indicator */}
+      <div
+        className="h-1.5 w-1.5 rounded-full shrink-0"
+        style={{ backgroundColor: onGround ? '#22c55e' : '#ef4444' }}
+        title={onGround ? 'On ground' : 'On bench'}
+      />
       {/* Position */}
       <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 shrink-0">{pos}</Badge>
       {/* Name */}
-      <span className="flex-1 min-w-0 truncate font-medium">{name}</span>
+      <button
+        className="flex-1 min-w-0 truncate font-medium text-left hover:underline hover:text-primary transition-colors"
+        onClick={() => onPlayerClick(stat.playerId)}
+      >
+        {name}
+      </button>
       {/* Stats */}
       <span className="tabular-nums text-muted-foreground w-5 text-right">{stat.disposals}</span>
       {stat.goals > 0 && (
-        <span className="tabular-nums text-orange-500 font-semibold w-4 text-right">{stat.goals}g</span>
+        <span className="tabular-nums text-orange-500 font-semibold w-4 text-right">{stat.goals}</span>
       )}
       {stat.goals === 0 && <span className="w-4" />}
-      <span className="tabular-nums text-muted-foreground w-4 text-right">{stat.marks}m</span>
-      <span className="tabular-nums text-muted-foreground w-4 text-right">{stat.tackles}t</span>
+      <span className="tabular-nums text-muted-foreground w-4 text-right">{stat.marks}</span>
+      <span className="tabular-nums text-muted-foreground w-4 text-right">{stat.tackles}</span>
       {/* TOG */}
       <span className="tabular-nums text-muted-foreground w-7 text-right text-[10px]">{togPct}%</span>
       {/* Fatigue dot */}
@@ -326,8 +397,13 @@ export function LiveStatsDashboard({
   homeAbbr,
   awayAbbr,
   players,
+  activeView,
 }: LiveStatsDashboardProps) {
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<ActiveTab>('match')
+
+  // When activeView is provided externally, use it instead of internal state
+  const effectiveTab = activeView ?? activeTab
 
   // How far through the current quarter's tick sequence (0–1)
   const liveFraction = displayTickIndex / Math.max(1, totalTicks)
@@ -347,6 +423,18 @@ export function LiveStatsDashboard({
 
   // Total match time elapsed (minutes)
   const totalMatchMinutes = (liveQuarter - 1) * 30 + liveMinute
+
+  // Starter sets + rotation events for TOG computation
+  const homeStarterIds = useMemo(
+    () => new Set((ctx?.homePlayers ?? []).map((p) => p.id)),
+    [ctx],
+  )
+  const awayStarterIds = useMemo(
+    () => new Set((ctx?.awayPlayers ?? []).map((p) => p.id)),
+    [ctx],
+  )
+  const homeRotationEvents = ctx?.homeRotationEvents ?? []
+  const awayRotationEvents = ctx?.awayRotationEvents ?? []
 
   // Matchup multipliers from ctx (pre-computed team tactical advantages)
   const matchup = ctx?.matchup
@@ -403,36 +491,38 @@ export function LiveStatsDashboard({
   if (quarterSnapshots.length === 0) return null
 
   return (
-    <div className="rounded-lg border border-border/60 bg-card text-card-foreground overflow-hidden">
+    <div className={activeView ? '' : 'rounded-lg border border-border/60 bg-card text-card-foreground overflow-hidden'}>
 
-      {/* ─── Tab header ─── */}
-      <div className="flex border-b border-border/60">
-        {(
-          [
-            { id: 'match'   as ActiveTab, label: 'Match Stats' },
-            { id: 'players' as ActiveTab, label: 'Players'     },
-          ]
-        ).map(({ id, label }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setActiveTab(id)}
-            className={[
-              'flex-1 py-1.5 text-[11px] font-medium transition-colors',
-              activeTab === id
-                ? 'bg-muted/60 text-foreground'
-                : 'text-muted-foreground hover:text-foreground hover:bg-muted/30',
-            ].join(' ')}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {/* ─── Tab header (hidden when controlled externally) ─── */}
+      {!activeView && (
+        <div className="flex border-b border-border/60">
+          {(
+            [
+              { id: 'match'   as ActiveTab, label: 'Match Stats' },
+              { id: 'players' as ActiveTab, label: 'Players'     },
+            ]
+          ).map(({ id, label }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setActiveTab(id)}
+              className={[
+                'flex-1 py-1.5 text-[11px] font-medium transition-colors',
+                effectiveTab === id
+                  ? 'bg-muted/60 text-foreground'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/30',
+              ].join(' ')}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
-      <div className="p-3 space-y-3">
+      <div className={activeView ? 'space-y-3' : 'p-3 space-y-3'}>
 
         {/* ════════════════ MATCH STATS TAB ════════════════ */}
-        {activeTab === 'match' && (
+        {effectiveTab === 'match' && (
           <>
             {/* Team legend */}
             <div className="flex items-center justify-between text-[11px]">
@@ -583,7 +673,7 @@ export function LiveStatsDashboard({
         )}
 
         {/* ════════════════ PLAYERS TAB ════════════════ */}
-        {activeTab === 'players' && (
+        {effectiveTab === 'players' && (
           <div className="space-y-3">
             {/* Column headers */}
             <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wide border-b border-border/40 pb-1">
@@ -616,8 +706,10 @@ export function LiveStatsDashboard({
                     player={player}
                     teamColor={homeColor}
                     fatigueEst={estimateFatigue(stat, base)}
-                    togMinutes={stat.minutesPlayed}
+                    togMinutes={computeTogMinutes(stat.playerId, homeStarterIds, homeRotationEvents, totalMatchMinutes)}
                     totalMatchMinutes={totalMatchMinutes}
+                    onGround={isOnGround(stat.playerId, homeStarterIds, homeRotationEvents, totalMatchMinutes)}
+                    onPlayerClick={(id) => navigate(`/player/${id}`)}
                   />
                 )
               })}
@@ -643,8 +735,10 @@ export function LiveStatsDashboard({
                     player={player}
                     teamColor={awayColor}
                     fatigueEst={estimateFatigue(stat, base)}
-                    togMinutes={stat.minutesPlayed}
+                    togMinutes={computeTogMinutes(stat.playerId, awayStarterIds, awayRotationEvents, totalMatchMinutes)}
                     totalMatchMinutes={totalMatchMinutes}
+                    onGround={isOnGround(stat.playerId, awayStarterIds, awayRotationEvents, totalMatchMinutes)}
+                    onPlayerClick={(id) => navigate(`/player/${id}`)}
                   />
                 )
               })}
@@ -656,6 +750,14 @@ export function LiveStatsDashboard({
               <span>M = marks</span>
               <span>T = tackles</span>
               <span>TOG = time on ground</span>
+              <div className="flex items-center gap-1">
+                <div className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                <span>on ground</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                <span>bench</span>
+              </div>
               <div className="flex items-center gap-1">
                 <div className="h-1.5 w-1.5 rounded-full bg-green-500" />
                 <div className="h-1.5 w-1.5 rounded-full bg-yellow-500" />

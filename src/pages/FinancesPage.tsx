@@ -178,23 +178,22 @@ function CapacityBadge({ level }: { level: string }) {
 
 function OverviewTab({ clubId }: { clubId: string }) {
   const navigate = useNavigate()
-  const { clubs, history, sponsorshipOffers } = useGameStore((s) => ({
-    clubs: s.clubs,
-    history: s.history,
-    sponsorshipOffers: s.sponsorshipOffers,
-  }))
+  const clubs = useGameStore((s) => s.clubs)
+  const history = useGameStore((s) => s.history)
+  const sponsorshipOffers = useGameStore((s) => s.sponsorshipOffers)
   const playersRecord = useGameStore((s) => s.players)
   const staffRecord = useGameStore((s) => s.staff)
   const players = useMemo(() => Object.values(playersRecord), [playersRecord])
   const staff = useMemo(() => Object.values(staffRecord), [staffRecord])
 
   const club = clubs[clubId]
-  if (!club) return null
 
   const health = useMemo(
-    () => calculateFinancialHealth(club, players, staff),
+    () => club ? calculateFinancialHealth(club, players, staff) : null,
     [club, players, staff],
   )
+
+  if (!club || !health) return null
 
   const revenue = club.finances.seasonRevenue
   const expenses = club.finances.seasonExpenses
@@ -537,12 +536,10 @@ function ExpensesTab({ clubId }: { clubId: string }) {
 
 function MembershipTab({ clubId }: { clubId: string }) {
   const navigate = useNavigate()
-  const { clubs, phase, runMembershipCampaign, sponsorshipOffers } = useGameStore((s) => ({
-    clubs: s.clubs,
-    phase: s.phase,
-    runMembershipCampaign: s.runMembershipCampaign,
-    sponsorshipOffers: s.sponsorshipOffers,
-  }))
+  const clubs = useGameStore((s) => s.clubs)
+  const phase = useGameStore((s) => s.phase)
+  const runMembershipCampaign = useGameStore((s) => s.runMembershipCampaign)
+  const sponsorshipOffers = useGameStore((s) => s.sponsorshipOffers)
   const [campaignBudget, setCampaignBudget] = useState(200_000)
   const [campaignResult, setCampaignResult] = useState<{ success: boolean; boost: number } | null>(null)
 
@@ -1200,10 +1197,8 @@ function LoansTab({ clubId }: { clubId: string }) {
 // ---------------------------------------------------------------------------
 
 export function FinancesPage() {
-  const { playerClubId, clubs } = useGameStore((s) => ({
-    playerClubId: s.playerClubId,
-    clubs: s.clubs,
-  }))
+  const playerClubId = useGameStore((s) => s.playerClubId)
+  const clubs = useGameStore((s) => s.clubs)
 
   const club = clubs[playerClubId]
   if (!club) return null

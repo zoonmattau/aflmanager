@@ -1,7 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react'
-import { useDashboardConfig } from '@/hooks/useDashboardConfig'
-import type { DashboardWidgetId } from '@/hooks/useDashboardConfig'
-import { DashboardCustomizeSheet } from '@/components/dashboard/DashboardCustomizeSheet'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { h2hKey, isRivalryMatch, h2hPerspective } from '@/engine/history/h2hTracker'
 import { useGameStore } from '@/stores/gameStore'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -30,8 +27,7 @@ import {
   Plus, Moon, X,
   Users, ClipboardList, Shield, ShieldAlert, BarChart3, Gamepad2,
   AlertTriangle, GraduationCap, Scale, Mail, FileText, Cog, DollarSign,
-  Newspaper, TrendingUp, TrendingDown, Minus, LayoutGrid,
-  Flame, CheckCircle2, Zap,
+  Newspaper, TrendingUp, TrendingDown, Minus,
   Sun, CloudRain, Wind, Thermometer, Droplets,
 } from 'lucide-react'
 import type { Match } from '@/types/match'
@@ -75,32 +71,26 @@ import {
 } from '@/engine/offseason/offseasonCalendar'
 import { MatchEngagementBanner } from '@/components/dashboard/MatchEngagementBanner'
 import { RecommendedActions } from '@/components/dashboard/RecommendedActions'
-import { PlayerStorylinesWidget } from '@/components/dashboard/PlayerStorylinesWidget'
-import { DynastyQuestCard } from '@/components/dashboard/DynastyQuestCard'
 import { ClubListNeedsCard } from '@/components/dashboard/ClubListNeedsCard'
 import { OffseasonPhaseCard } from '@/components/dashboard/OffseasonPhaseCard'
 import { PhaseProgressCard } from '@/components/dashboard/PhaseProgressCard'
 import { OffseasonCalendarOverlay } from '@/components/dashboard/OffseasonCalendarOverlay'
 import { calculateClubSalaryTotal, calculateLuxuryTax } from '@/engine/contracts/negotiation'
 import { isPlayerSuspended } from '@/engine/players/availability'
-import { canBeSelectedForAfl } from '@/engine/players/contracts'
 import { PLAYER_TRAINING_FOCUS_LABELS } from '@/engine/players/trainingFocus'
 import { applyMediaCoverage, deriveMediaStories } from '@/engine/media/mediaFeedEngine'
 import { LiveMatchView } from '@/components/match/LiveMatchView'
-import { MatchupFieldPreview } from '@/components/lineup/MatchupFieldPreview'
-import { TrainingReportCard } from '@/components/training/TrainingReportCard'
 import { buildSpecialEventSimInput } from '@/engine/specialEvents/specialEventSimInput'
 import type { SimulateMatchInput } from '@/engine/match/simulateMatch'
 import type { SpecialEventInstance } from '@/types/specialEvents'
 import { NewChallengeModal } from '@/components/legacy/NewChallengeModal'
 import { buildLegacyRating } from '@/engine/legacy/legacyEngine'
-import type { BettingMarketsState } from '@/types/betting'
 import { computeLeadershipStabilityPct } from '@/engine/leadership/leadershipChangeEngine'
 import { generateRivalScoutReport } from '@/engine/match/rivalScoutEngine'
 import { generateMatchWeather, windDirectionArrow, windStrengthLabel } from '@/engine/match/weatherEngine'
 import type { MatchWeatherData } from '@/engine/match/weatherEngine'
+import { venueHasRoof } from '@/data/venues'
 import { buildSquadStorylines } from '@/engine/player/storyArc'
-import { cn } from '@/lib/utils'
 
 // Stable fallback for optional h2hRecords (avoids new-reference-per-render in selector)
 const EMPTY_H2H: Record<string, import('@/types/history').H2HRecord> = {}
@@ -108,109 +98,24 @@ const EMPTY_H2H: Record<string, import('@/types/history').H2HRecord> = {}
 // ---------------------------------------------------------------------------
 // Calendar constants
 // ---------------------------------------------------------------------------
+// Blue = match-related, Purple = reserves, Green = training, Orange = admin/deadlines, Amber = special, Gray = bye
 const EVENT_COLORS: Record<GameEventType, string> = {
-  match: 'bg-blue-500',
-  training: 'bg-green-500',
+  match:               'bg-blue-500',
+  'reserves-match':    'bg-purple-500',
+  training:            'bg-green-500',
+  'preseason-friendly':'bg-blue-500',
+  bye:                 'bg-gray-400',
   'contract-deadline': 'bg-orange-500',
-  'trade-deadline': 'bg-purple-500',
-  draft: 'bg-yellow-500',
-  'preseason-friendly': 'bg-teal-500',
-  bye: 'bg-gray-400',
-  milestone: 'bg-pink-500',
-  'special-event': 'bg-amber-500',
-  tribunal: 'bg-orange-500',
+  'trade-deadline':    'bg-orange-500',
+  draft:               'bg-orange-500',
+  tribunal:            'bg-orange-500',
+  'jumper-management': 'bg-orange-500',
+  milestone:           'bg-amber-500',
+  'special-event':     'bg-amber-500',
 }
 
 const SHORT_DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-// ---------------------------------------------------------------------------
-// Training slot colour helpers (used in Training Overview card)
-// ---------------------------------------------------------------------------
-const SLOT_ABBREV: Record<string, string> = {
-  rest: '−', recovery: 'Rc', physical: 'Ph', contested: 'Co',
-  'match-fitness': 'MF', kicking: 'Kk', handball: 'Hb', marking: 'Mk',
-  'game-sense': 'GS', offensive: 'Of', defensive: 'Df',
-  'set-pieces': 'SP', 'video-review': 'VR', mental: 'Mn', ruck: 'Rk',
-}
-
-function getSlotBgClass(focus: TrainingFocus | 'rest'): string {
-  switch (focus) {
-    case 'rest': return 'bg-sky-500/20 text-sky-700 dark:text-sky-300'
-    case 'recovery': return 'bg-teal-500/20 text-teal-700 dark:text-teal-300'
-    case 'physical': case 'contested': case 'match-fitness':
-      return 'bg-red-500/20 text-red-700 dark:text-red-300'
-    case 'kicking': case 'handball': case 'marking':
-      return 'bg-green-500/20 text-green-700 dark:text-green-300'
-    case 'game-sense': case 'offensive': case 'defensive': case 'set-pieces':
-      return 'bg-purple-500/20 text-purple-700 dark:text-purple-300'
-    case 'video-review': return 'bg-zinc-500/20 text-zinc-700 dark:text-zinc-300'
-    case 'mental': return 'bg-blue-500/20 text-blue-700 dark:text-blue-300'
-    case 'ruck': return 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
-    default: return 'bg-muted/40 text-muted-foreground'
-  }
-}
-
-function getSlotDotClass(focus: TrainingFocus | 'rest'): string {
-  switch (focus) {
-    case 'rest': return 'bg-sky-400'
-    case 'recovery': return 'bg-teal-400'
-    case 'physical': case 'contested': case 'match-fitness': return 'bg-red-400'
-    case 'kicking': case 'handball': case 'marking': return 'bg-green-400'
-    case 'game-sense': case 'offensive': case 'defensive': case 'set-pieces': return 'bg-purple-400'
-    case 'video-review': return 'bg-zinc-400'
-    case 'mental': return 'bg-blue-400'
-    case 'ruck': return 'bg-amber-400'
-    default: return 'bg-muted'
-  }
-}
-
-function getLoadBarClass(level: string): string {
-  switch (level) {
-    case 'low': return 'bg-green-500'
-    case 'moderate': return 'bg-yellow-500'
-    case 'high': return 'bg-orange-500'
-    case 'extreme': return 'bg-red-600'
-    default: return 'bg-muted'
-  }
-}
-
-function getLoadBarWidth(level: string): string {
-  switch (level) {
-    case 'low': return '25%'
-    case 'moderate': return '50%'
-    case 'high': return '75%'
-    case 'extreme': return '100%'
-    default: return '0%'
-  }
-}
-
-function getLoadTextClass(level: string): string {
-  switch (level) {
-    case 'low': return 'text-green-600 dark:text-green-400'
-    case 'moderate': return 'text-yellow-600 dark:text-yellow-400'
-    case 'high': return 'text-orange-600 dark:text-orange-400'
-    case 'extreme': return 'text-red-600 dark:text-red-400'
-    default: return 'text-muted-foreground'
-  }
-}
-
-function getRiskDotClass(risk: string): string {
-  switch (risk) {
-    case 'low': return 'bg-green-500'
-    case 'moderate': return 'bg-yellow-500'
-    case 'elevated': return 'bg-red-500'
-    default: return 'bg-muted'
-  }
-}
-
-function getRiskTextClass(risk: string): string {
-  switch (risk) {
-    case 'low': return 'text-green-600 dark:text-green-400'
-    case 'moderate': return 'text-yellow-600 dark:text-yellow-400'
-    case 'elevated': return 'text-red-600 dark:text-red-400'
-    default: return 'text-muted-foreground'
-  }
-}
 
 const POSITION_LABELS: Record<PlayerPositionType, string> = {
   BP: 'Back Pocket',
@@ -247,49 +152,6 @@ const TRAINING_FOCUS_OPTIONS: { value: TrainingFocus | 'rest'; label: string; co
   { value: 'rest',          label: 'Rest',           color: 'bg-gray-400' },
 ]
 
-// Position group benefit mapping
-type PositionGroup = 'Forwards' | 'Midfielders' | 'Defenders' | 'Rucks' | 'All'
-
-const FOCUS_POSITION_GROUPS: Record<TrainingFocus, PositionGroup[]> = {
-  kicking:        ['All'],
-  handball:       ['Midfielders', 'Forwards'],
-  marking:        ['Forwards', 'Defenders'],
-  physical:       ['All'],
-  contested:      ['Midfielders'],
-  'game-sense':   ['Midfielders', 'Forwards'],
-  offensive:      ['Forwards'],
-  defensive:      ['Defenders'],
-  ruck:           ['Rucks'],
-  mental:         ['All'],
-  'set-pieces':   ['Midfielders', 'Rucks'],
-  'match-fitness': ['All'],
-  recovery:       ['All'],
-}
-
-// Fatigue cost per intensity (from trainingEngine constants)
-const SLOT_FATIGUE: Record<'morning' | 'afternoon', number> = {
-  morning: 8,    // moderate intensity
-  afternoon: 3,  // light intensity
-}
-
-// Broad skill area that each training focus contributes to
-type SkillArea = 'Disposal' | 'Contested' | 'Physical' | 'Tactical' | 'Mental' | 'Set Play' | 'Recovery'
-
-const FOCUS_SKILL_AREA: Record<TrainingFocus, SkillArea> = {
-  kicking:        'Disposal',
-  handball:       'Disposal',
-  marking:        'Contested',
-  physical:       'Physical',
-  contested:      'Contested',
-  'game-sense':   'Tactical',
-  offensive:      'Tactical',
-  defensive:      'Tactical',
-  ruck:           'Contested',
-  mental:         'Mental',
-  'set-pieces':   'Set Play',
-  'match-fitness': 'Physical',
-  recovery:       'Recovery',
-}
 
 function getSlotColor(activity: TrainingFocus | 'rest'): string {
   return TRAINING_FOCUS_OPTIONS.find((o) => o.value === activity)?.color ?? 'bg-gray-500'
@@ -387,23 +249,6 @@ function hashCode(str: string): number {
 function getWeekStart(dateStr: string): string {
   return addDays(dateStr, -1)
 }
-
-type MatchupOption =
-  | {
-      key: string
-      kind: 'match'
-      round: number
-      roundDate: string
-      opponentId: string
-      homeAway: 'home' | 'away'
-      venue: string
-    }
-  | {
-      key: string
-      kind: 'bye'
-      round: number
-      roundDate: string
-    }
 
 // ---------------------------------------------------------------------------
 // Schedule Slot Cell (morning / afternoon)
@@ -520,9 +365,6 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
   const boardInstability = useGameStore((s) => s.boardInstability)
   const reserves = useGameStore((s) => s.reserves)
   const selectedLineup = useGameStore((s) => s.selectedLineup)
-  const selectedSubstituteId = useGameStore((s) => s.selectedSubstituteId)
-  const trainingWeekPlan = useGameStore((s) => s.trainingWeekPlan)
-  const lastTrainingReport = useGameStore((s) => s.lastTrainingReport)
   const currentDate = useGameStore((s) => s.currentDate)
   const simulationActive = useGameStore((s) => s.simulation.active)
 
@@ -531,7 +373,6 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
   const enterOffseason = useGameStore((s) => s.enterOffseason)
   const offseasonState = useGameStore((s) => s.offseasonState)
   const legacyState = useGameStore((s) => s.legacyState)
-  const dynastyQuests = useGameStore((s) => s.dynastyQuests ?? [])
   const careerObjectives = useGameStore((s) => s.careerObjectives)
   const leadershipPending = useGameStore((s) => s.leadershipPending)
   const leadershipDisruptions = useGameStore((s) => s.leadershipDisruptions)
@@ -549,8 +390,6 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
   const offseasonDate = offseasonState?.calendarState?.currentDate ?? currentDate
   const effectiveDate = isOffseason ? offseasonDate : currentDate
 
-  const { widgets, setVisible, reorder, reset } = useDashboardConfig()
-  const [customiseOpen, setCustomiseOpen] = useState(false)
 
   const [lastResult, setLastResult] = useState<Match | null>(null)
   const [lastSpecialResult, _setLastSpecialResult] = useState<import('@/types/specialEvents').SpecialEventMatchResult | null>(null)
@@ -629,12 +468,14 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
   const forecastWeather = useMemo(() => {
     if (!nextFixture) return null
     const seed = Math.abs(
-      nextFixture.round * 31337 ^
+      currentRound * 31337 ^
       (nextFixture.homeClubId.charCodeAt(0) * 1997) ^
       (nextFixture.awayClubId.charCodeAt(0) * 997),
     )
-    return generateMatchWeather(new SeededRNG(seed), (nextFixture as { venueId?: string }).venueId)
-  }, [nextFixture])
+    const vid = (nextFixture as { venueId?: string }).venueId
+    const venueName = nextFixture.venue
+    return generateMatchWeather(new SeededRNG(seed), vid, venueHasRoof(vid, settings.venueRoofOverrides, venueName, settings.customStadiums))
+  }, [nextFixture, settings.venueRoofOverrides, settings.customStadiums])
 
   const opponentLadderEntry = opponentId ? ladder.find((e) => e.clubId === opponentId) : null
   const opponentLadderPosition = opponentId ? ladder.findIndex((e) => e.clubId === opponentId) + 1 : 0
@@ -724,36 +565,6 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
   const isBye = ((nextRound?.byeClubIds ?? []).includes(playerClubId))
     || (nextRound && !nextFixture && phase === 'regular-season')
 
-  const potentialMatchups = useMemo(() => {
-    if (phase !== 'regular-season') return [] as MatchupOption[]
-    const out: MatchupOption[] = []
-    for (let idx = currentRound; idx < Math.min(season.rounds.length, currentRound + 5); idx++) {
-      const round = season.rounds[idx]
-      if (!round) continue
-      if ((round.byeClubIds ?? []).includes(playerClubId)) {
-        out.push({
-          key: `bye-${idx}`,
-          kind: 'bye',
-          round: idx + 1,
-          roundDate: getFixtureDateIso(settings.seasonStartDate, idx),
-        })
-        continue
-      }
-      const fixture = round.fixtures.find((f) => f.homeClubId === playerClubId || f.awayClubId === playerClubId)
-      if (!fixture) continue
-      const oppId = fixture.homeClubId === playerClubId ? fixture.awayClubId : fixture.homeClubId
-      out.push({
-        key: `match-${idx}-${oppId}`,
-        kind: 'match',
-        round: idx + 1,
-        roundDate: getFixtureDateIso(settings.seasonStartDate, idx, fixture.matchDay),
-        opponentId: oppId,
-        homeAway: fixture.homeClubId === playerClubId ? 'home' : 'away',
-        venue: fixture.venue,
-      })
-    }
-    return out
-  }, [phase, currentRound, season.rounds, settings.seasonStartDate, playerClubId])
 
   // Week days for the current view
   // During offseason, inject milestone events into the week — but skip milestones
@@ -1275,71 +1086,6 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
 
   // Pending actions
   // Training schedule summary
-  const scheduleSummary = useMemo(() => {
-    const sessions: { focus: TrainingFocus | 'rest'; slot: 'morning' | 'afternoon' }[] = []
-    for (const [_dateStr, daySched] of Object.entries(weekSchedule)) {
-      for (const slot of ['morning', 'afternoon'] as const) {
-        const activity = daySched[slot]
-        if (activity) {
-          sessions.push({ focus: activity, slot })
-        }
-      }
-    }
-    if (sessions.length === 0) return null
-
-    const trainingSessions = sessions.filter((s) => s.focus !== 'rest')
-    const restCount = sessions.filter((s) => s.focus === 'rest').length
-
-    // Fatigue
-    let totalFatigue = 0
-    for (const s of sessions) {
-      if (s.focus === 'rest') continue
-      totalFatigue += SLOT_FATIGUE[s.slot]
-      if (s.focus === 'recovery') totalFatigue -= SLOT_FATIGUE[s.slot] * 0.5
-    }
-
-    let fatigueLevel: 'low' | 'moderate' | 'high' | 'extreme'
-    if (totalFatigue <= 10) fatigueLevel = 'low'
-    else if (totalFatigue <= 25) fatigueLevel = 'moderate'
-    else if (totalFatigue <= 45) fatigueLevel = 'high'
-    else fatigueLevel = 'extreme'
-
-    // Injury risk
-    const hasRecovery = sessions.some((s) => s.focus === 'recovery')
-    const moderateSessions = sessions.filter((s) => s.slot === 'morning' && s.focus !== 'rest').length
-    let injuryRisk: 'low' | 'moderate' | 'elevated'
-    if (moderateSessions >= 4 && !hasRecovery) injuryRisk = 'elevated'
-    else if (moderateSessions >= 3 && !hasRecovery) injuryRisk = 'moderate'
-    else injuryRisk = 'low'
-
-    // Broad skill areas being developed
-    const skillAreas = new Set<SkillArea>()
-    for (const s of trainingSessions) {
-      skillAreas.add(FOCUS_SKILL_AREA[s.focus as TrainingFocus])
-    }
-
-    // Position groups targeted
-    const groupSet = new Set<PositionGroup>()
-    for (const s of trainingSessions) {
-      for (const g of FOCUS_POSITION_GROUPS[s.focus as TrainingFocus]) {
-        groupSet.add(g)
-      }
-    }
-    const hitsAll = groupSet.has('All')
-    const specificGroups = (['Forwards', 'Midfielders', 'Defenders', 'Rucks'] as PositionGroup[])
-      .filter((g) => groupSet.has(g))
-
-    return {
-      training: trainingSessions.length,
-      rest: restCount,
-      totalFatigue: Math.round(totalFatigue),
-      fatigueLevel,
-      injuryRisk,
-      skillAreas: Array.from(skillAreas),
-      hitsAll,
-      specificGroups,
-    }
-  }, [weekSchedule])
 
   const clubPlayers = useMemo(
     () => Object.values(players).filter((p) => p.clubId === playerClubId),
@@ -1428,11 +1174,6 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
         ? 'text-orange-400'
         : 'text-red-400'
 
-  const upcomingWeekEvents = useMemo(() => {
-    const weekEnd = addDays(effectiveDate, 6)
-    return effectiveEvents.filter((e) => e.date >= effectiveDate && e.date <= weekEnd)
-  }, [effectiveEvents, effectiveDate])
-
   const deadlineCountdowns = useMemo(
     () => getDeadlineCountdowns(effectiveEvents, effectiveDate, 5),
     [effectiveEvents, effectiveDate],
@@ -1447,28 +1188,6 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
     }
     return count
   }, [weekSchedule])
-
-  const plannedGroupCount = useMemo(() => {
-    if (!trainingWeekPlan) return 0
-    let count = 0
-    for (const day of Object.values(trainingWeekPlan.slots)) {
-      count += day.morning.groups.length + day.afternoon.groups.length
-    }
-    return count
-  }, [trainingWeekPlan])
-
-  const squadPulseSummary = useMemo(() => {
-    let primed = 0
-    let concern = 0
-    for (const p of Object.values(players)) {
-      if (p.clubId !== playerClubId || p.injury) continue
-      const lastNote = p.pulseNotes?.[p.pulseNotes.length - 1]
-      if (!lastNote) continue
-      if (lastNote.modifier >= 0.02) primed++
-      else if (lastNote.modifier <= -0.025) concern++
-    }
-    return { primed, concern }
-  }, [players, playerClubId])
 
   const reservesTopRating = useMemo(() => {
     const ownPerformances = reserves.lastRoundPerformances
@@ -1550,15 +1269,6 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
                     {unreadCount}
                   </span>
                 )}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 px-0"
-                onClick={() => setCustomiseOpen(true)}
-                title="Customise dashboard"
-              >
-                <LayoutGrid className="h-4 w-4" />
               </Button>
             </div>
             <p className="text-muted-foreground">
@@ -1733,7 +1443,7 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
           isFinals={phase === 'finals'}
           liveSimMode={settings.notifications.liveSimMode ?? 'always-live'}
           opponentColor={opponent?.colors.primary}
-          onGoToMatchDay={() => navigate('/match-day')}
+          onGoToMatchDay={() => navigate('/fixture')}
           onGoToLineup={() => navigate('/lineup')}
           onSimulate={handleSimWeek}
         />
@@ -1804,44 +1514,41 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
                     </span>
                   </div>
 
-                  {/* Day content: events, training slots, or offseason overlay */}
-                  {day.events.some((e) => e.type !== 'training') ? (
-                    <div className="flex flex-col gap-0.5 my-auto w-full px-1.5">
-                      {day.events.filter((e) => e.type !== 'training').map((evt) => (
-                        <div
-                          key={evt.id}
-                          className={`flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-white ${EVENT_COLORS[evt.type]}`}
-                        >
-                          <span className="truncate">{evt.title}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : isOffseason ? (
-                    /* Offseason: show phase overlay instead of training */
-                    <div className="flex flex-col flex-1 px-1.5 pb-1.5 mt-1">
+                  {/* Day content: events + training slots (or offseason overlay) */}
+                  <div className="flex flex-col flex-1 gap-0.5 px-1.5 pb-1.5 mt-0.5">
+                    {/* Non-training event labels */}
+                    {day.events.filter((e) => e.type !== 'training').map((evt) => (
+                      <div
+                        key={evt.id}
+                        className={`flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-white ${EVENT_COLORS[evt.type]}`}
+                      >
+                        <span className="truncate">{evt.title}</span>
+                      </div>
+                    ))}
+                    {/* Training slots or offseason overlay */}
+                    {isOffseason && !day.events.some((e) => e.type !== 'training') ? (
                       <OffseasonCalendarOverlay
                         date={day.date}
                         milestones={offseasonState?.calendarState?.milestones ?? []}
                         currentPhase={offseasonState?.currentPhase ?? 'season-end'}
                       />
-                    </div>
-                  ) : (
-                    /* Non-match day: morning/afternoon slots */
-                    <div className="flex flex-col flex-1 gap-0.5 px-1.5 pb-1.5 mt-1">
-                      <ScheduleSlotCell
-                        slot="morning"
-                        activity={daySchedule?.morning ?? null}
-                        isPast={isPastDay}
-                        onSelect={(activity) => setDaySlot(day.date, 'morning', activity)}
-                      />
-                      <ScheduleSlotCell
-                        slot="afternoon"
-                        activity={daySchedule?.afternoon ?? null}
-                        isPast={isPastDay}
-                        onSelect={(activity) => setDaySlot(day.date, 'afternoon', activity)}
-                      />
-                    </div>
-                  )}
+                    ) : !isOffseason && !day.hasMatch ? (
+                      <>
+                        <ScheduleSlotCell
+                          slot="morning"
+                          activity={daySchedule?.morning ?? null}
+                          isPast={isPastDay}
+                          onSelect={(activity) => setDaySlot(day.date, 'morning', activity)}
+                        />
+                        <ScheduleSlotCell
+                          slot="afternoon"
+                          activity={daySchedule?.afternoon ?? null}
+                          isPast={isPastDay}
+                          onSelect={(activity) => setDaySlot(day.date, 'afternoon', activity)}
+                        />
+                      </>
+                    ) : null}
+                  </div>
                 </div>
               )
             })}
@@ -1852,16 +1559,12 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
             {isOffseason ? (
               <>
                 <div className="flex items-center gap-1">
-                  <div className="h-2 w-2 rounded-full bg-pink-500" />
+                  <div className="h-2 w-2 rounded-full bg-amber-500" />
                   <span>Milestone</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <div className="h-2 w-2 rounded-full bg-purple-500" />
-                  <span>Trade</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="h-2 w-2 rounded-full bg-yellow-500" />
-                  <span>Draft</span>
+                  <div className="h-2 w-2 rounded-full bg-orange-500" />
+                  <span>Deadline / Admin</span>
                 </div>
               </>
             ) : (
@@ -1869,6 +1572,10 @@ const h2hRecords = useGameStore((s) => s.history.h2hRecords) ?? EMPTY_H2H
                 <div className="flex items-center gap-1">
                   <div className="h-2 w-2 rounded-full bg-blue-500" />
                   <span>Match</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="h-2 w-2 rounded-full bg-purple-500" />
+                  <span>Reserves</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <div className="h-2 w-2 rounded-full bg-green-500" />
@@ -3008,6 +2715,8 @@ interface MatchupCardProps {
   matchScoutReport: import('@/engine/match/rivalScoutEngine').RivalScoutReport | null
   myMatchStorylines: import('@/engine/player/storyArc').PlayerStoryArc[]
   forecastWeather: MatchWeatherData | null
+  bettingMarkets: import('@/types/betting').BettingMarketsState | null
+  bettingEnabled: boolean
 }
 
 function FormBadges({ form }: { form: string[] }) {

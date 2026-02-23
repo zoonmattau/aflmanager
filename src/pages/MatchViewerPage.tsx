@@ -25,6 +25,7 @@ import { SeededRNG } from '@/engine/core/rng'
 import type { SimulateMatchInput } from '@/engine/match/simulateMatch'
 import type { Match } from '@/types/match'
 import type { Fixture } from '@/types/season'
+import { VENUES, venueHasRoof } from '@/data/venues'
 
 // ---------------------------------------------------------------------------
 // Nav state type
@@ -81,6 +82,8 @@ export function MatchViewerPage() {
   const simCurrentRound     = useGameStore((s) => s.simCurrentRound)
   const userWeeklyGameplan  = playerClubId ? weeklyGameplans[playerClubId] : undefined
 
+  const venueEnds = venueId ? VENUES[venueId]?.ends : undefined
+
   // Route guard — if no data was passed in, go back
   const hasData = homeClubId && awayClubId
 
@@ -106,8 +109,8 @@ export function MatchViewerPage() {
   const weatherData = useMemo(() => {
     if (!hasData) return null
     const rng = new SeededRNG(seed + 8888)
-    return generateMatchWeather(rng, venueId)
-  }, [hasData, seed, venueId])
+    return generateMatchWeather(rng, venueId, venueHasRoof(venueId, settings.venueRoofOverrides, venue, settings.customStadiums))
+  }, [hasData, seed, venueId, venue, settings.venueRoofOverrides, settings.customStadiums])
 
   // Build simInput for the match
   const simInput = useMemo<SimulateMatchInput | null>(() => {
@@ -149,6 +152,8 @@ export function MatchViewerPage() {
       awayLineupPlayerIds,
       homeSubstituteId,
       awaySubstituteId,
+      venueRoofOverrides: settings.venueRoofOverrides,
+      customStadiums: settings.customStadiums,
     }
   }, [
     hasData, isPastGame, homeClubId, awayClubId, venue, venueId,
@@ -158,14 +163,22 @@ export function MatchViewerPage() {
 
   // Slot lineups for field view
   const userIsHome = playerClubId === homeClubId
-  const homeSlotLineup = useMemo(
-    () => (isUserMatch && userIsHome && selectedLineup ? (selectedLineup as Record<string, string>) : undefined),
-    [isUserMatch, userIsHome, selectedLineup],
-  )
-  const awaySlotLineup = useMemo(
-    () => (isUserMatch && !userIsHome && selectedLineup ? (selectedLineup as Record<string, string>) : undefined),
-    [isUserMatch, userIsHome, selectedLineup],
-  )
+  const homeSlotLineup = useMemo(() => {
+    if (isUserMatch && userIsHome && selectedLineup) return selectedLineup as Record<string, string>
+    // Spectator / away user — build AI lineup for home team so magnets appear
+    return selectBestLineup(Object.values(players), homeClubId, {
+      interchangePlayers: settings.matchRules.interchangePlayers,
+      club: clubs[homeClubId],
+    }).lineup
+  }, [isUserMatch, userIsHome, selectedLineup, players, homeClubId, settings.matchRules.interchangePlayers, clubs])
+  const awaySlotLineup = useMemo(() => {
+    if (isUserMatch && !userIsHome && selectedLineup) return selectedLineup as Record<string, string>
+    // Spectator / home user — build AI lineup for away team so magnets appear
+    return selectBestLineup(Object.values(players), awayClubId, {
+      interchangePlayers: settings.matchRules.interchangePlayers,
+      club: clubs[awayClubId],
+    }).lineup
+  }, [isUserMatch, userIsHome, selectedLineup, players, awayClubId, settings.matchRules.interchangePlayers, clubs])
 
   // Gameplans for the viewer
   const homeGameplan = (isUserMatch && userIsHome && userWeeklyGameplan?.overrides)
@@ -263,6 +276,7 @@ export function MatchViewerPage() {
           weatherData={weatherData}
           seed={seed}
           showOdds={false}
+          venueEnds={venueEnds}
           onKickOff={handleKickOff}
           onBack={() => navigate('/calendar')}
         />

@@ -36,7 +36,9 @@ import {
 import { FinalsFormatEditor } from '@/pages/wizard/FinalsFormatEditor'
 import { TeamEditorPanel } from '@/components/teams/TeamEditorPanel'
 import type { TeamEditorData } from '@/components/teams/TeamEditorPanel'
-import { ChevronDown, ChevronRight, Check, RotateCcw } from 'lucide-react'
+import { FixtureEditModal } from '@/components/fixtures/FixtureEditModal'
+import { ChevronDown, ChevronRight, Check, RotateCcw, Lock } from 'lucide-react'
+import { VENUES } from '@/data/venues'
 import { useAppStore } from '@/stores/appStore'
 import { resetTour } from '@/components/onboarding/CoachmarkTour'
 
@@ -195,6 +197,8 @@ export function GameSettingsPage() {
   const updateGlobalSettings = useAppStore((s) => s.updateGlobalSettings)
   const settings = useGameStore((s) => s.settings)
   const clubs = useGameStore((s) => s.clubs)
+  const season = useGameStore((s) => s.season)
+  const matchResults = useGameStore((s) => s.matchResults)
   const leagueConfig = useGameStore((s) => s.leagueConfig)
   const stateLeagues = useGameStore((s) => s.stateLeagues)
   const updateGameSettings = useGameStore((s) => s.updateGameSettings)
@@ -212,7 +216,12 @@ export function GameSettingsPage() {
     realism: false,
     distributions: false,
     teams: false,
+    fixtures: false,
   })
+  const [fixtureEditRound, setFixtureEditRound] = useState(0)
+  const [fixtureEditModal, setFixtureEditModal] = useState<{ roundIndex: number; fixtureIndex: number } | null>(null)
+
+  const canEditFixture = !matchResults.some((m) => m.result !== null)
 
   useEffect(() => {
     setDraft(settings)
@@ -1490,6 +1499,121 @@ export function GameSettingsPage() {
             ))}
           </CardContent>
           )}
+        </Card>
+
+        {/* Fixture Editor */}
+        <Card className="xl:col-span-2">
+          <CardHeader>
+            <button type="button" className="flex w-full items-center justify-between" onClick={() => toggleSection('fixtures')}>
+              <CardTitle className="text-base flex items-center gap-2">
+                Fixture Editor
+                {!canEditFixture && <Lock className="h-3.5 w-3.5 text-muted-foreground" />}
+              </CardTitle>
+              {sectionsOpen.fixtures ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+            </button>
+          </CardHeader>
+          {sectionsOpen.fixtures && (
+            <CardContent className="space-y-4">
+              {!canEditFixture && (
+                <div className="rounded border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+                  Fixture editing is locked after the first game of the season has been played.
+                </div>
+              )}
+              <div className={!canEditFixture ? 'pointer-events-none opacity-50' : ''}>
+                <div className="flex items-center gap-2 mb-3">
+                  <Label className="text-sm shrink-0">Round</Label>
+                  <Select
+                    value={String(fixtureEditRound)}
+                    onValueChange={(v) => setFixtureEditRound(Number(v))}
+                  >
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {season.rounds.map((r, i) => (
+                        <SelectItem key={i} value={String(i)}>{r.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  {(season.rounds[fixtureEditRound]?.fixtures ?? []).map((fixture, idx) => {
+                    const home = clubs[fixture.homeClubId]
+                    const away = clubs[fixture.awayClubId]
+                    return (
+                      <div
+                        key={`${fixture.homeClubId}-${fixture.awayClubId}-${idx}`}
+                        className="flex items-center justify-between rounded border px-3 py-2 text-sm"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{home?.abbreviation ?? fixture.homeClubId}</span>
+                          <span className="text-muted-foreground">vs</span>
+                          <span className="font-medium">{away?.abbreviation ?? fixture.awayClubId}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">
+                            {(fixture.matchDay ?? 'Saturday-Twilight').replace('-', ' ')}
+                            {fixture.scheduledTime ? ` · ${fixture.scheduledTime}` : ''}
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-6 px-2 text-xs"
+                            onClick={() => setFixtureEditModal({ roundIndex: fixtureEditRound, fixtureIndex: idx })}
+                          >
+                            Edit
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+              {fixtureEditModal && (
+                <FixtureEditModal
+                  open={true}
+                  onClose={() => setFixtureEditModal(null)}
+                  roundIndex={fixtureEditModal.roundIndex}
+                  fixtureIndex={fixtureEditModal.fixtureIndex}
+                />
+              )}
+            </CardContent>
+          )}
+        </Card>
+
+        {/* Venue Roofs */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Venue Roofs</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Roofed venues never produce wet or windy conditions during matches.
+              Marvel Stadium has a roof by default — toggle any other venue here.
+            </p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {Object.values(VENUES).map((v) => {
+                const effective = draft.venueRoofOverrides?.[v.id] ?? v.hasRoof ?? false
+                return (
+                  <div key={v.id} className="flex items-center justify-between rounded-md border px-3 py-2">
+                    <span className="text-sm">{v.name}</span>
+                    <Switch
+                      checked={effective}
+                      onCheckedChange={(checked) => {
+                        setDraft((prev) => ({
+                          ...prev,
+                          venueRoofOverrides: {
+                            ...prev.venueRoofOverrides,
+                            [v.id]: checked,
+                          },
+                        }))
+                      }}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
         </Card>
 
         {/* Betting System */}

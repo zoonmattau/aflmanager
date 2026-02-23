@@ -75,7 +75,7 @@ const FIELD_POSITION_COORDS: Record<PlayerPositionType, { x: number; y: number }
   CHB: { x: 25.7, y: 50.0 },
   W:   { x: 50.0, y: 15.7 },
   IM:  { x: 44.0, y: 38.5 },
-  OM:  { x: 50.0, y: 84.3 },
+  OM:  { x: 56.0, y: 61.5 },
   RK:  { x: 50.0, y: 50.0 },
   HFF: { x: 74.3, y: 23.1 },
   CHF: { x: 74.3, y: 50.0 },
@@ -127,6 +127,7 @@ export function PlayerProfilePage() {
   const [actionSuccess, setActionSuccess] = useState<string | null>(null)
   const [previewFocus, setPreviewFocus] = useState<PlayerTrainingFocus | null | '__current__'>('__current__')
   const [trendWindow, setTrendWindow] = useState<1 | 2 | 3>(1)
+  const [ybyMode, setYbyMode] = useState<'avg' | 'total'>('avg')
   const setPlayerTrainingFocus = useGameStore((s) => s.setPlayerTrainingFocus)
 
   const playerId = useMemo(() => {
@@ -374,7 +375,7 @@ export function PlayerProfilePage() {
 
   function getChipStyle(pos: PlayerPositionType): string {
     const base = getPositionBadgeStrongClass(pos)
-    if (pos === player.position.primary) return `${base} ring-2 ring-white`
+    if (pos === player!.position.primary) return `${base} ring-2 ring-white`
     if (secondaryPositions.has(pos)) return base
     return `${base} opacity-70`
   }
@@ -524,7 +525,7 @@ export function PlayerProfilePage() {
         <div className="space-y-2">
           {isUserClubPlayer ? (
             <>
-              <ShortlistAssignMenu targetType="player" targetId={player.id} buttonLabel="Add to Shortlist" buttonVariant="outline" buttonClassName="w-full" />
+              <ShortlistAssignMenu targetType="player" targetId={player.id} buttonLabel="Add to Shortlist" buttonVariant="outline" />
               <Button size="sm" className="w-full" onClick={handleStartNegotiation}>
                 Negotiate Contract
               </Button>
@@ -571,7 +572,7 @@ export function PlayerProfilePage() {
             </>
           ) : (
             <>
-              <ShortlistAssignMenu targetType="player" targetId={player.id} buttonLabel="Add to Shortlist" buttonVariant="outline" buttonClassName="w-full" />
+              <ShortlistAssignMenu targetType="player" targetId={player.id} buttonLabel="Add to Shortlist" buttonVariant="outline" />
               <Button size="sm" variant="outline" className="w-full" onClick={() => navigate('/trade')}>
                 Request Trade
               </Button>
@@ -827,52 +828,106 @@ export function PlayerProfilePage() {
               </div>
             )}
 
-            {/* ── Row C: Last 5 games ──────────────────────────────────── */}
+            {/* ── Row C: Recent games ──────────────────────────────────── */}
             {recentGames.length > 0 && (
               <div className="space-y-2">
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold px-0.5">
-                  Last 5 Games
+                  Recent Games
                 </p>
-                <div className="space-y-1">
-                  {recentGames.slice(0, 5).map((g) => {
-                    const opp = clubs[g.opponentClubId]
-                    const rating = g.stats.matchRating
-                    return (
-                      <div
-                        key={g.matchId}
-                        className="flex items-center gap-3 rounded-lg border border-border/50 bg-muted/20 px-3 py-2"
-                      >
-                        <span className="w-10 shrink-0 text-xs text-muted-foreground">
-                          {g.isFinal ? 'Final' : `Rd ${g.round + 1}`}
-                        </span>
-                        <span className={cn(
-                          'w-4 shrink-0 text-xs font-bold',
-                          g.won === true ? 'text-green-500' : g.won === false ? 'text-red-500' : 'text-zinc-400',
-                        )}>
-                          {g.won === true ? 'W' : g.won === false ? 'L' : 'D'}
-                        </span>
-                        <span className="w-10 shrink-0 text-xs font-semibold">{opp?.abbreviation ?? '???'}</span>
-                        <div className="flex flex-1 gap-4">
-                          {(
-                            [
-                              { code: 'D', v: g.stats.disposals },
-                              { code: 'G', v: g.stats.goals },
-                              { code: 'M', v: g.stats.marks },
-                              { code: 'T', v: g.stats.tackles },
-                            ] as { code: string; v: number }[]
-                          ).map(({ code, v }) => (
-                            <span key={code} className="text-xs">
-                              <span className="text-muted-foreground">{code} </span>
-                              <span className="font-mono font-semibold tabular-nums">{v}</span>
-                            </span>
-                          ))}
-                        </div>
-                        <span className={cn('shrink-0 font-mono font-bold text-sm tabular-nums', matchRatingColorClass(rating ?? 0))}>
-                          {rating !== undefined ? rating.toFixed(1) : '—'}
-                        </span>
-                      </div>
-                    )
-                  })}
+                <div className="rounded-lg border border-border/50 overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-border/40 bg-muted/30 text-muted-foreground">
+                        <th className="px-3 py-1.5 text-left font-medium">Rd</th>
+                        <th className="px-2 py-1.5 text-left font-medium">Opp</th>
+                        <th className="px-2 py-1.5 text-center font-medium">Score</th>
+                        <th className="px-2 py-1.5 text-center font-medium">D</th>
+                        <th className="px-2 py-1.5 text-center font-medium">K</th>
+                        <th className="px-2 py-1.5 text-center font-medium">HB</th>
+                        <th className="px-2 py-1.5 text-center font-medium">M</th>
+                        <th className="px-2 py-1.5 text-center font-medium">G</th>
+                        <th className="px-2 py-1.5 text-center font-medium">T</th>
+                        <th className="px-2 py-1.5 text-center font-medium">CL</th>
+                        <th className="px-2 py-1.5 text-center font-medium">HO</th>
+                        <th className="px-2 py-1.5 text-center font-medium">FF</th>
+                        <th className="px-2 py-1.5 text-center font-medium">FA</th>
+                        <th className="px-2 py-1.5 text-center font-medium">AF</th>
+                        <th className="px-2 py-1.5 text-center font-medium">SC</th>
+                        <th className="px-2 py-1.5 text-center font-medium">Rtg</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recentGames.map((g, idx) => {
+                        const opp = clubs[g.opponentClubId]
+                        const rating = g.stats.matchRating
+                        const isEven = idx % 2 === 0
+                        return (
+                          <tr
+                            key={g.matchId}
+                            className={cn(
+                              'border-b border-border/20 last:border-0',
+                              isEven ? 'bg-muted/10' : '',
+                            )}
+                          >
+                            {/* Round */}
+                            <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
+                              {g.isFinal ? (g.finalType ?? 'F') : `Rd ${g.round + 1}`}
+                            </td>
+                            {/* Opponent + H/A + W/L */}
+                            <td className="px-2 py-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <span className={cn(
+                                  'font-bold text-[10px] w-3 shrink-0',
+                                  g.won === true ? 'text-green-500' : g.won === false ? 'text-red-400' : 'text-zinc-400',
+                                )}>
+                                  {g.won === true ? 'W' : g.won === false ? 'L' : 'D'}
+                                </span>
+                                <div
+                                  className="h-2.5 w-2.5 shrink-0 rounded-full"
+                                  style={{ backgroundColor: opp?.colors.primary ?? '#888' }}
+                                />
+                                <span className="font-semibold">{opp?.abbreviation ?? '???'}</span>
+                                <span className="text-muted-foreground/50 text-[10px]">{g.isHome ? 'H' : 'A'}</span>
+                              </div>
+                            </td>
+                            {/* Score */}
+                            <td className="px-2 py-1.5 text-center font-mono whitespace-nowrap">
+                              <span className={g.won === true ? 'font-bold' : 'text-muted-foreground'}>{g.playerScore}</span>
+                              <span className="text-muted-foreground/40 mx-0.5">–</span>
+                              <span className={g.won === false ? 'font-bold' : 'text-muted-foreground'}>{g.opponentScore}</span>
+                            </td>
+                            {/* Stats */}
+                            <td className="px-2 py-1.5 text-center font-mono tabular-nums font-semibold">{g.stats.disposals}</td>
+                            <td className="px-2 py-1.5 text-center font-mono tabular-nums text-muted-foreground">{g.stats.kicks}</td>
+                            <td className="px-2 py-1.5 text-center font-mono tabular-nums text-muted-foreground">{g.stats.handballs}</td>
+                            <td className="px-2 py-1.5 text-center font-mono tabular-nums">{g.stats.marks}</td>
+                            <td className="px-2 py-1.5 text-center font-mono tabular-nums">
+                              {g.stats.goals > 0 ? <span className="text-emerald-400 font-bold">{g.stats.goals}</span> : <span className="text-muted-foreground/40">–</span>}
+                            </td>
+                            <td className="px-2 py-1.5 text-center font-mono tabular-nums">{g.stats.tackles}</td>
+                            <td className="px-2 py-1.5 text-center font-mono tabular-nums text-muted-foreground">{g.stats.clearances}</td>
+                            <td className="px-2 py-1.5 text-center font-mono tabular-nums text-muted-foreground">
+                              {g.stats.hitouts > 0 ? g.stats.hitouts : <span className="text-muted-foreground/30">–</span>}
+                            </td>
+                            <td className="px-2 py-1.5 text-center font-mono tabular-nums text-muted-foreground">
+                              {g.stats.freesFor > 0 ? g.stats.freesFor : <span className="text-muted-foreground/30">–</span>}
+                            </td>
+                            <td className="px-2 py-1.5 text-center font-mono tabular-nums text-muted-foreground">
+                              {g.stats.freesAgainst > 0 ? g.stats.freesAgainst : <span className="text-muted-foreground/30">–</span>}
+                            </td>
+                            <td className="px-2 py-1.5 text-center font-mono tabular-nums text-muted-foreground">{g.stats.aflFantasyPoints}</td>
+                            <td className="px-2 py-1.5 text-center font-mono tabular-nums text-muted-foreground">{g.stats.superCoachPoints}</td>
+                            {/* Rating */}
+                            <td className="px-2 py-1.5 text-center">
+                              <span className={cn('font-mono font-bold tabular-nums', matchRatingColorClass(rating ?? 0))}>
+                                {rating !== undefined ? rating.toFixed(1) : '—'}
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}
@@ -1135,58 +1190,97 @@ export function PlayerProfilePage() {
             {/* Year-by-year stats */}
             <Card>
               <CardHeader className="py-3">
-                <CardTitle className="text-sm">Year-by-Year Stats</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm">Year-by-Year Stats</CardTitle>
+                  <div className="flex gap-1">
+                    <Button size="sm" variant={ybyMode === 'avg' ? 'default' : 'outline'} className="h-6 px-2 text-xs" onClick={() => setYbyMode('avg')}>Avg</Button>
+                    <Button size="sm" variant={ybyMode === 'total' ? 'default' : 'outline'} className="h-6 px-2 text-xs" onClick={() => setYbyMode('total')}>Total</Button>
+                  </div>
+                </div>
               </CardHeader>
-              <CardContent className="space-y-2 text-sm">
+              <CardContent className="p-0">
                 {yearByYearRows.length === 0 ? (
-                  <p className="text-muted-foreground">No season history recorded yet.</p>
+                  <p className="px-4 pb-4 text-sm text-muted-foreground">No season history recorded yet.</p>
                 ) : (
-                  yearByYearRows.map((entry) => (
-                    <div key={`${entry.year}-${entry.playerId}`} className="rounded border border-border/60 p-2">
-                      <div className="mb-1 flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold">{entry.year}</span>
-                          <Badge variant="outline">{clubs[entry.clubId]?.abbreviation ?? entry.clubId}</Badge>
-                          {entry.inProgress ? <Badge variant="secondary">In Progress</Badge> : null}
-                        </div>
-                        <span className="font-mono text-xs">OVR {entry.overall}</span>
-                      </div>
-                      <div className="grid grid-cols-5 gap-2 text-xs">
-                        <span className="text-muted-foreground">GP: <span className="font-mono text-foreground">{entry.stats.gamesPlayed}</span></span>
-                        <span className="text-muted-foreground">G: <span className="font-mono text-foreground">{entry.stats.goals}</span></span>
-                        <span className="text-muted-foreground">D: <span className="font-mono text-foreground">{entry.stats.disposals}</span></span>
-                        <span className="text-muted-foreground">M: <span className="font-mono text-foreground">{entry.stats.marks}</span></span>
-                        <span className="text-muted-foreground">T: <span className="font-mono text-foreground">{entry.stats.tackles}</span></span>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Rating progression */}
-            <Card>
-              <CardHeader className="py-3">
-                <CardTitle className="text-sm">Rating Progression</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                {ratingProgressionRows.length === 0 ? (
-                  <p className="text-muted-foreground">No rating progression recorded yet.</p>
-                ) : (
-                  ratingProgressionRows.map((entry) => (
-                    <div key={`rating-${entry.year}-${entry.playerId}`} className="flex items-center justify-between border-b border-border/40 pb-1 last:border-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{entry.year}</span>
-                        {entry.inProgress ? <Badge variant="secondary">In Progress</Badge> : null}
-                      </div>
-                      <div className="text-right">
-                        <p className="font-mono font-medium">{entry.overall}</p>
-                        <p className={cn('text-xs', entry.overallDelta == null ? 'text-muted-foreground' : entry.overallDelta >= 0 ? 'text-green-600' : 'text-red-500')}>
-                          {entry.overallDelta == null ? 'Baseline' : formatSignedDelta(entry.overallDelta)}
-                        </p>
-                      </div>
-                    </div>
-                  ))
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-border/60 text-left text-muted-foreground">
+                          <th className="sticky left-0 bg-card px-3 py-2 font-medium">Year</th>
+                          <th className="px-2 py-2 font-medium">Club</th>
+                          <th className="px-2 py-2 text-center font-medium">Age</th>
+                          <th className="px-2 py-2 text-center font-medium">OVR</th>
+                          <th className="px-2 py-2 text-center font-medium">GP</th>
+                          <th className="px-2 py-2 text-center font-medium">D</th>
+                          <th className="px-2 py-2 text-center font-medium">K</th>
+                          <th className="px-2 py-2 text-center font-medium">HB</th>
+                          <th className="px-2 py-2 text-center font-medium">G</th>
+                          <th className="px-2 py-2 text-center font-medium">B</th>
+                          <th className="px-2 py-2 text-center font-medium">M</th>
+                          <th className="px-2 py-2 text-center font-medium">T</th>
+                          <th className="px-2 py-2 text-center font-medium">HO</th>
+                          <th className="px-2 py-2 text-center font-medium">CL</th>
+                          <th className="px-2 py-2 text-center font-medium">I50</th>
+                          <th className="px-2 py-2 text-center font-medium">AF</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {yearByYearRows.map((entry, idx) => {
+                          const gp = Math.max(1, entry.stats.gamesPlayed)
+                          const fmt = (n: number) => ybyMode === 'avg' ? (n / gp).toFixed(1) : String(n)
+                          const fmtZ = (n: number) => n === 0 ? '—' : fmt(n)
+                          // OVR delta vs previous year (rows sorted newest→oldest, so idx+1 is older)
+                          const olderEntry = yearByYearRows[idx + 1]
+                          const ovrDelta = olderEntry ? entry.overall - olderEntry.overall : null
+                          return (
+                            <tr
+                              key={`${entry.year}-${entry.playerId}`}
+                              className={cn(
+                                'border-b border-border/40 last:border-0 transition-colors hover:bg-muted/30',
+                                entry.inProgress && 'bg-primary/5',
+                              )}
+                            >
+                              <td className="sticky left-0 bg-inherit px-3 py-1.5 font-medium">
+                                <div className="flex items-center gap-1.5">
+                                  {entry.year}
+                                  {entry.inProgress && <Badge variant="secondary" className="h-4 px-1 py-0 text-[9px]">Live</Badge>}
+                                </div>
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <div className="flex items-center gap-1">
+                                  <div className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: clubs[entry.clubId]?.colors.primary ?? '#888' }} />
+                                  <span className="text-muted-foreground">{clubs[entry.clubId]?.abbreviation ?? entry.clubId}</span>
+                                </div>
+                              </td>
+                              <td className="px-2 py-1.5 text-center text-muted-foreground">{entry.age ?? '—'}</td>
+                              <td className="px-2 py-1.5 text-center">
+                                <div className="flex flex-col items-center leading-none gap-0.5">
+                                  <span className="font-mono font-semibold">{entry.overall}</span>
+                                  {ovrDelta !== null && (
+                                    <span className={cn('text-[10px]', ovrDelta > 0 ? 'text-green-600' : ovrDelta < 0 ? 'text-red-500' : 'text-muted-foreground')}>
+                                      {ovrDelta > 0 ? `+${ovrDelta}` : ovrDelta === 0 ? '—' : String(ovrDelta)}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-2 py-1.5 text-center font-mono">{entry.stats.gamesPlayed}</td>
+                              <td className="px-2 py-1.5 text-center font-mono font-medium">{fmt(entry.stats.disposals)}</td>
+                              <td className="px-2 py-1.5 text-center font-mono">{fmt(entry.stats.kicks)}</td>
+                              <td className="px-2 py-1.5 text-center font-mono">{fmt(entry.stats.handballs)}</td>
+                              <td className="px-2 py-1.5 text-center font-mono">{fmt(entry.stats.goals)}</td>
+                              <td className="px-2 py-1.5 text-center font-mono text-muted-foreground">{fmt(entry.stats.behinds)}</td>
+                              <td className="px-2 py-1.5 text-center font-mono">{fmt(entry.stats.marks)}</td>
+                              <td className="px-2 py-1.5 text-center font-mono">{fmt(entry.stats.tackles)}</td>
+                              <td className="px-2 py-1.5 text-center font-mono text-muted-foreground">{fmtZ(entry.stats.hitouts)}</td>
+                              <td className="px-2 py-1.5 text-center font-mono">{fmt(entry.stats.clearances)}</td>
+                              <td className="px-2 py-1.5 text-center font-mono">{fmt(entry.stats.insideFifties)}</td>
+                              <td className="px-2 py-1.5 text-center font-mono">{fmt(entry.stats.aflFantasyPoints)}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </CardContent>
             </Card>

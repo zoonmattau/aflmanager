@@ -27,7 +27,6 @@ export function TopBar() {
   const navigate = useNavigate()
   const { resolvedTheme, setTheme } = useTheme()
   const currentYear = useGameStore((s) => s.currentYear)
-  const currentRound = useGameStore((s) => s.currentRound)
   const currentDate = useGameStore((s) => s.currentDate)
   const phase = useGameStore((s) => s.phase)
   const saveGame = useGameStore((s) => s.saveGame)
@@ -78,7 +77,7 @@ export function TopBar() {
   // Format date for display
   const displayDate = currentDate
     ? new Date(currentDate + 'T00:00:00').toLocaleDateString('en-AU', {
-        day: 'numeric', month: 'short', year: 'numeric',
+        weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
       })
     : ''
 

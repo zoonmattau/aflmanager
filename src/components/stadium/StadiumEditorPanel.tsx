@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -160,6 +161,20 @@ export function StadiumEditorPanel({ stadium, onChange, onDelete }: StadiumEdito
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+
+            {/* Roof */}
+            <div className="flex items-center justify-between gap-4">
+              <Label className="flex flex-col gap-0.5">
+                <span className="text-xs text-zinc-300">Has Roof</span>
+                <span className="text-xs font-normal text-zinc-500">
+                  Roofed venues never produce wet or windy match conditions
+                </span>
+              </Label>
+              <Switch
+                checked={stadium.hasRoof ?? false}
+                onCheckedChange={(checked) => onChange({ hasRoof: checked })}
+              />
             </div>
 
             {/* Dimensions */}
@@ -393,5 +408,6 @@ export function createDefaultStadium(): CustomStadium {
     wetBias: 0.0,
     hotBias: 0.0,
     humidBias: 0.0,
+    hasRoof: false,
   }
 }

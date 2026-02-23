@@ -211,25 +211,48 @@ export function applyVenueAllocationsToFixture(
   const soldWindowStart = Math.max(5, Math.floor(totalRegularRounds * 0.25))
   const soldWindowEnd = Math.max(soldWindowStart, Math.min(totalRegularRounds - 4, Math.ceil(totalRegularRounds * 0.8)))
 
-  // Track per-round venue usage to detect conflicts
+  // Collapse matchDay variants into a calendar-day bucket so we can detect
+  // same-day venue double-bookings without false-positives across days.
+  // e.g. Saturday-Early + Saturday-Night → both 'Saturday'; Thursday → 'Thursday'
+  const matchDayBucket = (matchDay?: string): string => {
+    if (!matchDay) return 'Saturday'
+    if (matchDay.startsWith('Saturday')) return 'Saturday'
+    if (matchDay.startsWith('Sunday')) return 'Sunday'
+    return matchDay // Thursday | Friday | Monday
+  }
+
+  // Track per-day venue usage within each round so that:
+  //  • Two clubs on DIFFERENT days can share a venue (MCG Thu + MCG Sat ✓)
+  //  • Two clubs on the SAME day cannot share a venue (MCG Sat + MCG Sat ✗)
+  // Key layout: dayVenueUsage[dayBucket][venueId] = gameCount
   for (const round of season.rounds) {
     if (round.isFinals) continue
 
-    // Collect which venues are used this round
-    const roundVenueUsage: Record<string, number> = {}
+    const dayVenueUsage: Record<string, Record<string, number>> = {}
+
+    const getDayCount = (day: string, vid: string): number =>
+      (dayVenueUsage[day] ?? {})[vid] ?? 0
+
+    const bumpDayCount = (day: string, vid: string): void => {
+      if (!dayVenueUsage[day]) dayVenueUsage[day] = {}
+      dayVenueUsage[day][vid] = (dayVenueUsage[day][vid] ?? 0) + 1
+    }
 
     for (let fi = 0; fi < round.fixtures.length; fi++) {
       const fixture = round.fixtures[fi]
       const homeClubId = fixture.homeClubId
       const config = allocations[homeClubId]
+      const dayBucket = matchDayBucket(fixture.matchDay)
 
       // If no allocation config, keep existing venue
       if (!config) {
         const existingVenueId = resolveVenueId(fixture.venue)
+        const vid = existingVenueId ?? 'marvel-stadium'
+        bumpDayCount(dayBucket, vid)
         assignments.push({
           roundNumber: round.number,
           fixtureIndex: fi,
-          venueId: existingVenueId ?? 'marvel-stadium',
+          venueId: vid,
           isHomeGround: true,
           isSecondaryHome: false,
           isSoldGame: false,
@@ -259,7 +282,7 @@ export function applyVenueAllocationsToFixture(
         } else if (venueId === config.secondaryVenueId && remaining[homeClubId]) {
           remaining[homeClubId].secondary = Math.max(0, remaining[homeClubId].secondary - 1)
         }
-        roundVenueUsage[venueId] = (roundVenueUsage[venueId] ?? 0) + 1
+        bumpDayCount(dayBucket, venueId)
         continue
       }
 
@@ -288,7 +311,7 @@ export function applyVenueAllocationsToFixture(
         venueId = SHARED_VENUE_OVERFLOW[config.primaryVenueId] ?? config.primaryVenueId
       }
 
-      // ── Matchup venue rule enforcement ──────────────────────────────────
+      // ── Matchup venue rule enforcement ────────────────────────────────────
       // Before conflict resolution, check if a rule requires a specific venue
       // or forbids the currently selected one.
       const matchupRule = effectiveRules.matchupRules.find(
@@ -302,8 +325,6 @@ export function applyVenueAllocationsToFixture(
           if (isSecondary && clubRemaining) {
             clubRemaining.secondary++
             isSecondary = false
-          } else if (!isSecondary && clubRemaining && clubRemaining.primary > 0) {
-            // We consumed a primary slot; leave it consumed — we're just changing the venue
           }
           venueId = matchupRule.requiredVenueId
         }
@@ -323,28 +344,30 @@ export function applyVenueAllocationsToFixture(
         }
       }
 
-      // Check for conflict: if venue already used this round by another home team
-      const currentUsage = roundVenueUsage[venueId] ?? 0
-      if (currentUsage > 0) {
+      // ── Same-day venue conflict resolution ────────────────────────────────
+      // Check if the chosen venue is already hosting a game on the same
+      // calendar day within this round.
+      if (getDayCount(dayBucket, venueId) > 0) {
         if (isSold) {
-          // Sold game venue conflicts: try a different neutral venue
-          const usedThisRound = new Set(Object.keys(roundVenueUsage).filter((v) => roundVenueUsage[v] > 0))
-          const alternate = SOLD_GAME_VENUES.find((v) => !usedThisRound.has(v) && v !== venueId)
+          // Sold game conflict: find a different neutral venue free on this day
+          const usedToday = new Set(Object.keys(dayVenueUsage[dayBucket] ?? {}).filter((v) => getDayCount(dayBucket, v) > 0))
+          const alternate = SOLD_GAME_VENUES.find((v) => !usedToday.has(v) && v !== venueId)
           if (alternate) {
             venueId = alternate
           }
         } else if (!matchupRule?.requiredVenueId) {
-          // Only use overflow if there's no matchup rule locking the venue
+          // No hard venue rule — try the shared-venue overflow partner
           const overflow = SHARED_VENUE_OVERFLOW[venueId]
           if (overflow && overflow !== venueId && !matchupRule?.forbiddenVenueIds?.includes(overflow)) {
             venueId = overflow
           }
         }
-        // If there IS a required venue rule: accept the double-booking (two clubs can share
-        // a venue in different time slots; real AFL does this routinely at the MCG/Marvel)
+        // If a required venue rule is set AND the venue is still taken on this day,
+        // the fixture generator should have spread the matchDays out — nothing we can
+        // do at this stage without reshuffling dates, so we keep the required venue.
       }
 
-      roundVenueUsage[venueId] = (roundVenueUsage[venueId] ?? 0) + 1
+      bumpDayCount(dayBucket, venueId)
 
       // Update fixture
       const venue = VENUES[venueId]
@@ -366,7 +389,7 @@ export function applyVenueAllocationsToFixture(
     }
   }
 
-  // Now calculate attendance and revenue for all assignments
+    // Now calculate attendance and revenue for all assignments
   for (const assignment of assignments) {
     const round = season.rounds.find((r) => r.number === assignment.roundNumber)
     if (!round) continue
@@ -491,7 +514,7 @@ export function calculateMatchAttendanceFull(ctx: AttendanceContext): Attendance
   // 9. Clamp 35%–100%
   fillRate = Math.max(0.35, Math.min(1.0, fillRate))
 
-  const rawAttendance = Math.round((venue.capacity * fillRate) / 100) * 100
+  const rawAttendance = Math.round(venue.capacity * fillRate) + ctx.rng.nextInt(-47, 47)
   const attendance = Math.min(venue.capacity, Math.max(0, rawAttendance))
   const capacityPct = Math.round((attendance / venue.capacity) * 100)
 

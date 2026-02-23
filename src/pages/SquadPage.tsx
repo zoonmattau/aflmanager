@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, memo } from 'react'
+import { useCallback, useMemo, useState, useRef, memo } from 'react'
 import { cn } from '@/lib/utils'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import {
@@ -60,8 +60,11 @@ import { CohesionTab } from '@/components/squad/CohesionTab'
 
 const columnHelper = createColumnHelper<Player>()
 
+// Stable default sort — module-level so it never changes reference
+const SQUAD_DEFAULT_SORT = { columnId: 'ovr', direction: 'desc' as const }
+
 type SquadView = 'ratings' | 'stats' | 'contracts' | 'development' | 'leadership' | 'readiness' | 'cohesion'
-type QuickFilter = 'all' | 'def' | 'mid' | 'fwd' | 'rk' | 'expiring' | 'injured'
+type QuickFilter = 'all' | 'def' | 'mid' | 'fwd' | 'rk' | 'expiring' | 'injured' | 'vfl'
 type AssignmentSlot = LineupSlot | `RES:${LineupSlot}` | 'SUB' | 'REST' | 'UNASSIGNED'
 
 interface AssignmentSlotOption {
@@ -90,6 +93,7 @@ const QUICK_FILTERS: { key: QuickFilter; label: string }[] = [
   { key: 'rk', label: 'RK' },
   { key: 'expiring', label: 'Expiring (1y)' },
   { key: 'injured', label: 'Injured Only' },
+  { key: 'vfl', label: 'VFL List' },
 ]
 
 function attrColor(val: number): string {
@@ -180,7 +184,6 @@ const SlotAssignmentCell = memo(function SlotAssignmentCell({
   )
   return (
     <Select
-      open={open}
       onOpenChange={setOpen}
       value={assignedSlot ?? undefined}
       onValueChange={(slot) => onChangeAssignedSlot(player.id, slot)}
@@ -424,12 +427,12 @@ function buildColumns(
         },
         size: avg ? 60 : 72,
       }),
-      columnHelper.accessor((row) => calcDisposalEfficiency(row.seasonStats.disposals, row.seasonStats.clangers) ?? 0, {
+      columnHelper.accessor((row) => calcDisposalEfficiency(row.seasonStats.disposals, row.seasonStats.turnovers) ?? 0, {
         id: 'de_pct',
         header: 'DE%',
         cell: (i) => {
           const p = i.row.original
-          return <span className="text-xs tabular-nums">{fmtPct(calcDisposalEfficiency(p.seasonStats.disposals, p.seasonStats.clangers))}</span>
+          return <span className="text-xs tabular-nums">{fmtPct(calcDisposalEfficiency(p.seasonStats.disposals, p.seasonStats.turnovers))}</span>
         },
         size: 64,
       }),
@@ -478,11 +481,21 @@ function buildColumns(
         size: 80,
       }),
       ...yearCols,
-      columnHelper.accessor((row) => row.isRookie, {
+      columnHelper.accessor((row) => row, {
         id: 'list',
         header: 'List',
-        cell: (i) => <Badge variant={i.getValue() ? 'secondary' : 'default'}>{i.getValue() ? 'Rookie' : 'Senior'}</Badge>,
-        size: 76,
+        cell: (i) => {
+          const p = i.getValue()
+          const isVfl = !canBeSelectedForAfl(p)
+          return (
+            <div className="flex items-center gap-1">
+              <Badge variant={isVfl ? 'outline' : p.isRookie ? 'secondary' : 'default'}>
+                {isVfl ? 'VFL' : p.isRookie ? 'Rookie' : 'Senior'}
+              </Badge>
+            </div>
+          )
+        },
+        size: 80,
       }),
       columnHelper.accessor((row) => getPlayerTags(row).length, {
         id: 'tags',
@@ -894,9 +907,9 @@ export function SquadPage() {
   const setSelectedLineup = useGameStore((s) => s.setSelectedLineup)
   const selectedSubstituteId = useGameStore((s) => s.selectedSubstituteId)
   const setSelectedSubstitute = useGameStore((s) => s.setSelectedSubstitute)
-  const setManagedReservesLineup = useGameStore((s) => s.setManagedReservesLineup)
   const setManagedReservesLineupSlots = useGameStore((s) => s.setManagedReservesLineupSlots)
-  const setReservesPlayerAvailability = useGameStore((s) => s.setReservesPlayerAvailability)
+  const batchSetReservesPlayerAvailability = useGameStore((s) => s.batchSetReservesPlayerAvailability)
+  const applyLineupAutoAssign = useGameStore((s) => s.applyLineupAutoAssign)
   const setClubLeadership = useGameStore((s) => s.setClubLeadership)
 
   const clubId = routeClubId ?? viewedTeamClubId ?? playerClubId
@@ -1151,33 +1164,31 @@ export function SquadPage() {
     }
     setPlayerToSlot(playerId, targetSlot)
 
-    const orderedReservesIds = lineupSlots
-      .map((slot) => nextReservesLineup[slot])
-      .filter((id): id is string => Boolean(id))
-
-    setSelectedLineup(nextAflLineup)
-    setManagedReservesLineup(orderedReservesIds)
-    if (settings.matchRules.enableSubstitutes) {
-      setSelectedSubstitute(nextSubstituteId)
-    } else {
-      setSelectedSubstitute(null)
+    // Availability for affected players only
+    const availability: Record<string, 'play' | 'rest'> = {
+      [playerId]: nextAvailability[playerId] ?? 'play',
     }
-    setReservesPlayerAvailability(playerId, nextAvailability[playerId] ?? 'play')
     if (targetOccupantId) {
-      setReservesPlayerAvailability(targetOccupantId, nextAvailability[targetOccupantId] ?? 'play')
+      availability[targetOccupantId] = nextAvailability[targetOccupantId] ?? 'play'
     }
+
+    // Apply each change via its dedicated store action (preserves sanitization logic).
+    // React 18 automatic batching collapses these into a single re-render.
+    setSelectedLineup(nextAflLineup)
+    setManagedReservesLineupSlots(nextReservesLineup)
+    batchSetReservesPlayerAvailability(availability)
+    setSelectedSubstitute(settings.matchRules.enableSubstitutes ? nextSubstituteId : null)
   }, [
     assignedSlotByPlayer,
+    batchSetReservesPlayerAvailability,
     clubId,
-    lineupSlots,
     lineupSlotSet,
     players,
     reserves.playerAvailabilityAssignments,
     sanitizedReservesLineup,
     sanitizedSelectedLineup,
     selectedSubstituteId,
-    setManagedReservesLineup,
-    setReservesPlayerAvailability,
+    setManagedReservesLineupSlots,
     setSelectedLineup,
     setSelectedSubstitute,
     settings.matchRules.enableSubstitutes,
@@ -1271,17 +1282,18 @@ export function SquadPage() {
       nextAvailability[player.id] = 'rest'
     }
 
-    setSelectedLineup(nextAflLineup)
-    setManagedReservesLineupSlots(nextReservesLineup)
-    if (settings.matchRules.enableSubstitutes) {
-      setSelectedSubstitute(nextSubstituteId)
-    } else {
-      setSelectedSubstitute(null)
-    }
+    const availability: Record<string, 'play' | 'rest'> = {}
     for (const player of unassignedPlayers) {
-      setReservesPlayerAvailability(player.id, nextAvailability[player.id] ?? 'play')
+      availability[player.id] = nextAvailability[player.id] ?? 'play'
     }
+    applyLineupAutoAssign({
+      aflLineup: nextAflLineup,
+      reservesLineup: nextReservesLineup,
+      substituteId: settings.matchRules.enableSubstitutes ? nextSubstituteId : null,
+      availability,
+    })
   }, [
+    applyLineupAutoAssign,
     clubId,
     clubPlayers,
     getPlayerSlotProjection,
@@ -1291,31 +1303,48 @@ export function SquadPage() {
     sanitizedReservesLineup,
     sanitizedSelectedLineup,
     selectedSubstituteId,
-    setManagedReservesLineupSlots,
-    setReservesPlayerAvailability,
-    setSelectedLineup,
-    setSelectedSubstitute,
     settings.matchRules.enableSubstitutes,
   ])
+
+  // Stable refs so `columns` doesn't rebuild every time the lineup changes.
+  // The ref values are updated synchronously during render (before JSX is evaluated)
+  // so cell renderers always see the current assigned slots / options.
+  const assignedSlotByPlayerRef = useRef(assignedSlotByPlayer)
+  assignedSlotByPlayerRef.current = assignedSlotByPlayer
+  const getSlotOptionsRef = useRef(getSlotOptionsForPlayer)
+  getSlotOptionsRef.current = getSlotOptionsForPlayer
+  const handleChangeAssignedSlotRef = useRef(handleChangeAssignedSlot)
+  handleChangeAssignedSlotRef.current = handleChangeAssignedSlot
+
+  const stableGetAssignedSlot = useCallback(
+    (playerId: string) => assignedSlotByPlayerRef.current.get(playerId) ?? null,
+    [],
+  )
+  const stableGetSlotOptions = useCallback(
+    (player: Player) => getSlotOptionsRef.current(player),
+    [],
+  )
+  const stableOnChangeAssignedSlot = useCallback(
+    (playerId: string, slot: string) => handleChangeAssignedSlotRef.current(playerId, slot as AssignmentSlot),
+    [],
+  )
 
   const columns = useMemo(
     () =>
       buildColumns(view, reserves.seasonStatsByPlayer, statsDisplayMode, currentYear, {
         enabled: clubId === playerClubId,
-        getAssignedSlot: (playerId: string) => assignedSlotByPlayer.get(playerId) ?? null,
-        getSlotOptions: getSlotOptionsForPlayer,
-        onChangeAssignedSlot: (playerId: string, slot: string) => {
-          handleChangeAssignedSlot(playerId, slot as AssignmentSlot)
-        },
+        getAssignedSlot: stableGetAssignedSlot,
+        getSlotOptions: stableGetSlotOptions,
+        onChangeAssignedSlot: stableOnChangeAssignedSlot,
       }),
     [
-      assignedSlotByPlayer,
       clubId,
       currentYear,
-      getSlotOptionsForPlayer,
-      handleChangeAssignedSlot,
       playerClubId,
       reserves.seasonStatsByPlayer,
+      stableGetAssignedSlot,
+      stableGetSlotOptions,
+      stableOnChangeAssignedSlot,
       statsDisplayMode,
       view,
     ],
@@ -1343,7 +1372,7 @@ export function SquadPage() {
   const tableView = useTableViewManager({
     tableId: `squad-list-${view}`,
     columns: tableViewColumns,
-    defaultSort: { columnId: 'ovr', direction: 'desc' },
+    defaultSort: SQUAD_DEFAULT_SORT,
   })
   const sortingState: SortingState = useMemo(
     () =>
@@ -1381,6 +1410,7 @@ export function SquadPage() {
       if (quickFilter === 'rk' && !isPlayerEligibleForPositionLine(p, 'RK')) return false
       if (quickFilter === 'expiring' && p.contract.yearsRemaining !== 1) return false
       if (quickFilter === 'injured' && p.injury === null) return false
+      if (quickFilter === 'vfl' && canBeSelectedForAfl(p)) return false
       return true
     })
   }, [clubPlayers, search, quickFilter])

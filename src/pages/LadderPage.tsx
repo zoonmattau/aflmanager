@@ -16,6 +16,7 @@ import { getCareerLeaders } from '@/engine/history/historyEngine'
 import { getBrownlowLeaderboard, getColemanLeaderboard } from '@/engine/awards/awardsEngine'
 import { getEffectiveFinalsFormat, hasTopFourDoubleChanceAdvantage, getFinalsZones } from '@/engine/season/finalsFormats'
 import { labelLadderQualification, computeQualificationRules } from '@/engine/season/finalsQualification'
+import { sortLadderEntries } from '@/engine/season/ladderSorting'
 import type { PlayerCareerStats } from '@/types/player'
 import { Trophy, Medal, Star, Lock } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -146,6 +147,7 @@ function CareerLeadersTable({
 
 export function LadderPage() {
   const ladder = useGameStore((s) => s.ladder)
+  const pendingMatchResults = useGameStore((s) => s.pendingMatchResults)
   const clubs = useGameStore((s) => s.clubs)
   const players = useGameStore((s) => s.players)
   const season = useGameStore((s) => s.season)
@@ -276,9 +278,38 @@ export function LadderPage() {
     return map
   }, [finalsZones])
 
+  // Apply any individually-resolved (but not yet round-committed) results to the ladder
+  const previewLadder = useMemo(() => {
+    if (pendingMatchResults.length === 0) return ladder
+    const ptsWin = settings.ladderPoints?.pointsForWin ?? 4
+    const ptsDraw = settings.ladderPoints?.pointsForDraw ?? 2
+    const entries = ladder.map((e) => ({ ...e }))
+    for (const match of pendingMatchResults) {
+      if (!match.result) continue
+      const home = entries.find((e) => e.clubId === match.homeClubId)
+      const away = entries.find((e) => e.clubId === match.awayClubId)
+      if (!home || !away) continue
+      home.played++; away.played++
+      home.pointsFor += match.result.homeTotalScore
+      home.pointsAgainst += match.result.awayTotalScore
+      away.pointsFor += match.result.awayTotalScore
+      away.pointsAgainst += match.result.homeTotalScore
+      if (match.result.homeTotalScore > match.result.awayTotalScore) {
+        home.wins++; home.points += ptsWin; away.losses++
+      } else if (match.result.awayTotalScore > match.result.homeTotalScore) {
+        away.wins++; away.points += ptsWin; home.losses++
+      } else {
+        home.draws++; away.draws++; home.points += ptsDraw; away.points += ptsDraw
+      }
+      home.percentage = home.pointsAgainst > 0 ? (home.pointsFor / home.pointsAgainst) * 100 : 0
+      away.percentage = away.pointsAgainst > 0 ? (away.pointsFor / away.pointsAgainst) * 100 : 0
+    }
+    return sortLadderEntries(entries, settings.ladderSorting)
+  }, [ladder, pendingMatchResults, settings.ladderPoints, settings.ladderSorting])
+
   const qualificationSlots = useMemo(
-    () => labelLadderQualification(ladder, leagueConfig, finalsQualifyingTeams, hasTop4FinalsAdvantage),
-    [ladder, leagueConfig, finalsQualifyingTeams, hasTop4FinalsAdvantage],
+    () => labelLadderQualification(previewLadder, leagueConfig, finalsQualifyingTeams, hasTop4FinalsAdvantage),
+    [previewLadder, leagueConfig, finalsQualifyingTeams, hasTop4FinalsAdvantage],
   )
 
   const qualificationRules = useMemo(() => {
@@ -328,7 +359,7 @@ export function LadderPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {ladder.map((entry, i) => {
+                    {previewLadder.map((entry, i) => {
                       const club = clubs[entry.clubId]
                       const isPlayer = entry.clubId === playerClubId
                       const slot = qualificationSlots[i]

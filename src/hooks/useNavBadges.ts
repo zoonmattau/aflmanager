@@ -73,8 +73,7 @@ export function useNavBadges(): NavBadgeMap {
       const round = season.rounds?.[currentRound]
       const hasUnplayedMatch = round?.fixtures?.some(
         (f) =>
-          (f.homeClubId === playerClubId || f.awayClubId === playerClubId) &&
-          f.result === null,
+          (f.homeClubId === playerClubId || f.awayClubId === playerClubId),
       )
       if (hasUnplayedMatch) {
         map['/lineup'] = { kind: 'dot', color: 'amber' }

@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
-import type { ButtonProps } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
+type ButtonProps = React.ComponentProps<typeof Button>
 interface ConfirmButtonProps extends Omit<ButtonProps, 'onClick'> {
   onConfirm: () => void
   /** Label shown on the first click. Defaults to the button's children. */

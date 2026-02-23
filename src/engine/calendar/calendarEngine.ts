@@ -2,8 +2,10 @@ import type { GameEvent, GameCalendar, GameEventType } from '@/types/calendar'
 import type { Season } from '@/types/season'
 import type { FinalsSettings } from '@/types/game'
 import type { SpecialEventsState } from '@/types/specialEvents'
+import type { StateLeagueId, StateLeague, StateLeagueAffiliationSettings } from '@/types/stateLeague'
 import { getFinalsFormatById } from '@/engine/season/finalsFormats'
 import { getEventDefinition } from '@/engine/specialEvents/eventDefinitions'
+import { resolveStateLeagueAffiliation, ensureStateLeagueFixtures } from '@/engine/stateLeague/stateLeagueEngine'
 
 // ---------------------------------------------------------------------------
 // Date helpers
@@ -371,6 +373,64 @@ export function injectSpecialEvents(
   }
 
   // Re-sort by date
+  calendar.events.sort((a, b) => a.date.localeCompare(b.date))
+}
+
+// ---------------------------------------------------------------------------
+// Reserves event injection
+// ---------------------------------------------------------------------------
+
+/**
+ * Inject reserves (state league) match events into an existing calendar.
+ * Reserves rounds are 1:1 with AFL rounds; each reserves match falls on the
+ * Saturday of that round's week.
+ */
+export function injectReservesEvents(
+  calendar: GameCalendar,
+  stateLeagues: Record<StateLeagueId, StateLeague> | null,
+  playerClubId: string,
+  seasonStartDate: string,
+  totalRounds: number,
+  affiliationSettings?: StateLeagueAffiliationSettings,
+): void {
+  const affiliation = resolveStateLeagueAffiliation(stateLeagues, playerClubId, affiliationSettings)
+  if (!affiliation) return
+
+  const league = ensureStateLeagueFixtures(affiliation.league)
+  const mondayAnchor = toMondayAnchor(seasonStartDate)
+
+  // Remove any stale reserves-match events before re-injecting
+  calendar.events = calendar.events.filter((e) => e.type !== 'reserves-match')
+
+  for (let roundIdx = 0; roundIdx < totalRounds; roundIdx++) {
+    const roundNumber = roundIdx + 1
+    const round = league.season.rounds.find((r) => r.number === roundNumber)
+    if (!round) continue
+
+    const fixture = round.results.find(
+      (m) => m.homeClubId === affiliation.club.id || m.awayClubId === affiliation.club.id,
+    )
+    if (!fixture) continue // bye round for this club
+
+    const isHome = fixture.homeClubId === affiliation.club.id
+    const opponentId = isHome ? fixture.awayClubId : fixture.homeClubId
+    const opponent = league.clubs.find((c) => c.id === opponentId)
+    const opponentAbbr = opponent?.abbreviation ?? opponentId
+
+    // Reserves matches fall on the Saturday (offset 5) of the round week
+    const date = addDays(mondayAnchor, roundIdx * 7 + 5)
+
+    calendar.events.push(
+      createEvent(
+        date,
+        'reserves-match',
+        `Res. Rd ${roundNumber} vs ${opponentAbbr}`,
+        `${league.name} Round ${roundNumber} · ${isHome ? 'Home' : 'Away'}`,
+        { roundNumber, reservesLeagueId: affiliation.leagueId },
+      ),
+    )
+  }
+
   calendar.events.sort((a, b) => a.date.localeCompare(b.date))
 }
 

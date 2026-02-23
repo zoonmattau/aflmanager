@@ -27,4 +27,6 @@ export interface CustomStadium {
   wetBias: number
   hotBias: number
   humidBias: number
+  /** Whether this stadium has a roof — prevents wet and windy weather. */
+  hasRoof?: boolean
 }

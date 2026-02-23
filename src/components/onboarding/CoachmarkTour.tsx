@@ -8,7 +8,7 @@
  * - Can be restarted via resetTour() (dispatches a custom event)
  */
 
-import { useState, useEffect, useLayoutEffect, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { X, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'

@@ -13,7 +13,7 @@ interface CompareStatsProps {
 const INVERTED_STATS = new Set(['turnovers', 'clangers', 'freesAgainst'])
 
 function buildRows(stats: PlayerCareerStats, gamesPlayed: number) {
-  const deVal = calcDisposalEfficiency(stats.disposals, stats.clangers) ?? 0
+  const deVal = calcDisposalEfficiency(stats.disposals, stats.turnovers) ?? 0
   const kaVal = calcKickingAccuracy(stats.goals, stats.behinds) ?? 0
   const cpVal = calcContestedPossessionPct(stats.contestedPossessions, stats.uncontestedPossessions) ?? 0
   return [

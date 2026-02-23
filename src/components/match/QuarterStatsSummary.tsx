@@ -53,12 +53,10 @@ function PlayerRow({ stats, player, rank }: { stats: MatchPlayerStats; player: P
       <span className="text-muted-foreground w-4 shrink-0">{rank}.</span>
       <Badge variant="outline" className="text-[10px] px-1 py-0 shrink-0">{pos}</Badge>
       <span className="flex-1 min-w-0 truncate font-medium">{name}</span>
-      <span className="tabular-nums text-muted-foreground shrink-0">{stats.disposals}d</span>
-      {stats.goals > 0 && (
-        <span className="tabular-nums text-orange-500 font-semibold shrink-0">{stats.goals}g</span>
-      )}
-      <span className="tabular-nums text-muted-foreground shrink-0">{stats.marks}m</span>
-      <span className="tabular-nums text-muted-foreground shrink-0">{stats.tackles}t</span>
+      <span className="tabular-nums text-muted-foreground shrink-0 w-6 text-right">{stats.disposals}</span>
+      <span className={`tabular-nums shrink-0 w-4 text-right ${stats.goals > 0 ? 'text-orange-500 font-semibold' : 'text-muted-foreground/40'}`}>{stats.goals}</span>
+      <span className="tabular-nums text-muted-foreground shrink-0 w-4 text-right">{stats.marks}</span>
+      <span className="tabular-nums text-muted-foreground shrink-0 w-4 text-right">{stats.tackles}</span>
     </div>
   )
 }
@@ -140,9 +138,20 @@ export function QuarterStatsSummary({
           </div>
           {homeDeltas.length === 0
             ? <p className="text-xs text-muted-foreground/40">No data</p>
-            : homeDeltas.map((s, i) => (
-                <PlayerRow key={s.playerId} stats={s} player={players[s.playerId]} rank={i + 1} />
-              ))}
+            : <>
+                <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground/50 uppercase tracking-wide pr-0.5">
+                  <span className="w-4 shrink-0" />
+                  <span className="w-4 shrink-0" />
+                  <span className="flex-1" />
+                  <span className="w-6 text-right">D</span>
+                  <span className="w-4 text-right">G</span>
+                  <span className="w-4 text-right">M</span>
+                  <span className="w-4 text-right">T</span>
+                </div>
+                {homeDeltas.map((s, i) => (
+                  <PlayerRow key={s.playerId} stats={s} player={players[s.playerId]} rank={i + 1} />
+                ))}
+              </>}
         </div>
 
         {/* Away */}
@@ -160,9 +169,20 @@ export function QuarterStatsSummary({
           </div>
           {awayDeltas.length === 0
             ? <p className="text-xs text-muted-foreground/40">No data</p>
-            : awayDeltas.map((s, i) => (
-                <PlayerRow key={s.playerId} stats={s} player={players[s.playerId]} rank={i + 1} />
-              ))}
+            : <>
+                <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground/50 uppercase tracking-wide pr-0.5">
+                  <span className="w-4 shrink-0" />
+                  <span className="w-4 shrink-0" />
+                  <span className="flex-1" />
+                  <span className="w-6 text-right">D</span>
+                  <span className="w-4 text-right">G</span>
+                  <span className="w-4 text-right">M</span>
+                  <span className="w-4 text-right">T</span>
+                </div>
+                {awayDeltas.map((s, i) => (
+                  <PlayerRow key={s.playerId} stats={s} player={players[s.playerId]} rank={i + 1} />
+                ))}
+              </>}
         </div>
       </div>
     </div>

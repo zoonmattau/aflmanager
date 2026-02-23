@@ -10,6 +10,9 @@ import {
   TrendingUp,
   Flame,
   Crown,
+  ShieldCheck,
+  ShieldOff,
+  ShieldPlus,
 } from 'lucide-react'
 import type { PlayerMoment, PlayerMomentType } from '@/types/player'
 
@@ -105,6 +108,24 @@ const META: Record<PlayerMomentType, MomentMeta> = {
     iconCls: 'bg-cyan-500/20 text-cyan-400',
     cardCls: 'border-cyan-500/30 bg-cyan-500/5',
     titleCls: 'text-cyan-400',
+  },
+  'captain-appointed': {
+    icon: ShieldCheck,
+    iconCls: 'bg-yellow-500/20 text-yellow-400',
+    cardCls: 'border-yellow-500/30 bg-yellow-500/5',
+    titleCls: 'text-yellow-400',
+  },
+  'captain-relinquished': {
+    icon: ShieldOff,
+    iconCls: 'bg-zinc-500/20 text-zinc-400',
+    cardCls: 'border-zinc-500/30 bg-zinc-500/5',
+    titleCls: 'text-zinc-400',
+  },
+  'vc-appointed': {
+    icon: ShieldPlus,
+    iconCls: 'bg-amber-500/20 text-amber-400',
+    cardCls: 'border-amber-500/30 bg-amber-500/5',
+    titleCls: 'text-amber-400',
   },
 }
 

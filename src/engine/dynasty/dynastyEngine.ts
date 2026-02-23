@@ -65,7 +65,7 @@ const DYNASTY_QUEST_TEMPLATES: DynastyQuestTemplate[] = [
  * Called once at new-game creation — returns 5 quest templates all at currentValue=0, status='active'.
  */
 export function generateDynastyQuests(
-  playerClubId: string,
+  _playerClubId: string,
   currentYear: number,
 ): CareerObjective[] {
   return DYNASTY_QUEST_TEMPLATES.map((template) => ({

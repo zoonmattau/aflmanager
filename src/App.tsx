@@ -1,6 +1,6 @@
 import { useEffect, useRef, Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { createBrowserRouter, RouterProvider, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ThemeProvider } from '@/components/layout/ThemeProvider'
 import { AppLayout } from '@/components/layout/AppLayout'
@@ -76,6 +76,7 @@ import { CoachProfilePage } from '@/pages/CoachProfilePage'
 import { LegacyPage } from '@/pages/LegacyPage'
 import { LeadershipPage } from '@/pages/LeadershipPage'
 import { LeadershipSelectionPage } from '@/pages/LeadershipSelectionPage'
+import { TeamSelectionPage } from '@/pages/TeamSelectionPage'
 import { useGameStore } from '@/stores/gameStore'
 import { useAppStore } from '@/stores/appStore'
 import { MatchToastContainer } from '@/components/notifications/MatchToastContainer'
@@ -224,6 +225,7 @@ function GameRoutes() {
         <Route path="/compare/:playerAId/:playerBId" element={<PlayerComparisonPage />} />
         <Route path="/leadership" element={<LeadershipPage />} />
         <Route path="/preseason-leadership" element={<LeadershipSelectionPage />} />
+        <Route path="/team-selection" element={<TeamSelectionPage />} />
         <Route path="/matchup-preview" element={<MatchupPreviewPage />} />
         <Route path="/game-settings" element={<GameSettingsPage />} />
         <Route path="/tribunal" element={<TribunalPage />} />
@@ -278,7 +280,7 @@ function AutoSaveEffect() {
   return null
 }
 
-export default function App() {
+function AppRoot() {
   const currentScreen = useAppStore((s) => s.currentScreen)
   const initialized = useAppStore((s) => s.initialized)
   const initialize = useAppStore((s) => s.initialize)
@@ -296,18 +298,26 @@ export default function App() {
   }
 
   return (
+    <>
+      <AutoSaveEffect />
+      {currentScreen === 'home' && <HomePage />}
+      {currentScreen === 'new-game' && <NewGamePage />}
+      {currentScreen === 'settings' && <GlobalSettingsPage />}
+      {currentScreen === 'league-presets' && <LeaguePresetsPage />}
+      {currentScreen === 'custom-league-builder' && <CustomLeagueBuilderPage />}
+      {currentScreen === 'game' && <ErrorBoundary><GameRoutes /></ErrorBoundary>}
+      {currentScreen === 'game' && <MatchToastContainer />}
+    </>
+  )
+}
+
+const router = createBrowserRouter([{ path: '*', element: <AppRoot /> }])
+
+export default function App() {
+  return (
     <ThemeProvider>
       <TooltipProvider>
-        <BrowserRouter>
-          <AutoSaveEffect />
-          {currentScreen === 'home' && <HomePage />}
-          {currentScreen === 'new-game' && <NewGamePage />}
-          {currentScreen === 'settings' && <GlobalSettingsPage />}
-          {currentScreen === 'league-presets' && <LeaguePresetsPage />}
-          {currentScreen === 'custom-league-builder' && <CustomLeagueBuilderPage />}
-          {currentScreen === 'game' && <ErrorBoundary><GameRoutes /></ErrorBoundary>}
-          {currentScreen === 'game' && <MatchToastContainer />}
-        </BrowserRouter>
+        <RouterProvider router={router} />
       </TooltipProvider>
     </ThemeProvider>
   )

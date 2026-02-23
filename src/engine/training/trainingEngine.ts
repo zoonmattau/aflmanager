@@ -427,7 +427,7 @@ export function runTrainingSessions(
 
       // Apply physical attribute decline for players past peak
       // Skip during rest/recovery — not stressing the body
-      const isRestorative = session.focus === 'rest' || session.focus === 'recovery'
+      const isRestorative = session.focus === 'recovery'
       if (!isRestorative && player.age > player.hiddenAttributes.peakAgeEnd) {
         const declineRate = player.hiddenAttributes.declineRate
         for (const attr of DECLINING_PHYSICAL_ATTRS) {

@@ -1,13 +1,17 @@
-/** Disposal Efficiency % = (disposals - clangers) / disposals * 100 */
-export function calcDisposalEfficiency(disposals: number, clangers: number): number | null {
-  if (disposals <= 0) return null
-  return Math.max(0, ((disposals - clangers) / disposals) * 100)
+/** Disposal Efficiency % = (disposals - turnovers) / disposals * 100
+ *  Uses turnovers (not clangers) as the inefficiency metric since clangers
+ *  are a rare sub-event and produce too many false 100%s in single-game stats.
+ *  Requires at least 5 disposals to avoid noise from very low touch counts. */
+export function calcDisposalEfficiency(disposals: number, turnovers: number): number | null {
+  if (disposals < 5) return null
+  return Math.max(0, ((disposals - turnovers) / disposals) * 100)
 }
 
-/** Kicking Accuracy % = goals / (goals + behinds) * 100 */
+/** Kicking Accuracy % = goals / (goals + behinds) * 100
+ *  Requires at least 2 scoring shots to avoid false 100%s. */
 export function calcKickingAccuracy(goals: number, behinds: number): number | null {
   const shots = goals + behinds
-  if (shots <= 0) return null
+  if (shots < 2) return null
   return (goals / shots) * 100
 }
 

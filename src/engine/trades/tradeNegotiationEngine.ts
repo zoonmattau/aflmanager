@@ -1401,7 +1401,7 @@ function improveOffer(
   const aiHasRoster = Object.values(players).some((p) => p.clubId === aiClubId)
   if (aiHasRoster && !improved.pickMoves.some((pm) => pm.pick.year > 2025)) {
     const sweetenerPick: TradePickMove = {
-      pick: { round: 3, year: 2026, originalClubId: aiClubId, isFuturePick: true },
+      pick: { round: 3, year: 2026, originalClubId: aiClubId, currentClubId: aiClubId },
       fromClubId: aiClubId,
       toClubId: base.clubsInvolved.find((c) => c !== aiClubId) ?? aiClubId,
     }

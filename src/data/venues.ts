@@ -25,6 +25,7 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 1.3,
     hgaBonus: 4,
     isNeutral: false,
+    ends: ['Punt Road End', 'Members End'],
     // Vast open arena — high disposal count, great marking ground, spread play
     scoringCoefficient: 0.97,
     kickToHandballRatio: 1.18,
@@ -43,13 +44,15 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 1.0,
     hgaBonus: 3,
     isNeutral: false,
-    // Compact rectangular indoor — handball game, congested, fewer disposals, almost never rains
+    hasRoof: true,
+    ends: ['Northern End', 'Southern End'],
+    // Compact rectangular indoor — handball game, congested, fewer disposals, never rains under the roof
     scoringCoefficient: 1.12,
     kickToHandballRatio: 0.88,
     disposalCoefficient: 0.90,
     markCoefficient: 0.82,
     contestedCoefficient: 1.18,
-    // Indoor: heavily suppress wind/wet, minimal heat/humid
+    // Indoor: no wind/wet possible; minimal heat/humid bias
     weatherBias: { wind: -0.15, wet: -0.12, hot: -0.05, humid: -0.04 },
     dimensions: { length: 160, width: 128 },
   },
@@ -62,6 +65,7 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 1.1,
     hgaBonus: 5,
     isNeutral: false,
+    ends: ['River End', 'Cathedral End'],
     // Elongated oval, notorious wind exposure from hills — big marking game, spread play
     scoringCoefficient: 0.94,
     kickToHandballRatio: 1.12,
@@ -80,6 +84,7 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 1.15,
     hgaBonus: 5,
     isNeutral: false,
+    ends: ['City End', 'Matagarup End'],
     // Purpose-built, true oval, great surface, Perth Fremantle Doctor breeze
     scoringCoefficient: 1.10,
     kickToHandballRatio: 1.15,
@@ -98,6 +103,7 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.85,
     hgaBonus: 5,
     isNeutral: false,
+    ends: ['City End', 'Members End'],
     // Geelong exposed to Corio Bay winds — notoriously windy, affects mark counts
     scoringCoefficient: 1.05,
     kickToHandballRatio: 1.05,
@@ -116,6 +122,7 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.9,
     hgaBonus: 5,
     isNeutral: false,
+    ends: ['Vulture Street End', 'Stanley Street End'],
     // Compact QLD ground, notorious congestion and humidity, lowest marking rate in the comp
     scoringCoefficient: 0.92,
     kickToHandballRatio: 0.88,
@@ -134,6 +141,7 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 1.05,
     hgaBonus: 5,
     isNeutral: false,
+    ends: ['Members End', 'Paddington End'],
     // Traditional oval, balanced conditions, moderate Sydney humidity
     scoringCoefficient: 1.00,
     kickToHandballRatio: 1.08,
@@ -152,6 +160,7 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.65,
     hgaBonus: 4,
     isNeutral: false,
+    ends: ['City End', 'Homebush End'],
     // Rectangular, compact — handball game, very congested, limited marking space
     scoringCoefficient: 1.08,
     kickToHandballRatio: 0.85,
@@ -170,6 +179,7 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.6,
     hgaBonus: 4,
     isNeutral: false,
+    ends: ['Surfers Paradise End', 'Hinterland End'],
     // Compact, hot and sticky — saps energy, fewer disposals, most humid ground in comp
     scoringCoefficient: 0.95,
     kickToHandballRatio: 0.90,
@@ -188,6 +198,7 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.5,
     hgaBonus: 2,
     isNeutral: true,
+    ends: ['Inveresk End', 'Tipperary End'],
     // Windy Launceston ground, open ends — blustery, affects marks and accuracy
     scoringCoefficient: 0.96,
     kickToHandballRatio: 1.10,
@@ -206,6 +217,7 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.5,
     hgaBonus: 2,
     isNeutral: true,
+    ends: ['Derwent End', 'City End'],
     // Hobart's wet reputation — frequently soft/heavy ground, reduces marking, lowers scores
     scoringCoefficient: 0.94,
     kickToHandballRatio: 1.02,
@@ -224,6 +236,7 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.4,
     hgaBonus: 1,
     isNeutral: true,
+    ends: ['Parliamentary End', 'Telopea Park End'],
     // Small compact ground, short shots — high conversion, handball-friendly
     scoringCoefficient: 1.10,
     kickToHandballRatio: 0.92,
@@ -242,6 +255,7 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.45,
     hgaBonus: 0,
     isNeutral: true,
+    ends: ['Tiger Brennan End', 'City End'],
     // Darwin's extreme heat and humidity — hardest conditions in the comp, low disposals
     scoringCoefficient: 1.06,
     kickToHandballRatio: 1.05,
@@ -260,6 +274,7 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.4,
     hgaBonus: 2,
     isNeutral: true,
+    ends: ['Wendouree End', 'City End'],
     // Cold Ballarat ground, frequently wet/heavy — physical, lower scores and disposals
     scoringCoefficient: 0.93,
     kickToHandballRatio: 1.00,
@@ -278,6 +293,7 @@ export const VENUES: Record<string, Venue> = {
     revenueMultiplier: 0.5,
     hgaBonus: 2,
     isNeutral: true,
+    ends: ['The Hill End', 'Members End'],
     // Suburban Adelaide oval — windy like Adelaide Oval but smaller, slightly handball-heavy
     scoringCoefficient: 1.02,
     kickToHandballRatio: 0.95,
@@ -377,3 +393,30 @@ export const SOLD_GAME_VENUES = [
   'mars-stadium',
   'norwood-oval',
 ] as const
+
+// ---------------------------------------------------------------------------
+// Roof resolver
+// Returns true if the venue has a roof, respecting user overrides.
+// overrides: settings.venueRoofOverrides (venueId → boolean), optional.
+// venueName + customStadiums: fallback lookup for user-created custom stadiums
+//   which aren't in the static VENUES registry.
+// ---------------------------------------------------------------------------
+
+export function venueHasRoof(
+  venueId: string | undefined,
+  overrides?: Record<string, boolean>,
+  venueName?: string,
+  customStadiums?: Array<{ name: string; hasRoof?: boolean }>,
+): boolean {
+  // Static venue — check overrides first, then the venue's own data
+  if (venueId) {
+    if (overrides && venueId in overrides) return overrides[venueId]
+    if (VENUES[venueId]?.hasRoof) return true
+  }
+  // Custom stadium — match by venue name
+  if (venueName && customStadiums) {
+    const cs = customStadiums.find((s) => s.name === venueName)
+    if (cs?.hasRoof) return true
+  }
+  return false
+}

@@ -19,10 +19,10 @@ export interface MatchBettingMarket {
   homeLineOdds: number
   awayLineOdds: number
 
-  // Total points (optional — controlled by bettingTotalPointsMarkets setting)
-  totalLine: number | null
-  overOdds: number | null
-  underOdds: number | null
+  // Total points
+  totalLine: number
+  overOdds: number
+  underOdds: number
 
   // Settlement
   settled: boolean
@@ -85,7 +85,7 @@ export const DEFAULT_BETTING_SETTINGS: BettingSettings = {
   enabled: false,
   ageGateAccepted: false,
   margin: 0.05,
-  totalPointsMarkets: false,
+  totalPointsMarkets: true,
 }
 
 export function defaultBettingMarkets(): BettingMarketsState {

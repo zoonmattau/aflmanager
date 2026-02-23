@@ -20,7 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Wand2, RotateCcw, Save, Eye, EyeOff, FolderOpen, Pencil, Trash2, BookmarkPlus, Stethoscope, Settings2, ChevronDown, ChevronRight, Plus, X } from 'lucide-react'
+import { Wand2, RotateCcw, Save, Eye, EyeOff, FolderOpen, Pencil, Trash2, BookmarkPlus, Stethoscope, Settings2, ChevronDown, ChevronRight, Plus, X, AlertTriangle } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { isRecentlyReturned, weeksAgoReturned } from '@/lib/injuryRisk'

@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import type { Player, LineupSlot } from '@/types/player'
 import { PlayerMagnet, getPositionSuitability } from './PlayerMagnet'
 import { useCallback, useMemo, useState } from 'react'
@@ -253,20 +254,25 @@ export function FootballField({
               return (
                 <div
                   key={`opp-bench-${player.id}`}
-                  className="flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] items-center gap-[clamp(3px,0.45vw,7px)] rounded-md border px-[clamp(3px,0.55vw,7px)] shadow-sm"
+                  className="flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] cursor-pointer items-center gap-[clamp(3px,0.45vw,7px)] rounded-md border px-[clamp(3px,0.55vw,7px)] shadow-sm transition-opacity hover:opacity-90"
                   style={{
                     borderColor: oppositionBenchColor,
                     backgroundColor: `${oppositionBenchColor}cc`,
                   }}
                   title={`${player.firstName} ${player.lastName} (${player.position.primary})`}
+                  onClick={() => onOppositionPlayerClick?.(player.id)}
                 >
                   <span className="hidden min-[1150px]:block w-[clamp(18px,1.8vw,28px)] text-center text-[clamp(8px,1vw,12px)] font-bold leading-none text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.9)]">
                     #{player.jerseyNumber}
                   </span>
                   <div className="min-w-0 leading-tight">
-                    <span className="block truncate text-[clamp(7px,0.82vw,10px)] text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.9)]">{displayName}</span>
+                    <Link
+                      to={`/player/${player.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="block truncate text-[clamp(7px,0.82vw,10px)] text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.9)] hover:underline"
+                    >{displayName}</Link>
                     <span className="block truncate text-[clamp(6px,0.72vw,9px)] text-white/90 [text-shadow:0_1px_2px_rgba(0,0,0,0.9)]">
-                      <span className={`rounded border px-1 py-0 ${getPositionBadgeStrongClass(player.position.primary)}`}>{player.position.primary}</span> OVR {getOverallRating(player)}
+                      <span className={`rounded border px-1 py-0 [text-shadow:none] ${getPositionBadgeStrongClass(player.position.primary)}`}>{player.position.primary}</span> OVR {getOverallRating(player)}
                     </span>
                   </div>
                 </div>
@@ -276,20 +282,23 @@ export function FootballField({
               <div className="mt-1">
                 {oppositionSubstitute ? (
                   <div
-                    className="mx-auto flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] items-center gap-[clamp(3px,0.45vw,7px)] rounded-md border px-[clamp(3px,0.55vw,7px)] shadow-sm"
+                    className="mx-auto flex h-[clamp(26px,3.9vw,46px)] w-[clamp(52px,8.2vw,118px)] cursor-pointer items-center gap-[clamp(3px,0.45vw,7px)] rounded-md border px-[clamp(3px,0.55vw,7px)] shadow-sm transition-opacity hover:opacity-90"
                     style={{
                       borderColor: oppositionBenchColor,
                       backgroundColor: `${oppositionBenchColor}cc`,
                     }}
                     title={`${oppositionSubstitute.firstName} ${oppositionSubstitute.lastName} (${oppositionSubstitute.position.primary})`}
+                    onClick={() => onOppositionPlayerClick?.(oppositionSubstitute.id)}
                   >
                     <span className="hidden min-[1150px]:block w-[clamp(18px,1.8vw,28px)] text-center text-[clamp(8px,1vw,12px)] font-bold leading-none text-white">
                       #{oppositionSubstitute.jerseyNumber}
                     </span>
                     <div className="min-w-0 leading-tight">
-                      <span className="block truncate text-[clamp(7px,0.82vw,10px)] text-white">
-                        {oppositionSubstitute.firstName.charAt(0)}. {oppositionSubstitute.lastName}
-                      </span>
+                      <Link
+                        to={`/player/${oppositionSubstitute.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="block truncate text-[clamp(7px,0.82vw,10px)] text-white hover:underline"
+                      >{oppositionSubstitute.firstName.charAt(0)}. {oppositionSubstitute.lastName}</Link>
                       <span className="block truncate text-[clamp(6px,0.72vw,9px)] text-zinc-100">
                         {oppositionSubstitute.position.primary}
                       </span>

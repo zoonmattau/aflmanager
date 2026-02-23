@@ -25,7 +25,7 @@ import {
   Collapsible, CollapsibleContent, CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 import { Progress } from '@/components/ui/progress'
-import { ChevronDown, Shield, Star, Users, TrendingUp, TrendingDown, ChevronRight, Minus } from 'lucide-react'
+import { ChevronDown, Shield, Star, Users, TrendingUp, TrendingDown, ChevronRight, Minus, Bot, UserCheck } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -473,12 +473,14 @@ export function LeadershipPage() {
   const currentRound = useGameStore((s) => s.currentRound)
   const applyLeadershipChange = useGameStore((s) => s.applyLeadershipChange)
   const setClubLeadership = useGameStore((s) => s.setClubLeadership)
+  const setLeadershipDelegated = useGameStore((s) => s.setLeadershipDelegated)
 
   const clubId = viewedTeamClubId ?? playerClubId ?? ''
   const club = clubs[clubId]
   const isEditable = clubId === playerClubId
 
   const [pendingProposal, setPendingProposal] = useState<ClubLeadership | null>(null)
+  const isDelegated = club?.leadership?.delegated ?? false
 
   const current: ClubLeadership = useMemo(
     () => club?.leadership ?? { captainId: null, viceCaptainId: null, leadershipGroupIds: [] },
@@ -558,13 +560,46 @@ export function LeadershipPage() {
               Pending changes
             </Badge>
           )}
-          {isEditable && (
-            <Button variant="outline" size="sm" onClick={handleAutoSelect}>
-              Auto-select
+          {isDelegated && (
+            <Badge className="bg-sky-500/20 text-sky-600 border-sky-500/30 text-xs flex items-center gap-1">
+              <Bot className="h-3 w-3" />
+              Staff-managed
+            </Badge>
+          )}
+          {isEditable && isDelegated && (
+            <Button variant="outline" size="sm" onClick={() => setLeadershipDelegated(clubId, false)}>
+              <UserCheck className="mr-1.5 h-3.5 w-3.5" />
+              Take Control
             </Button>
+          )}
+          {isEditable && !isDelegated && (
+            <>
+              <Button variant="ghost" size="sm" onClick={handleAutoSelect} className="text-muted-foreground">
+                Auto-select
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => {
+                setPendingProposal(null)
+                setLeadershipDelegated(clubId, true)
+              }}>
+                <Bot className="mr-1.5 h-3.5 w-3.5" />
+                Delegate to Staff
+              </Button>
+            </>
           )}
         </div>
       </div>
+
+      {/* Delegation banner */}
+      {isDelegated && (
+        <div className="flex items-center gap-3 rounded-lg border border-sky-500/30 bg-sky-500/5 px-4 py-3 text-sm">
+          <Bot className="h-4 w-4 text-sky-500 shrink-0" />
+          <div className="flex-1">
+            <span className="font-medium text-sky-700 dark:text-sky-400">Leadership delegated to staff.</span>
+            {' '}
+            <span className="text-muted-foreground">Your assistant coach selects the captain, vice-captain, and leadership group. Click <strong>Take Control</strong> to manage it yourself.</span>
+          </div>
+        </div>
+      )}
 
       {/* A. Hero tier — Captain + Vice-Captain */}
       <div>
@@ -683,7 +718,7 @@ export function LeadershipPage() {
                       </TableCell>
                       <TableCell className="px-3 py-1.5 text-xs tabular-nums font-semibold">{ovr}</TableCell>
                       <TableCell className="px-3 py-1.5">
-                        {isEditable ? (
+                        {isEditable && !isDelegated ? (
                           <Select
                             value={role}
                             onValueChange={(v) => handleRoleChange(p.id, v as LeadershipRole)}

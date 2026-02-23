@@ -224,7 +224,7 @@ function toPct_(spanStart: string, spanDays: number, date: string): number {
 
 function computeCurrentPct(
   tl: Timeline,
-  phase: GamePhase,
+  _phase: GamePhase,
   currentDate: string,
 ): number {
   return tl.toPct(currentDate)

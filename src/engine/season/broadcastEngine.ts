@@ -53,6 +53,8 @@ export const BROADCAST_SATISFACTION_BY_TIER: Record<BroadcastTier, number> = {
 // ---------------------------------------------------------------------------
 
 const CHANNEL_BY_MATCH_DAY: Record<MatchDay, BroadcastChannel> = {
+  Tuesday:               'FTA',
+  Wednesday:             'PayTV',
   Thursday:              'PayTV',
   Friday:                'FTA',
   'Saturday-Early':      'Streaming',

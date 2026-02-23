@@ -1,6 +1,23 @@
 import { addDays } from '@/engine/calendar/calendarEngine'
 import type { MatchDay } from '@/types/season'
 
+/** Chronological sort index for a matchDay slot (lower = earlier in the week). */
+export function matchDayOrder(day?: MatchDay): number {
+  switch (day) {
+    case 'Thursday':           return 0
+    case 'Friday':             return 1
+    case 'Saturday-Early':     return 2
+    case 'Saturday-Afternoon': return 3
+    case 'Saturday-Twilight':  return 4
+    case 'Saturday-Night':     return 5
+    case 'Sunday-Early':       return 6
+    case 'Sunday-Afternoon':   return 7
+    case 'Sunday-Twilight':    return 8
+    case 'Monday':             return 9
+    default:                   return 4
+  }
+}
+
 /** Days offset from the round's Monday anchor for each match-day slot. */
 export function getMatchDayOffset(day?: MatchDay): number {
   switch (day) {

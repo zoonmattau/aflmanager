@@ -201,7 +201,7 @@ export function WorldFixturesPage() {
       )}
 
       {/* Two-column layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_288px] xl:grid-cols-[1fr_320px] gap-4 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] xl:grid-cols-[1fr_420px] gap-4 items-start">
 
         {/* LEFT: Fixture list */}
         <div className="space-y-3">
@@ -268,15 +268,12 @@ export function WorldFixturesPage() {
                     const a = match?.result?.awayTotalScore ?? null
                     const homeWon = h !== null && a !== null && h > a
                     const awayWon = h !== null && a !== null && a > h
-                    const isUserMatch =
-                      f.homeClubId === playerClubId || f.awayClubId === playerClubId
-
                     return (
                       <div
                         key={displayIndex}
                         className={[
                           'flex items-center gap-3 px-4 py-3 text-sm cursor-pointer transition-colors',
-                          isSelected ? 'bg-accent' : isUserMatch ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-muted/50',
+                          isSelected ? 'bg-accent' : 'hover:bg-muted/50',
                         ].join(' ')}
                         onClick={() => setSelectedFixtureKey(isSelected ? null : fixtureKey)}
                       >
@@ -313,11 +310,6 @@ export function WorldFixturesPage() {
                           >
                             {home?.fullName ?? f.homeClubId}
                           </span>
-                          {f.homeClubId === playerClubId && (
-                            <Badge variant="secondary" className="text-[10px] px-1 py-0 shrink-0">
-                              You
-                            </Badge>
-                          )}
                         </div>
 
                         {/* Score or VS */}
@@ -338,11 +330,6 @@ export function WorldFixturesPage() {
                           className="flex flex-1 items-center justify-end gap-2"
                           onClick={(e) => { e.stopPropagation(); navigate(`/club/${f.awayClubId}`) }}
                         >
-                          {f.awayClubId === playerClubId && (
-                            <Badge variant="secondary" className="text-[10px] px-1 py-0 shrink-0">
-                              You
-                            </Badge>
-                          )}
                           <span
                             className={`font-medium truncate text-right cursor-pointer hover:underline ${
                               played
@@ -411,7 +398,7 @@ export function WorldFixturesPage() {
               <div>
                 <CardHeader className="py-3 pb-2">
                   <CardTitle className="text-xs text-muted-foreground font-normal uppercase tracking-wide">
-                    {roundInfo?.label} · Result
+                    {roundInfo?.label}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4 pt-0">
@@ -552,7 +539,7 @@ export function WorldFixturesPage() {
               <div>
                 <CardHeader className="py-3 pb-2">
                   <CardTitle className="text-xs text-muted-foreground font-normal uppercase tracking-wide">
-                    {roundInfo?.label} · Preview
+                    {roundInfo?.label}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4 pt-0">

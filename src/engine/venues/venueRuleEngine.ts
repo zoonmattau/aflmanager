@@ -140,13 +140,26 @@ export const DEFAULT_AFL_VENUE_RULES: VenueRuleSet = {
       note: 'Hawthorn vs Melbourne must be played at the MCG (not Tasmania)',
       overridable: false,
     },
-    // Essendon vs Collingwood: should not be at Marvel (ANZAC-style preservation)
+    // Essendon vs Collingwood: always MCG — never Marvel Stadium.
+    // Essendon's primary ground is Marvel but this rivalry (like ANZAC Day)
+    // is always played at the MCG regardless of who is nominally "home".
     {
       homeClubId: 'essendon',
       awayClubId: 'collingwood',
+      requiredVenueId: 'mcg',
       forbiddenVenueIds: ['marvel-stadium'],
-      note: 'Essendon vs Collingwood should not be hosted at Marvel Stadium',
-      overridable: true,
+      note: 'Essendon vs Collingwood must be played at the MCG',
+      overridable: false,
+    },
+    // Collingwood home vs Essendon is already MCG by default (Collingwood primary = MCG),
+    // but enforce it explicitly to match the reverse direction.
+    {
+      homeClubId: 'collingwood',
+      awayClubId: 'essendon',
+      requiredVenueId: 'mcg',
+      forbiddenVenueIds: ['marvel-stadium'],
+      note: 'Collingwood vs Essendon must be played at the MCG',
+      overridable: false,
     },
 
     // ── WA Derby ────────────────────────────────────────────────────────────

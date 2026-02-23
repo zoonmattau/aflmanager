@@ -204,9 +204,7 @@ export function generateMatchMarket(
   // Total points: base ~155, adjust for team attacking ratings
   const baseTotals = 155
   const totalAdj = ((homeStrength + awayStrength) / 2 - 70) * 0.8
-  const totalLine = settings.totalPointsMarkets
-    ? Math.round((baseTotals + totalAdj) / 5) * 5
-    : null
+  const totalLine = Math.round((baseTotals + totalAdj) / 5) * 5
 
   const settled = !!match.result
   let resultOutcome: 'home' | 'away' | null = null
@@ -232,8 +230,8 @@ export function generateMatchMarket(
     awayLineOdds: formatOdds(toDecimalOdds(lineProb, margin)),
 
     totalLine,
-    overOdds: totalLine !== null ? formatOdds(toDecimalOdds(0.5, margin)) : null,
-    underOdds: totalLine !== null ? formatOdds(toDecimalOdds(0.5, margin)) : null,
+    overOdds: formatOdds(toDecimalOdds(0.5, margin)),
+    underOdds: formatOdds(toDecimalOdds(0.5, margin)),
 
     settled,
     resultOutcome,

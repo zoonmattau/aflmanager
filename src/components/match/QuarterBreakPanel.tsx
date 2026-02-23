@@ -153,32 +153,40 @@ function StatBar({
   const homeWins = inverse ? home < away : home > away
   const awayWins = inverse ? away < home : away > home
   return (
-    <div className="space-y-0.5">
-      <div className="flex items-center justify-between text-[11px]">
-        <span className="tabular-nums font-semibold w-10" style={{ color: homeWins ? homeColor : undefined }}>
+    <div className="space-y-1">
+      <div className="flex items-center gap-2 text-[11px]">
+        <span
+          className="tabular-nums font-semibold w-9 text-right shrink-0"
+          style={{ color: homeWins ? homeColor : undefined }}
+        >
           {fmt(home)}
         </span>
-        <span className="text-[10px] text-muted-foreground uppercase tracking-wide flex-1 text-center">{label}</span>
-        <span className="tabular-nums font-semibold w-10 text-right" style={{ color: awayWins ? awayColor : undefined }}>
+        <span className="flex-1 text-center text-[10px] text-muted-foreground leading-none">
+          {label}
+        </span>
+        <span
+          className="tabular-nums font-semibold w-9 text-left shrink-0"
+          style={{ color: awayWins ? awayColor : undefined }}
+        >
           {fmt(away)}
         </span>
       </div>
-      <div className="h-1.5 rounded-full bg-muted overflow-hidden flex">
+      {/* Two-colour split bar — absolute children avoid the flex seam artefact */}
+      <div className="relative h-2 rounded-full overflow-hidden bg-muted/30">
         <div
-          className="h-full"
+          className="absolute inset-y-0 left-0 h-full"
           style={{
             width: `${homePct}%`,
             backgroundColor: homeColor,
-            opacity: homeWins ? 0.85 : 0.4,
-            borderRadius: '9999px 0 0 9999px',
+            opacity: homeWins ? 0.88 : 0.28,
           }}
         />
         <div
-          className="h-full flex-1"
+          className="absolute inset-y-0 right-0 h-full"
           style={{
+            width: `${100 - homePct}%`,
             backgroundColor: awayColor,
-            opacity: awayWins ? 0.85 : 0.4,
-            borderRadius: '0 9999px 9999px 0',
+            opacity: awayWins ? 0.88 : 0.28,
           }}
         />
       </div>
@@ -511,7 +519,13 @@ export function QuarterBreakPanel({
                   {/* Top performers */}
                   <div className="grid grid-cols-2 gap-0">
                     <div className="p-2 space-y-1 border-r border-border/30">
-                      <div className="text-[9px] font-semibold uppercase tracking-wide mb-1" style={{ color: homeColor }}>{homeAbbr}</div>
+                      <div className="flex items-center text-[9px] mb-1">
+                        <span className="font-semibold uppercase tracking-wide flex-1" style={{ color: homeColor }}>{homeAbbr}</span>
+                        <span className="text-muted-foreground/50 uppercase tracking-wide w-5 text-right">D</span>
+                        <span className="text-muted-foreground/50 uppercase tracking-wide w-4 text-right">G</span>
+                        <span className="text-muted-foreground/50 uppercase tracking-wide w-4 text-right">M</span>
+                        <span className="text-muted-foreground/50 uppercase tracking-wide w-4 text-right">T</span>
+                      </div>
                       {topHome.length === 0
                         ? <div className="text-[10px] text-muted-foreground/40">No data</div>
                         : topHome.map((s) => {
@@ -519,16 +533,22 @@ export function QuarterBreakPanel({
                             return (
                               <div key={s.playerId} className="flex items-center gap-1 text-[10px]">
                                 <span className="flex-1 truncate font-medium">{playerName(p, s.playerId)}</span>
-                                <span className="tabular-nums text-muted-foreground">{s.disposals}d</span>
-                                {s.goals > 0 && <span className="tabular-nums font-semibold" style={{ color: '#f97316' }}>{s.goals}g</span>}
-                                <span className="tabular-nums text-muted-foreground">{s.marks}m</span>
-                                <span className="tabular-nums text-muted-foreground">{s.tackles}t</span>
+                                <span className="tabular-nums text-muted-foreground w-5 text-right">{s.disposals}</span>
+                                <span className={`tabular-nums w-4 text-right ${s.goals > 0 ? 'font-semibold' : 'text-muted-foreground/40'}`} style={s.goals > 0 ? { color: '#f97316' } : undefined}>{s.goals}</span>
+                                <span className="tabular-nums text-muted-foreground w-4 text-right">{s.marks}</span>
+                                <span className="tabular-nums text-muted-foreground w-4 text-right">{s.tackles}</span>
                               </div>
                             )
                           })}
                     </div>
                     <div className="p-2 space-y-1">
-                      <div className="text-[9px] font-semibold uppercase tracking-wide mb-1" style={{ color: awayColor }}>{awayAbbr}</div>
+                      <div className="flex items-center text-[9px] mb-1">
+                        <span className="font-semibold uppercase tracking-wide flex-1" style={{ color: awayColor }}>{awayAbbr}</span>
+                        <span className="text-muted-foreground/50 uppercase tracking-wide w-5 text-right">D</span>
+                        <span className="text-muted-foreground/50 uppercase tracking-wide w-4 text-right">G</span>
+                        <span className="text-muted-foreground/50 uppercase tracking-wide w-4 text-right">M</span>
+                        <span className="text-muted-foreground/50 uppercase tracking-wide w-4 text-right">T</span>
+                      </div>
                       {topAway.length === 0
                         ? <div className="text-[10px] text-muted-foreground/40">No data</div>
                         : topAway.map((s) => {
@@ -536,10 +556,10 @@ export function QuarterBreakPanel({
                             return (
                               <div key={s.playerId} className="flex items-center gap-1 text-[10px]">
                                 <span className="flex-1 truncate font-medium">{playerName(p, s.playerId)}</span>
-                                <span className="tabular-nums text-muted-foreground">{s.disposals}d</span>
-                                {s.goals > 0 && <span className="tabular-nums font-semibold" style={{ color: '#f97316' }}>{s.goals}g</span>}
-                                <span className="tabular-nums text-muted-foreground">{s.marks}m</span>
-                                <span className="tabular-nums text-muted-foreground">{s.tackles}t</span>
+                                <span className="tabular-nums text-muted-foreground w-5 text-right">{s.disposals}</span>
+                                <span className={`tabular-nums w-4 text-right ${s.goals > 0 ? 'font-semibold' : 'text-muted-foreground/40'}`} style={s.goals > 0 ? { color: '#f97316' } : undefined}>{s.goals}</span>
+                                <span className="tabular-nums text-muted-foreground w-4 text-right">{s.marks}</span>
+                                <span className="tabular-nums text-muted-foreground w-4 text-right">{s.tackles}</span>
                               </div>
                             )
                           })}

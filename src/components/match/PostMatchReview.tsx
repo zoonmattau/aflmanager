@@ -86,45 +86,31 @@ export function PostMatchReview({
   return (
     <div className="flex flex-col min-h-[calc(100vh-4rem)]">
       {/* Score header */}
-      <div className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur-sm px-4 py-3">
-        <div className="flex items-center justify-between gap-4">
-          {/* Home club */}
+      <div className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur-sm px-4 pt-3 pb-2">
+        {/* Club names row */}
+        <div className="flex items-center justify-between gap-3 mb-2">
           <div className="flex items-center gap-2 min-w-0">
             <div
-              className="h-10 w-10 shrink-0 rounded-full border border-border"
+              className="h-8 w-8 shrink-0 rounded-full border border-border"
               style={{ backgroundColor: homeClub?.colors.primary ?? '#666' }}
             />
             <div className="min-w-0">
-              <div className="font-bold truncate">{homeClub?.name ?? userMatch.homeClubId}</div>
+              <div className="font-bold text-sm truncate">{homeClub?.name ?? userMatch.homeClubId}</div>
               {ladderSnapshot && (
                 <div className="text-[10px] text-muted-foreground">#{ladderSnapshot.homeRank}</div>
               )}
             </div>
           </div>
-
-          {/* Score */}
-          <div className="text-center shrink-0">
-            <div className="text-3xl font-bold tabular-nums">
-              {result.homeTotalScore} – {result.awayTotalScore}
-            </div>
-            <div className="text-xs text-muted-foreground font-mono mt-0.5">
-              {result.homeScores.map((q) => `${q.goals}.${q.behinds}`).join(' | ')}
-              {' vs '}
-              {result.awayScores.map((q) => `${q.goals}.${q.behinds}`).join(' | ')}
-            </div>
-            <Badge className={`mt-1 border text-xs font-semibold ${resultBadgeClass}`} variant="outline">
-              {resultLabel}
-            </Badge>
-          </div>
-
-          {/* Away club */}
+          <Badge className={`shrink-0 border text-xs font-semibold ${resultBadgeClass}`} variant="outline">
+            {resultLabel}
+          </Badge>
           <div className="flex items-center gap-2 min-w-0 flex-row-reverse">
             <div
-              className="h-10 w-10 shrink-0 rounded-full border border-border"
+              className="h-8 w-8 shrink-0 rounded-full border border-border"
               style={{ backgroundColor: awayClub?.colors.primary ?? '#666' }}
             />
             <div className="min-w-0 text-right">
-              <div className="font-bold truncate">{awayClub?.name ?? userMatch.awayClubId}</div>
+              <div className="font-bold text-sm truncate">{awayClub?.name ?? userMatch.awayClubId}</div>
               {ladderSnapshot && (
                 <div className="text-[10px] text-muted-foreground">#{ladderSnapshot.awayRank}</div>
               )}
@@ -132,27 +118,108 @@ export function PostMatchReview({
           </div>
         </div>
 
-        {/* Venue/weather line */}
-        {result.simulationContext && (
-          <div className="mt-1 flex flex-wrap items-center justify-center gap-3 text-[11px] text-muted-foreground">
-            <span className="inline-flex items-center gap-1">
-              <MapPin className="h-3 w-3" />
-              {userMatch.venue}
-            </span>
-            {result.simulationContext.attendance != null && (
+        {/* Quarter scoreboard */}
+        <div className="overflow-x-auto">
+          <table className="w-full font-mono text-xs">
+            <thead>
+              <tr>
+                <th className="w-12 text-left" />
+                {result.homeScores.map((_, i) => (
+                  <th key={i} className="text-center px-2 py-0.5 font-normal text-muted-foreground/60">
+                    Q{i + 1}
+                  </th>
+                ))}
+                <th className="text-center px-2 py-0.5 font-semibold text-muted-foreground">Final</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td className="py-0.5 pr-2 font-semibold text-[11px]" style={{ color: homeClub?.colors.primary ?? 'inherit' }}>
+                  {homeClub?.abbreviation ?? 'HM'}
+                </td>
+                {result.homeScores.map((q, i) => (
+                  <td key={i} className="text-center px-2 py-0.5 tabular-nums text-muted-foreground">
+                    {q.goals}.{q.behinds}
+                    <span className="opacity-50 ml-0.5">({q.total})</span>
+                  </td>
+                ))}
+                <td
+                  className="text-center px-2 py-0.5 font-bold tabular-nums"
+                  style={{ color: homeClub?.colors.primary ?? 'inherit' }}
+                >
+                  {result.homeScores.reduce((s, q) => s + q.goals, 0)}.{result.homeScores.reduce((s, q) => s + q.behinds, 0)}
+                  <span className="font-extrabold ml-0.5">({result.homeTotalScore})</span>
+                </td>
+              </tr>
+              <tr>
+                <td className="py-0.5 pr-2 font-semibold text-[11px]" style={{ color: awayClub?.colors.primary ?? 'inherit' }}>
+                  {awayClub?.abbreviation ?? 'AW'}
+                </td>
+                {result.awayScores.map((q, i) => (
+                  <td key={i} className="text-center px-2 py-0.5 tabular-nums text-muted-foreground">
+                    {q.goals}.{q.behinds}
+                    <span className="opacity-50 ml-0.5">({q.total})</span>
+                  </td>
+                ))}
+                <td
+                  className="text-center px-2 py-0.5 font-bold tabular-nums"
+                  style={{ color: awayClub?.colors.primary ?? 'inherit' }}
+                >
+                  {result.awayScores.reduce((s, q) => s + q.goals, 0)}.{result.awayScores.reduce((s, q) => s + q.behinds, 0)}
+                  <span className="font-extrabold ml-0.5">({result.awayTotalScore})</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* Match details line */}
+        <div className="mt-2 flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+          <span>{userMatch.isFinal ? (userMatch.finalType ?? 'Final') : `Round ${userMatch.round}`}</span>
+          {userMatch.date && (
+            <>
+              <span className="opacity-40">·</span>
+              <span>
+                {new Date(userMatch.date).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}
+              </span>
+            </>
+          )}
+          {userMatch.venue && (
+            <>
+              <span className="opacity-40">·</span>
               <span className="inline-flex items-center gap-1">
-                <Users className="h-3 w-3" />
+                <MapPin className="h-2.5 w-2.5" />
+                {userMatch.venue}
+              </span>
+            </>
+          )}
+          {result.simulationContext?.attendance != null && (
+            <>
+              <span className="opacity-40">·</span>
+              <span className="inline-flex items-center gap-1">
+                <Users className="h-2.5 w-2.5" />
                 {result.simulationContext.attendance.toLocaleString()}
                 {result.simulationContext.capacityPct != null && (
-                  <span className="text-muted-foreground/60"> ({result.simulationContext.capacityPct}%)</span>
+                  <span className="opacity-60"> ({result.simulationContext.capacityPct}%)</span>
                 )}
               </span>
-            )}
-            <span className="capitalize">
-              {result.simulationContext.weather}, {result.simulationContext.groundCondition}
-            </span>
-          </div>
-        )}
+            </>
+          )}
+          {result.simulationContext && (
+            <>
+              <span className="opacity-40">·</span>
+              <span className="capitalize">{result.simulationContext.weather}</span>
+              <span className="opacity-40">·</span>
+              <span className="capitalize">{result.simulationContext.groundCondition} ground</span>
+              {result.simulationContext.windStrength && (
+                <>
+                  <span className="opacity-40">·</span>
+                  <span className="capitalize">{result.simulationContext.windStrength} wind</span>
+                </>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* Milestone banners */}
@@ -197,6 +264,24 @@ export function PostMatchReview({
         </div>
       )}
 
+      {/* Score worm — always visible */}
+      {result.keyEvents.length > 0 && (
+        <div className="shrink-0 border-b px-4 py-2 bg-background">
+          <ScoreWorm
+            keyEvents={result.keyEvents}
+            homeScores={result.homeScores}
+            awayScores={result.awayScores}
+            homeClubId={userMatch.homeClubId}
+            homeColor={homeClub?.colors.primary ?? '#3b82f6'}
+            awayColor={awayClub?.colors.primary ?? '#ef4444'}
+            homeAbbr={homeClub?.abbreviation ?? 'HM'}
+            awayAbbr={awayClub?.abbreviation ?? 'AW'}
+            quartersCompleted={result.homeScores.length}
+            height={110}
+          />
+        </div>
+      )}
+
       {/* Tab bar */}
       <div className="shrink-0 flex gap-0 border-b overflow-x-auto">
         {TABS.map((tab) => (
@@ -225,25 +310,6 @@ export function PostMatchReview({
           {/* ---- OVERVIEW ---- */}
           {activeTab === 'overview' && (
             <>
-              {/* Score Worm */}
-              {result.keyEvents.length > 0 && (
-                <Card>
-                  <CardContent className="py-4">
-                    <ScoreWorm
-                      keyEvents={result.keyEvents}
-                      homeScores={result.homeScores}
-                      awayScores={result.awayScores}
-                      homeClubId={userMatch.homeClubId}
-                      homeColor={homeClub?.colors.primary ?? '#3b82f6'}
-                      awayColor={awayClub?.colors.primary ?? '#ef4444'}
-                      homeAbbr={homeClub?.abbreviation ?? 'HM'}
-                      awayAbbr={awayClub?.abbreviation ?? 'AW'}
-                      quartersCompleted={result.homeScores.length}
-                    />
-                  </CardContent>
-                </Card>
-              )}
-
               {/* Narrative */}
               {matchReport?.narrativeBody && (
                 <Card>
@@ -395,45 +461,6 @@ export function PostMatchReview({
                     homeAbbr={homeClub?.abbreviation ?? 'HM'}
                     awayAbbr={awayClub?.abbreviation ?? 'AW'}
                   />
-                </CardContent>
-              </Card>
-
-              {/* Quarter grid */}
-              <Card>
-                <CardContent className="p-0">
-                  <div className="overflow-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b">
-                          <th className="px-3 py-2 text-left text-xs text-muted-foreground font-medium">Team</th>
-                          {result.homeScores.map((_, i) => (
-                            <th key={i} className="px-3 py-2 text-center text-xs text-muted-foreground font-medium">Q{i + 1}</th>
-                          ))}
-                          <th className="px-3 py-2 text-center text-xs text-muted-foreground font-medium">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr className="border-b">
-                          <td className="px-3 py-2 font-medium">{homeClub?.abbreviation ?? 'Home'}</td>
-                          {result.homeScores.map((q, i) => (
-                            <td key={i} className="px-3 py-2 text-center font-mono text-xs">
-                              {q.goals}.{q.behinds} ({q.total})
-                            </td>
-                          ))}
-                          <td className="px-3 py-2 text-center font-bold">{result.homeTotalScore}</td>
-                        </tr>
-                        <tr>
-                          <td className="px-3 py-2 font-medium">{awayClub?.abbreviation ?? 'Away'}</td>
-                          {result.awayScores.map((q, i) => (
-                            <td key={i} className="px-3 py-2 text-center font-mono text-xs">
-                              {q.goals}.{q.behinds} ({q.total})
-                            </td>
-                          ))}
-                          <td className="px-3 py-2 text-center font-bold">{result.awayTotalScore}</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
                 </CardContent>
               </Card>
 

@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import type { Player } from '@/types/player'
 import type { Club } from '@/types/club'
 import type { LineupSlot } from '@/types/player'
@@ -88,7 +89,11 @@ export function OppositionOverlay({
                 #{player.jerseyNumber}
               </span>
                     <div className="min-w-0 leading-tight">
-                      <span className="block truncate text-[clamp(7px,0.82vw,10px)] text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.9)]">{displayName}</span>
+                      <Link
+                          to={`/player/${player.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="block truncate text-[clamp(7px,0.82vw,10px)] text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.9)] hover:underline"
+                        >{displayName}</Link>
                       <span className="block truncate text-[clamp(6px,0.72vw,9px)] text-white/90 [text-shadow:0_1px_2px_rgba(0,0,0,0.9)]">
                         <span className={`rounded border px-1 py-0 ${getPositionBadgeStrongClass(player.position.primary)}`}>{player.position.primary}</span> OVR {overall}
                       </span>

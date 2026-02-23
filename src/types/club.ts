@@ -74,6 +74,7 @@ export interface ClubLeadership {
   captainId: string | null
   viceCaptainId: string | null
   leadershipGroupIds: string[]  // 4-6 additional leaders
+  delegated?: boolean           // true = staff manages leadership automatically
 }
 
 export interface ClubCulture {

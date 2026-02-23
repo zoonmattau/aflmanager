@@ -10,27 +10,6 @@ import { cn } from '@/lib/utils'
 import { Plus, Sun, Moon, X, AlertTriangle, BedDouble } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
-// Label maps
-// ---------------------------------------------------------------------------
-
-const FOCUS_SHORT_LABELS: Record<TrainingFocus, string> = {
-  kicking: 'Kick',
-  handball: 'Hand',
-  marking: 'Mark',
-  physical: 'Phys',
-  contested: 'Cont',
-  'game-sense': 'Sense',
-  offensive: 'Off',
-  defensive: 'Def',
-  ruck: 'Ruck',
-  mental: 'Ment',
-  'set-pieces': 'Set P',
-  'match-fitness': 'M-Fit',
-  recovery: 'Recov',
-  'video-review': 'Video',
-  rest: 'Rest',
-}
-
 const FOCUS_FULL_LABELS: Record<TrainingFocus, string> = {
   kicking: 'Kicking',
   handball: 'Handball',

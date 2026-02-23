@@ -32,7 +32,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Shield, Star, Users, AlertTriangle, ChevronDown, X, Check } from 'lucide-react'
+import { Shield, Star, Users, AlertTriangle, ChevronDown, X, Check, Bot, UserCheck } from 'lucide-react'
 import { getLeadershipScore } from '@/engine/leadership/leadershipEngine'
 import { computeLeadershipChangeConsequences, computeLeadershipStabilityPct } from '@/engine/leadership/leadershipChangeEngine'
 
@@ -333,6 +333,7 @@ export function LeadershipPanel({ clubId, readOnly = false }: LeadershipPanelPro
   const settings = useGameStore((s) => s.settings)
   const leadershipDisruptions = useGameStore((s) => s.leadershipDisruptions)
   const applyLeadershipChange = useGameStore((s) => s.applyLeadershipChange)
+  const setLeadershipDelegated = useGameStore((s) => s.setLeadershipDelegated)
 
   const club = clubs[clubId]
   const leadership = club?.leadership
@@ -379,7 +380,7 @@ export function LeadershipPanel({ clubId, readOnly = false }: LeadershipPanelPro
   // Preview consequences for dialog
   const previewConsequences = useMemo(() => {
     if (!club || !leadership) return null
-    const totalRounds = settings.season.rounds
+    const totalRounds = settings.seasonStructure.regularSeasonRounds
     const isPreseason = currentRound === 0
     const isFinals = currentRound > totalRounds
     return computeLeadershipChangeConsequences({
@@ -399,7 +400,7 @@ export function LeadershipPanel({ clubId, readOnly = false }: LeadershipPanelPro
       isFinals,
       ladder,
     })
-  }, [club, leadership, draftCaptain, draftVC, draftGroup, players, clubId, currentRound, settings.season.rounds, ladder])
+  }, [club, leadership, draftCaptain, draftVC, draftGroup, players, clubId, currentRound, settings.seasonStructure.regularSeasonRounds, ladder])
 
   const isDirty = useMemo(() => {
     if (!leadership) return false
@@ -427,6 +428,8 @@ export function LeadershipPanel({ clubId, readOnly = false }: LeadershipPanelPro
   }
 
   if (!club || !leadership) return null
+
+  const isDelegated = leadership.delegated ?? false
 
   return (
     <div className="space-y-5">
@@ -485,57 +488,98 @@ export function LeadershipPanel({ clubId, readOnly = false }: LeadershipPanelPro
       {!readOnly && (
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Reassign Leadership</CardTitle>
-            <CardDescription>
-              Changes trigger morale and cohesion effects. Review consequences before applying.
-            </CardDescription>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <CardTitle className="text-sm">
+                  {isDelegated ? 'Staff-managed Leadership' : 'Reassign Leadership'}
+                </CardTitle>
+                <CardDescription>
+                  {isDelegated
+                    ? 'Your assistant coach is managing captaincy and leadership selection.'
+                    : 'Changes trigger morale and cohesion effects. Review consequences before applying.'}
+                </CardDescription>
+              </div>
+              {isDelegated ? (
+                <Badge className="bg-sky-500/20 text-sky-600 border-sky-500/30 text-xs flex items-center gap-1 shrink-0 mt-0.5">
+                  <Bot className="h-3 w-3" />
+                  Delegated
+                </Badge>
+              ) : null}
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Captain</p>
-              <PlayerPickerDropdown
-                players={clubPlayers}
-                selectedId={draftCaptain}
-                onSelect={setDraftCaptain}
-                placeholder="Select captain…"
-                excludeIds={captainExcludes}
-                allowClear
-              />
-            </div>
+            {isDelegated ? (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Staff will automatically pick the best available captain, vice-captain, and leadership group based on player leadership scores.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setLeadershipDelegated(clubId, false)}
+                >
+                  <UserCheck className="mr-1.5 h-3.5 w-3.5" />
+                  Take Control
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Captain</p>
+                  <PlayerPickerDropdown
+                    players={clubPlayers}
+                    selectedId={draftCaptain}
+                    onSelect={setDraftCaptain}
+                    placeholder="Select captain…"
+                    excludeIds={captainExcludes}
+                    allowClear
+                  />
+                </div>
 
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Vice-Captain</p>
-              <PlayerPickerDropdown
-                players={clubPlayers}
-                selectedId={draftVC}
-                onSelect={setDraftVC}
-                placeholder="Select vice-captain…"
-                excludeIds={vcExcludes}
-                allowClear
-              />
-            </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Vice-Captain</p>
+                  <PlayerPickerDropdown
+                    players={clubPlayers}
+                    selectedId={draftVC}
+                    onSelect={setDraftVC}
+                    placeholder="Select vice-captain…"
+                    excludeIds={vcExcludes}
+                    allowClear
+                  />
+                </div>
 
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                Leadership Group (up to 6)
-              </p>
-              <LeadershipGroupPicker
-                players={clubPlayers}
-                selectedIds={draftGroup}
-                onChange={setDraftGroup}
-                excludeIds={groupExcludes}
-                maxSize={6}
-              />
-            </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Leadership Group (up to 6)
+                  </p>
+                  <LeadershipGroupPicker
+                    players={clubPlayers}
+                    selectedIds={draftGroup}
+                    onChange={setDraftGroup}
+                    excludeIds={groupExcludes}
+                    maxSize={6}
+                  />
+                </div>
 
-            <div className="flex items-center gap-2 pt-1">
-              <Button variant="outline" size="sm" disabled={!isDirty} onClick={handleReset}>
-                Reset
-              </Button>
-              <Button size="sm" disabled={!isDirty} onClick={() => setConfirmOpen(true)}>
-                Review Changes
-              </Button>
-            </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <Button variant="outline" size="sm" disabled={!isDirty} onClick={handleReset}>
+                    Reset
+                  </Button>
+                  <Button size="sm" disabled={!isDirty} onClick={() => setConfirmOpen(true)}>
+                    Review Changes
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="ml-auto text-muted-foreground"
+                    onClick={() => setLeadershipDelegated(clubId, true)}
+                  >
+                    <Bot className="mr-1.5 h-3.5 w-3.5" />
+                    Delegate to Staff
+                  </Button>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
       )}
