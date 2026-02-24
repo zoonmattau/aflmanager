@@ -19,12 +19,10 @@ import { LiveMatchView } from '@/components/match/LiveMatchView'
 import { PreGameScreen } from '@/components/matchviewer/PreGameScreen'
 import { PastGameViewer } from '@/components/matchviewer/PastGameViewer'
 import { selectBestLineup } from '@/engine/ai/lineupSelection'
-import { getOverallRating } from '@/engine/player/playerRating'
 import { generateMatchWeather } from '@/engine/match/weatherEngine'
 import { SeededRNG } from '@/engine/core/rng'
 import type { SimulateMatchInput } from '@/engine/match/simulateMatch'
 import type { Match } from '@/types/match'
-import type { Fixture } from '@/types/season'
 import { VENUES, venueHasRoof } from '@/data/venues'
 
 // ---------------------------------------------------------------------------
@@ -74,8 +72,6 @@ export function MatchViewerPage() {
   const playerClubId  = useGameStore((s) => s.playerClubId ?? '')
   const matchResults  = useGameStore((s) => s.matchResults)
   const h2hRecords    = useGameStore((s) => s.history.h2hRecords ?? {})
-  const currentRound  = useGameStore((s) => s.currentRound)
-  const season        = useGameStore((s) => s.season)
   const selectedLineup       = useGameStore((s) => s.selectedLineup)
   const selectedSubstituteId = useGameStore((s) => s.selectedSubstituteId)
   const weeklyGameplans     = useGameStore((s) => s.weeklyGameplans)
@@ -99,10 +95,13 @@ export function MatchViewerPage() {
   const [stage, setStage] = useState<Stage>(isPastGame ? 'post-game' : 'pre-game')
   const [completedMatch, setCompletedMatch] = useState<Match | null>(pastMatch)
 
-  // Seed for this fixture
+  // Seed for this fixture — includes a session salt so each simulation is fresh.
+  // useState initializer runs once per mount, giving a unique sim each time
+  // the user enters the match viewer.
+  const [sessionSalt] = useState(() => Math.floor(Math.random() * 100000))
   const seed = useMemo(
-    () => rngSeed + round * 100 + fixtureIndex,
-    [rngSeed, round, fixtureIndex],
+    () => rngSeed + round * 100 + fixtureIndex + sessionSalt,
+    [rngSeed, round, fixtureIndex, sessionSalt],
   )
 
   // Pre-generate weather for pre-game screen
@@ -116,7 +115,6 @@ export function MatchViewerPage() {
   const simInput = useMemo<SimulateMatchInput | null>(() => {
     if (!hasData || isPastGame) return null
 
-    const userClub = clubs[playerClubId]
     const userIsHome = playerClubId === homeClubId
 
     // Lineup for user's team

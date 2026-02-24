@@ -608,8 +608,8 @@ function MakeTradeTab() {
   >(null)
   const [rejectionMessage, setRejectionMessage] = useState('')
   const [showCompletedDialog, setShowCompletedDialog] = useState(false)
-  const [completedTradeSent, setCompletedTradeSent] = useState<Player[]>([])
-  const [completedTradeReceived, setCompletedTradeReceived] = useState<
+  const [completedTradeSent, _setCompletedTradeSent] = useState<Player[]>([])
+  const [completedTradeReceived, _setCompletedTradeReceived] = useState<
     Player[]
   >([])
 

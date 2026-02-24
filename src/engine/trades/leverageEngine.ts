@@ -129,7 +129,7 @@ export function computeAiCounterOffer(
   leverage: ClubLeverageState,
   clubs: Record<string, Club>,
   players: Record<string, Player>,
-  currentYear: number,
+  _currentYear: number,
   rng: SeededRNG,
 ): TradeNegotiationOffer | null {
   if (currentOffer.clubsInvolved.length !== 2) return null

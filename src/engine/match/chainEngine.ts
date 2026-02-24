@@ -9,7 +9,7 @@
  */
 
 import type { FieldZone, PossessionType, MatchTick } from '@/types/matchTick'
-import type { MatchPlayerStats, MatchKeyEvent, PlayByPlayEvent } from '@/types/match'
+import type { MatchPlayerStats } from '@/types/match'
 import type { Player } from '@/types/player'
 import type { ClubGameplan } from '@/types/club'
 import { SeededRNG } from '@/engine/core/rng'
@@ -18,7 +18,7 @@ import { getRoleSimulationMultiplier } from '@/engine/player/roles'
 import { getMoraleModifier } from '@/engine/players/morale'
 import { getReadinessMod } from '@/engine/player/readinessEngine'
 import { getClutchModifier } from '@/engine/leadership/leadershipEngine'
-import type { MatchContext, WeatherModifiers, GameplanModifiers, TacticalRuntime } from './simulateMatch'
+import type { MatchContext, WeatherModifiers } from './simulateMatch'
 import { VENUES } from '@/data/venues'
 import type { RotationEvent } from '@/types/game'
 
@@ -68,6 +68,12 @@ interface ClutchContext {
 const ZONES: FieldZone[] = ['back50', 'backHalf', 'midfield', 'forwardHalf', 'forward50']
 const ZONE_INDEX: Record<FieldZone, number> = { back50: 0, backHalf: 1, midfield: 2, forwardHalf: 3, forward50: 4 }
 
+/** Mirror a zone for the defending team's perspective (forward50↔back50, etc.) */
+const MIRROR_ZONE: Record<FieldZone, FieldZone> = {
+  back50: 'forward50', backHalf: 'forwardHalf', midfield: 'midfield',
+  forwardHalf: 'backHalf', forward50: 'back50',
+}
+
 /** How many ticks to generate per quarter. ~190–210 total, matching AFL pace. */
 const TICKS_PER_QUARTER_MIN = 190
 const TICKS_PER_QUARTER_MAX = 210
@@ -115,112 +121,148 @@ const ZONE_DISPOSAL_WEIGHTS: Record<FieldZone, Record<string, number>> = {
 // Commentary templates (migrated from tickEngine.ts)
 // ---------------------------------------------------------------------------
 
+/** Human-readable zone labels for commentary. */
+const ZONE_LABEL: Record<FieldZone, string> = {
+  back50: 'the defensive 50',
+  backHalf: 'half-back',
+  midfield: 'the midfield',
+  forwardHalf: 'half-forward',
+  forward50: 'the forward 50',
+}
+
+/** Kick commentary that includes direction.
+ *  Uses {fromZone} and {toZone} so the viewer always knows where the ball travels. */
+const KICK_ADVANCE: string[] = [
+  '{name} kicks it long from {fromZone} — the ball lands in {toZone}.',
+  'Kick from {name} travels from {fromZone} into {toZone}.',
+  '{name} drives it out of {fromZone} and finds a target in {toZone}.',
+  '{name} launches it from {fromZone} — it drops in {toZone}.',
+  'Beautiful kick by {name} from {fromZone} — the ball sails into {toZone}.',
+  '{name} sends it deep from {fromZone} into {toZone}.',
+]
+
+const KICK_HOLD: string[] = [
+  '{name} kicks it sideways across {zone} — switching the angle.',
+  'Short kick from {name} — ball stays in {zone}.',
+  '{name} switches the play across {zone}.',
+  '{name} chips it to a teammate in {zone}.',
+  '{name} finds a leading option in {zone} by foot.',
+  'Kick from {name} holds possession in {zone}.',
+]
+
+const KICK_RETREAT: string[] = [
+  '{name} goes backward from {fromZone} — recycling through {toZone}.',
+  '{name} kicks it back from {fromZone} to {toZone} to reset.',
+  'No forward option — {name} sends it back to {toZone}.',
+  '{name} taps it backward to {toZone} — keeping possession alive.',
+]
+
 const KICK_BY_ZONE: Record<FieldZone, string[]> = {
   back50: [
-    '{name} thumps it out of the back line.',
-    'Kick from {name} clears the defensive 50.',
-    '{name} drives it long out of defence.',
-    '{name} gets boot to ball — launches it from the back line.',
+    '{name} thumps it out of {zone} — clears the danger.',
+    'Kick from {name} clears {zone}.',
+    '{name} drives it long out of {zone}.',
+    '{name} gets boot to ball — launches it from {zone}.',
   ],
   backHalf: [
-    '{name} kicks it through the corridor from half-back.',
-    'Nice use from {name} off half-back.',
-    '{name} delivers it on the boot from the back half.',
-    '{name} switches play across half-back.',
+    '{name} kicks it through the corridor from {zone}.',
+    'Nice use from {name} off {zone}.',
+    '{name} delivers it on the boot from {zone}.',
+    '{name} switches play across {zone}.',
   ],
   midfield: [
-    '{name} drills it through the midfield.',
-    'Kick from {name} finds space on the wing.',
-    '{name} swings it wide to the wing.',
-    '{name} fires it forward from the centre.',
-    '{name} takes the kick from the stoppage — finds a teammate.',
-    'Nice kick by {name} — switches the play.',
+    '{name} drills it through {zone}.',
+    'Kick from {name} finds space through the corridor in {zone}.',
+    '{name} swings it wide across {zone}.',
+    '{name} fires it forward from {zone}.',
+    '{name} takes the kick from {zone} — finds a teammate.',
+    'Nice kick by {name} — switches the play in {zone}.',
   ],
   forwardHalf: [
-    '{name} delivers it inside 50.',
-    '{name} pumps it long into the forward line.',
-    '{name} bombs it forward — looking for a contest up forward.',
-    '{name} finds the corridor with a precise kick from the forward half.',
+    '{name} delivers it inside 50 from {zone}.',
+    '{name} pumps it long from {zone} into the forward line.',
+    '{name} bombs it forward from {zone} — looking for a contest.',
+    '{name} finds the corridor with a precise kick from {zone}.',
   ],
   forward50: [
-    '{name} snaps at goal from close range.',
-    '{name} steadies inside 50 and delivers by foot.',
-    '{name} fires it goalward from the forward pocket.',
-    'Clinical from {name} — the ball zips through inside 50.',
+    '{name} snaps at goal from close range in {zone}.',
+    '{name} steadies in {zone} and delivers by foot.',
+    '{name} fires it goalward from {zone}.',
+    'Clinical from {name} — the ball zips through {zone}.',
   ],
 }
 
 const COMMENTARY: Record<Exclude<PossessionType, 'kick'>, string[]> = {
   handball: [
-    '{name} threads a handball through traffic.',
-    'Quick handball from {name} keeps the chain going.',
-    '{name} finds a teammate with a deft handpass.',
-    'Short pass from {name} — the ball moves quickly.',
-    'Brilliant handball from {name} beats the tackler.',
-    '{name} fires a laser handball under pressure.',
-    '{name} snaps a handball off both hands — great vision.',
-    '{name} shovels it out of the stoppage — chain maintained.',
+    '{name} threads a handball through traffic in {zone}.',
+    'Quick handball from {name} in {zone} keeps the chain going.',
+    '{name} finds a nearby teammate with a deft handpass in {zone}.',
+    'Short pass from {name} in {zone} — the ball moves quickly.',
+    'Brilliant handball from {name} in {zone} beats the tackler.',
+    '{name} fires a handball under pressure in {zone}.',
+    '{name} snaps a handball off both hands in {zone} — great vision.',
+    '{name} shovels it out of the contest in {zone}.',
   ],
   mark: [
-    '{name} takes a strong overhead mark.',
-    '{name} marks it cleanly under pressure.',
-    'Strong hands from {name} — a fine mark.',
-    '{name} takes the grab and plays on.',
-    '{name} takes a screamer! What a mark!',
-    'Courageous mark to {name} — held it through heavy contact.',
-    '{name} positions perfectly and takes the clean grab.',
-    '{name} judges the flight beautifully — safe hands.',
+    '{name} takes a strong overhead mark in {zone}.',
+    '{name} marks it cleanly in {zone}.',
+    'Strong hands from {name} — a fine mark in {zone}.',
+    '{name} takes the grab in {zone} and plays on.',
+    '{name} takes a screamer in {zone}! What a mark!',
+    'Courageous mark to {name} in {zone} — held it through heavy contact.',
+    '{name} positions perfectly in {zone} and takes the clean grab.',
+    '{name} judges the flight beautifully in {zone} — safe hands.',
   ],
   tackle: [
-    'Tackle applied! {name} wins the free kick.',
-    '{name} smothers the kick — great defensive work.',
-    '{name} clamps on and forces the turnover.',
-    'Solid tackle from {name}.',
-    '{name} drives through the ball-carrier — big hit!',
-    '{name} wraps both arms around and drags them down.',
+    'Tackle applied in {zone}! {name} wins the free kick.',
+    '{name} smothers the kick in {zone} — great defensive work.',
+    '{name} clamps on in {zone} and forces the turnover.',
+    'Solid tackle from {name} in {zone}.',
+    '{name} drives through the ball-carrier in {zone} — big hit!',
+    '{name} wraps both arms around in {zone} and drags them down.',
   ],
   clearance: [
-    '{name} wins the clearance from the stoppage.',
-    'Ball breaks free — {name} gathers and fires it out.',
-    '{name} crumbs it from the pack.',
-    'Strong clearance by {name}.',
-    '{name} sweeps it clear — possession changed.',
-    'The ball spills and {name} is first to react — clearance!',
+    '{name} wins the clearance from the stoppage in {zone}.',
+    'Ball breaks free in {zone} — {name} gathers and fires it out.',
+    '{name} crumbs it from the pack in {zone}.',
+    'Strong clearance by {name} in {zone}.',
+    '{name} sweeps it clear in {zone}.',
+    'The ball spills in {zone} and {name} is first to react — clearance!',
   ],
   contest: [
-    'Contested ball — {name} comes up with it.',
-    'Disputed possession — {name} holds on.',
-    '{name} wins the hitout to advantage.',
-    'Hard at the ball — {name} emerges.',
-    '{name} muscles through the contest — strong possession.',
-    'Bodies everywhere — {name} comes out with the ball.',
+    'Contested ball in {zone} — {name} comes up with it.',
+    'Disputed possession in {zone} — {name} holds on.',
+    '{name} wins the hitout to advantage in {zone}.',
+    'Hard at the ball in {zone} — {name} emerges with possession.',
+    '{name} muscles through the contest in {zone}.',
+    'Bodies everywhere in {zone} — {name} comes out with the ball.',
   ],
   'free-for': [
-    'Free kick to {name} — high contact.',
-    'Umpire rewards {name} with a free kick.',
-    '{name} wins the free — holding the ball called.',
-    'Late contact from behind — free kick to {name}.',
+    'Free kick to {name} in {zone} — high contact.',
+    'Umpire rewards {name} with a free kick in {zone}.',
+    '{name} wins the free in {zone} — holding the ball called.',
+    'Late contact in {zone} — free kick to {name}.',
   ],
   goal: [
     'GOAL! {name} slots it through from {zone}!',
-    "It's a major! {name} converts brilliantly!",
-    'GOAL — {name} makes no mistake!',
+    "It's a major! {name} converts from {zone}!",
+    'GOAL — {name} makes no mistake from {zone}!',
     'SIX POINTS! {name} nails it from {zone}!',
-    'GOAL! {name} splits the big sticks!',
-    'The chain is complete — {name} finishes with a GOAL!',
+    'GOAL! {name} splits the big sticks from {zone}!',
+    'The chain is complete — {name} finishes with a GOAL from {zone}!',
   ],
   behind: [
-    'Behind. {name} just missed to the right.',
-    'Point — unlucky from {name}.',
-    '{name} registers a behind — just wide.',
-    'One point. {name} could not convert.',
-    '{name} goes for goal but it drifts across — behind.',
+    'Behind. {name} just missed from {zone}.',
+    'Point — unlucky from {name} in {zone}.',
+    '{name} registers a behind from {zone} — just wide.',
+    'One point from {zone}. {name} could not convert.',
+    '{name} goes for goal from {zone} but it drifts across — behind.',
   ],
   injury: [
-    '{name} is down on the ground — play stopped.',
-    'Concern for {name} — trainer on the ground.',
-    '{name} has pulled up sore. Trainer rushing on.',
-    'Medical staff attend to {name}.',
+    '{name} is down in {zone} — play stopped.',
+    'Concern for {name} in {zone} — trainer on the ground.',
+    '{name} has pulled up sore in {zone}. Trainer rushing on.',
+    'Medical staff attend to {name} in {zone}.',
   ],
   interchange: [
     '{name} heads to the bench for a breather.',
@@ -228,66 +270,98 @@ const COMMENTARY: Record<Exclude<PossessionType, 'kick'>, string[]> = {
     '{name} rotated off the ground.',
   ],
   spoil: [
-    '{name} gets a fist to it — spoil!',
-    'Great spoil from {name} — denies the mark.',
-    '{name} punches it clear — no mark.',
-    '{name} flies in and gets a hand to it.',
-    'Brilliant spoil by {name} — the ball goes to ground.',
-    '{name} times the punch perfectly — contested ball.',
+    '{name} gets a fist to it in {zone} — spoil!',
+    'Great spoil from {name} in {zone} — denies the mark.',
+    '{name} punches it clear in {zone} — no mark.',
+    '{name} flies in and gets a hand to it in {zone}.',
+    'Brilliant spoil by {name} in {zone} — the ball goes to ground.',
+    '{name} times the punch perfectly in {zone} — contested ball.',
   ],
   'out-of-bounds': [
-    'Ball sails out of bounds — throw-in coming.',
-    'Bundled over the boundary — throw-in on the {zone}.',
-    'It spills out of bounds — umpire signals the throw-in.',
-    'Carried over the line — the ball is out of play.',
-    'Scragged over the boundary. Throw-in.',
+    'Ball sails out of bounds on {zone} — throw-in coming.',
+    'Bundled over the boundary on {zone} — throw-in.',
+    'It spills out of bounds on {zone} — umpire signals the throw-in.',
+    'Carried over the line on {zone} — the ball is out of play.',
+    'Scragged over the boundary on {zone}. Throw-in.',
   ],
   'ball-up': [
-    "Ball-up! Neither side can win clean possession.",
-    'Umpire calls ball-up — both sides locked together.',
-    'Play stopped — ball-up called in the {zone}.',
-    "It's a throw-in — the ruckmen set up again.",
-    'Congested in the {zone} — ball-up called.',
+    "Ball-up in {zone}! Neither side can win clean possession.",
+    'Umpire calls ball-up in {zone} — both sides locked together.',
+    'Play stopped — ball-up called in {zone}.',
+    "Ball-up in {zone} — the ruckmen set up again.",
+    'Congested in {zone} — ball-up called.',
   ],
   'out-on-full': [
-    'Out on the full! Free kick — poor kick across the boundary.',
-    "That's gone out on the full — free kick the other way.",
-    'Kicked it out on the full — the umpire calls the free.',
-    'Out on the full — shanked kick gives away a free.',
+    '{name} kicks it out on the full from {zone}! Free kick the other way.',
+    "{name}'s kick from {zone} goes out on the full — free kick coming.",
+    '{name} shanks it out on the full from {zone} — costly turnover.',
+    'Out on the full from {name} in {zone} — the umpire calls the free.',
   ],
 }
 
 // Chain-context commentary additions
 const CHAIN_BUILDING_COMMENTARY: string[] = [
-  '{name} extends the chain — beautiful ball movement.',
-  'Linking up again — {name} keeps it alive.',
-  '{name} builds from {zone} — the chain continues.',
-  'Patient build-up — {name} finds space and keeps possession.',
-  '{name} continues the passage of play — {count} disposals and counting.',
+  '{name} extends the chain in {zone} — beautiful ball movement.',
+  'Linking up again — {name} keeps it alive in {zone}.',
+  '{name} builds from {zone} — the chain continues with {count} disposals.',
+  'Patient build-up through {zone} — {name} finds space and keeps possession.',
+  '{name} continues the passage of play through {zone} — {count} disposals and counting.',
 ]
 
 const RECYCLE_COMMENTARY: string[] = [
-  '{name} goes backward to reset — patient play.',
-  '{name} kicks it back across half-back to recycle.',
-  'Lateral ball movement — {name} switches the point of attack.',
-  '{name} goes sideways — looking to open up space on the other side.',
-  'No direct option — {name} kicks it back to maintain possession.',
-  '{name} finds a teammate behind the play — reset and rebuild.',
-  'Recycled possession — {name} takes it back through the corridor.',
-  '{name} opts for the safe option — ball goes back to regroup.',
+  '{name} goes backward from {fromZone} to {toZone} to reset — patient play.',
+  '{name} kicks it back to {toZone} to recycle.',
+  'Lateral ball movement — {name} switches the point of attack in {zone}.',
+  '{name} goes back to {toZone} — looking to open up space on the other side.',
+  'No forward option — {name} sends it back to {toZone} to maintain possession.',
+  '{name} finds a teammate behind the play in {toZone} — reset and rebuild.',
+  'Recycled possession — {name} takes it back to {toZone}.',
+  '{name} opts for the safe option — ball goes back to {toZone} to regroup.',
 ]
 
-const TURNOVER_COMMENTARY: string[] = [
-  'Turnover! {name} wins it back for the other side.',
-  '{name} intercepts — new chain starts here.',
-  'The ball spills and {name} picks it up — change of possession.',
-  '{name} pounces on the loose ball — momentum shifts.',
+/** Handball commentary when the zone advances — implies forward run, not a short pass. */
+const HANDBALL_ADVANCE_COMMENTARY: string[] = [
+  '{name} runs and dishes off a handball from {fromZone} into {toZone} — gains ground.',
+  '{name} bursts forward from {fromZone} and fires a handpass into {toZone}.',
+  'Running handball from {name} pushes it from {fromZone} into {toZone}.',
+  '{name} takes off from {fromZone} and gets it to a teammate in {toZone}.',
+  '{name} drives forward with a handball from {fromZone} to {toZone}.',
+  'Handball receive and go — {name} surges from {fromZone} into {toZone}.',
+  '{name} links up on the run — the ball moves from {fromZone} into {toZone}.',
+  'Smart handball from {name} in {fromZone} — finds a leading teammate in {toZone}.',
 ]
 
-function fillTemplate(template: string, name: string, zone: FieldZone, chainCount?: number): string {
+/** Contest/clearance that breaks forward — ball spills out and gains territory. */
+const CONTEST_ADVANCE_COMMENTARY: string[] = [
+  '{name} wins the contest in {fromZone} and bursts forward into {toZone}.',
+  'Ball spills from the pack in {fromZone} — {name} gathers and drives it to {toZone}.',
+  '{name} breaks the tackle in {fromZone} and pushes forward to {toZone}.',
+  'Contested ball in {fromZone} — {name} emerges and carries it to {toZone}.',
+  '{name} wins the clearance in {fromZone} and sends it forward to {toZone}.',
+  'Hard at the ball in {fromZone} — {name} breaks free and advances to {toZone}.',
+]
+
+/** Contest/clearance that goes backward — ball pushed back under pressure. */
+const CONTEST_RETREAT_COMMENTARY: string[] = [
+  'Pressure in {fromZone} forces the ball back — {name} gathers in {toZone}.',
+  'Contested ball in {fromZone} — {name} is forced back to {toZone}.',
+  '{name} wins possession in {fromZone} but is pushed back to {toZone}.',
+  'The ball spills backward from {fromZone} — {name} recovers in {toZone}.',
+]
+
+function fillTemplate(
+  template: string,
+  name: string,
+  zone: FieldZone,
+  chainCount?: number,
+  fromZone?: FieldZone,
+  toZone?: FieldZone,
+): string {
   return template
     .replace('{name}', name)
-    .replace('{zone}', zone.replace(/([A-Z])/g, ' $1').toLowerCase().trim())
+    .replace('{zone}', ZONE_LABEL[zone])
+    .replace('{fromZone}', ZONE_LABEL[fromZone ?? zone])
+    .replace('{toZone}', ZONE_LABEL[toZone ?? zone])
     .replace('{count}', String(chainCount ?? 0))
 }
 
@@ -298,22 +372,61 @@ function pickCommentary(
   zone: FieldZone,
   chainDisposals?: number,
   zoneRetreat?: boolean,
+  zoneAdvanced?: boolean,
+  fromZone?: FieldZone,
 ): string {
   // When the ball has gone backward, use recycle commentary
   if (zoneRetreat && (type === 'kick' || type === 'handball') && rng.chance(0.55)) {
     const tmpl = RECYCLE_COMMENTARY[rng.nextInt(0, RECYCLE_COMMENTARY.length - 1)]
-    return fillTemplate(tmpl, name, zone, chainDisposals)
+    return fillTemplate(tmpl, name, zone, chainDisposals, fromZone, zone)
+  }
+
+  // Zone-advancing handballs — use forward-movement commentary to avoid
+  // misleading "short pass" text when the ball visually travels a long way.
+  if (zoneAdvanced && type === 'handball') {
+    const tmpl = HANDBALL_ADVANCE_COMMENTARY[rng.nextInt(0, HANDBALL_ADVANCE_COMMENTARY.length - 1)]
+    return fillTemplate(tmpl, name, zone, chainDisposals, fromZone, zone)
+  }
+
+  // Zone-advancing kicks — use directional commentary showing from→to
+  if (zoneAdvanced && type === 'kick') {
+    const tmpl = KICK_ADVANCE[rng.nextInt(0, KICK_ADVANCE.length - 1)]
+    return fillTemplate(tmpl, name, zone, chainDisposals, fromZone, zone)
+  }
+
+  // Kick that held position — use hold commentary
+  if (!zoneAdvanced && !zoneRetreat && type === 'kick' && fromZone && rng.chance(0.4)) {
+    const tmpl = KICK_HOLD[rng.nextInt(0, KICK_HOLD.length - 1)]
+    return fillTemplate(tmpl, name, zone, chainDisposals, fromZone, zone)
+  }
+
+  // Kick that went backward — use retreat commentary
+  if (zoneRetreat && type === 'kick') {
+    const tmpl = KICK_RETREAT[rng.nextInt(0, KICK_RETREAT.length - 1)]
+    return fillTemplate(tmpl, name, zone, chainDisposals, fromZone, zone)
+  }
+
+  // Contest/clearance that advances zones — ball breaks forward from the pack
+  if (zoneAdvanced && (type === 'contest' || type === 'clearance')) {
+    const tmpl = CONTEST_ADVANCE_COMMENTARY[rng.nextInt(0, CONTEST_ADVANCE_COMMENTARY.length - 1)]
+    return fillTemplate(tmpl, name, zone, chainDisposals, fromZone, zone)
+  }
+
+  // Contest/clearance that retreats — ball pushed back under pressure
+  if (zoneRetreat && (type === 'contest' || type === 'clearance')) {
+    const tmpl = CONTEST_RETREAT_COMMENTARY[rng.nextInt(0, CONTEST_RETREAT_COMMENTARY.length - 1)]
+    return fillTemplate(tmpl, name, zone, chainDisposals, fromZone, zone)
   }
 
   // Occasionally use chain-building commentary for mid-chain disposals
   if (chainDisposals && chainDisposals >= 3 && (type === 'kick' || type === 'handball') && rng.chance(0.3)) {
     const tmpl = CHAIN_BUILDING_COMMENTARY[rng.nextInt(0, CHAIN_BUILDING_COMMENTARY.length - 1)]
-    return fillTemplate(tmpl, name, zone, chainDisposals)
+    return fillTemplate(tmpl, name, zone, chainDisposals, fromZone, zone)
   }
 
   const templates = type === 'kick' ? KICK_BY_ZONE[zone] : COMMENTARY[type]
   const template = templates[rng.nextInt(0, templates.length - 1)]
-  return fillTemplate(template, name, zone)
+  return fillTemplate(template, name, zone, undefined, fromZone, zone)
 }
 
 // ---------------------------------------------------------------------------
@@ -388,6 +501,7 @@ function pickZonePlayer(
   positionFitMults: Map<string, number>,
   clutchCtx?: ClutchContext,
   weather?: WeatherModifiers,
+  previousPlayerId?: string,
 ): Player {
   const lineWeights = ZONE_LINE_WEIGHTS[zone]
   const weights = players.map((p) => {
@@ -402,6 +516,9 @@ function pickZonePlayer(
       ? getClutchModifier(p, clutchCtx.quarter, clutchCtx.margin, clutchCtx.isFinal, clutchCtx.captainPresent)
       : 1.0
     const posFitMult = positionFitMults.get(p.id) ?? 1.0
+    // Heavily penalize the previous possessing player — same player back-to-back
+    // in general play is extremely rare in real AFL
+    const repeatPenalty = p.id === previousPlayerId ? 0.03 : 1.0
     const skill = (
       getOverall(p) * 0.35 +
       g.decisionMaking * 0.2 +
@@ -415,7 +532,8 @@ function pickZonePlayer(
       lineW *
       getAvailabilityMultiplier(p, posFitMult) *
       getRoleSimulationMultiplier(p.preferredRole, 'general') *
-      contestedMult * moraleMult * readinessMult * clutchMult,
+      contestedMult * moraleMult * readinessMult * clutchMult *
+      repeatPenalty,
     )
   })
 
@@ -577,10 +695,10 @@ const CENTRE_BOUNCE_COMMENTARY: Record<string, string[]> = {
     '{name} wins first possession from the centre.',
   ],
   exitSquare: [
-    '{name} receives on the wing — play opens up.',
+    '{name} collects outside the square — play opens up.',
     '{name} collects outside the square and pushes forward.',
     'Ball spills to {name} on the centre-square boundary.',
-    '{name} gathers on the wing and drives it wide.',
+    '{name} gathers outside the centre and looks up.',
     '{name} takes the ball out of the centre and into open space.',
   ],
 }
@@ -768,15 +886,7 @@ function advanceZone(
     // Use the gameplan-derived movement profile
     const roll = rng.nextFloat(0, 1)
 
-    // Skip forward (long kick) — capped by both profile and skill
-    if (roll < profile.skipChance + skillBonus * 0.5) {
-      if (idx < 3) return ZONES[idx + 2]
-      if (idx < 4) return ZONES[idx + 1]
-      // In forward50, skip means staying (can't go further)
-      return zone
-    }
-
-    // Forward one zone
+    // Forward one zone (long kick or regular advance — max 1 zone per disposal)
     if (roll < profile.skipChance + profile.forwardBias + skillBonus) {
       if (idx < 4) return ZONES[idx + 1]
       return zone
@@ -835,11 +945,11 @@ function advanceZone(
   }
 
   if (disposal === 'clearance') {
-    // Clearance: ball exits the congestion, could go anywhere
+    // Clearance: ball exits congestion — max 1 zone movement
     const roll = rng.nextFloat(0, 1)
-    if (roll < 0.15) return 'backHalf'
-    if (roll < 0.65) return 'midfield'
-    if (roll < 0.85) return 'forwardHalf'
+    if (roll < 0.25 && idx > 0) return ZONES[idx - 1]   // cleared backward
+    if (roll < 0.70) return zone                          // cleared to same zone
+    if (idx < 4) return ZONES[idx + 1]                    // cleared forward
     return zone
   }
 
@@ -947,7 +1057,7 @@ function buildPossessionModifiers(
  * Increases with chain length (pressure mounts), weather, and defender quality.
  */
 function getTurnoverChance(
-  rng: SeededRNG,
+  _rng: SeededRNG,
   chain: ChainState,
   player: Player,
   weather: WeatherModifiers,
@@ -1005,7 +1115,7 @@ function resolveShot(
 ): ShotResult {
   const g = getGranularRatings(player)
   const goalChance = clampChance(
-    (0.28 + g.goalSense * 0.004 + g.kicking * 0.0015)
+    (0.28 + g.goalSense * 0.0018 + g.kicking * 0.0007)
     * accuracyMult
     * weather.accuracyMult
     * venueScoringCoeff,
@@ -1060,9 +1170,7 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
   // Venue data
   const venueData = ctx.venueId ? VENUES[ctx.venueId] : undefined
   const venueScoringCoeff = venueData?.scoringCoefficient ?? 1.0
-  const venueKickBias = venueData?.kickToHandballRatio ?? 1.0
   const venueContestedCoeff = venueData?.contestedCoefficient ?? 1.0
-  const venueMarkCoeff = venueData?.markCoefficient ?? 1.0
 
   // Active players (may be reduced by mid-match injuries)
   const homePlayers = ctx.homeActivePlayers
@@ -1123,12 +1231,17 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
 
   // Chain state
   let chainId = 0
+  let lastPlayerId: string | undefined
+  /** When true, the previous tick was a mark — the same player gets a free kick next. */
+  let lastDisposalWasMark = false
+  let markPlayerId: string | undefined
   const chain: ChainState = {
     chainId: 0,
     zone: 'midfield',
     clubId: homeClubId,
     disposalsInChain: 0,
     isHomeTeam: true,
+    isCentreBounce: true,
   }
 
   // Tick output
@@ -1151,6 +1264,9 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
     chain.isHomeTeam = clubId === homeClubId
     chain.disposalsInChain = 0
     chain.isCentreBounce = centreBounce
+    lastPlayerId = undefined // reset — new team possessing
+    lastDisposalWasMark = false
+    markPlayerId = undefined
   }
 
   // Helper: get clutch context
@@ -1228,12 +1344,9 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
     const attackingStats = isHome ? homeStats : awayStats
     const defendingStats = isHome ? awayStats : homeStats
     const attMods = isHome ? homeMods : awayMods
-    const defMods = isHome ? awayMods : homeMods
     const attackClubId = chain.clubId
-    const attTactical = isHome ? homeTactical : awayTactical
     const defTactical = isHome ? awayTactical : homeTactical
     const matchupAccuracyMult = isHome ? matchup.homeAccuracyMult : matchup.awayAccuracyMult
-    const matchupMarkMult = isHome ? matchup.homeMarkMult : matchup.awayMarkMult
     const matchupTackleMult = isHome ? matchup.awayTackleMult : matchup.homeTackleMult
     const attackingTeamFreeRisk = isHome ? homeTeamFreeRisk : awayTeamFreeRisk
     const defendingTeamFreeRisk = isHome ? awayTeamFreeRisk : homeTeamFreeRisk
@@ -1351,14 +1464,29 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
     }
 
     // 1. Pick disposal type (zone-aware)
-    let disposal = pickDisposalType(rng, chain.zone, possessionMods)
+    // After a mark, the same player gets a free kick — override disposal to 'kick'
+    let disposal: PossessionType
+    if (lastDisposalWasMark) {
+      disposal = 'kick'
+      lastDisposalWasMark = false
+    } else {
+      disposal = pickDisposalType(rng, chain.zone, possessionMods)
+    }
 
     // Long-range shot from forwardHalf (~50m set shots, checkside snaps, etc.)
-    // In real AFL, ~8–10% of goals come from outside forward50
-    if (chain.zone === 'forwardHalf' && (disposal === 'kick' || disposal === 'mark') && rng.chance(0.10)) {
-      const scorer = pickScoringPlayer(rng, attackingPlayers, positionOverrides, positionFitMults, clutchCtx)
+    // In real AFL, ~5–8% of goals come from outside forward50
+    if (chain.zone === 'forwardHalf' && disposal === 'kick' && rng.chance(0.06)) {
+      // If this kick came from a mark, the marker is the kicker
+      const scorer = markPlayerId
+        ? (attackingPlayers.find((p) => p.id === markPlayerId) ?? pickScoringPlayer(rng, attackingPlayers, positionOverrides, positionFitMults, clutchCtx))
+        : pickScoringPlayer(rng, attackingPlayers, positionOverrides, positionFitMults, clutchCtx)
       const scorerIdx = findStatIndex(attackingStats, scorer.id)
       const name = getPlayerDisplayName(scorer)
+      // Credit the kick disposal
+      attackingStats[scorerIdx].kicks++
+      attackingStats[scorerIdx].disposals++
+      // Clear mark state since we're consuming it
+      if (markPlayerId) { lastDisposalWasMark = false; markPlayerId = undefined }
 
       // Long-range shots have reduced accuracy (0.55 multiplier)
       const shot = resolveShot(rng, scorer, weather, attMods.accuracyMult * matchupAccuracyMult * 0.55, venueScoringCoeff)
@@ -1428,29 +1556,53 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
       // Miss completely — play continues, no score
     }
 
-    // Override disposal in certain scenarios:
-    // In forward50, ~45% of kick/mark ticks lead to a shot attempt
-    if (chain.zone === 'forward50' && (disposal === 'kick' || disposal === 'mark') && rng.chance(0.45)) {
-      // Shot on goal attempt
-      const scorer = pickScoringPlayer(rng, attackingPlayers, positionOverrides, positionFitMults, clutchCtx)
-      const scorerIdx = findStatIndex(attackingStats, scorer.id)
-      const scorerRatings = getGranularRatings(scorer)
-      const name = getPlayerDisplayName(scorer)
+    // 2. Pick the acting player (zone-aware, penalising back-to-back repeats)
+    // After a mark, the marker takes the kick — skip random player selection
+    let player: Player
+    if (markPlayerId) {
+      const marker = attackingPlayers.find((p) => p.id === markPlayerId)
+      player = marker ?? pickZonePlayer(rng, attackingPlayers, chain.zone, positionFitMults, clutchCtx, weather, lastPlayerId)
+      markPlayerId = undefined
+    } else {
+      player = pickZonePlayer(rng, attackingPlayers, chain.zone, positionFitMults, clutchCtx, weather, lastPlayerId)
+    }
+    lastPlayerId = player.id
+    const playerIdx = findStatIndex(attackingStats, player.id)
+    const playerRatings = getGranularRatings(player)
+    const name = getPlayerDisplayName(player)
 
-      // Who delivered inside 50 (the previous player in the chain, approximate with zone player)
+    // Track zone possession for the attacking player
+    if (attackingStats[playerIdx].zonePossessions) {
+      attackingStats[playerIdx].zonePossessions![chain.zone] =
+        (attackingStats[playerIdx].zonePossessions![chain.zone] ?? 0) + 1
+    }
+
+    // Tactical tag penalty
+    const tacticalFocus = defTactical.focusByTarget.get(player.id)
+    const tagPenalty = tacticalFocus?.tagPressure ?? 0
+    const roughPenalty = tacticalFocus?.roughPressure ?? 0
+    const pressurePenalty = tagPenalty + roughPenalty * 0.6
+
+    // ── Forward 50 shot on goal ─────────────────────────────────────────────
+    // ~30% of kicks in forward50 lead to a shot attempt. The acting player
+    // (who may be the marker from the previous tick) is the scorer.
+    if (chain.zone === 'forward50' && disposal === 'kick' && rng.chance(0.30)) {
+      // Credit the kick disposal
+      attackingStats[playerIdx].kicks++
+      attackingStats[playerIdx].disposals++
+
       const deliverer = chain.disposalsInChain > 0
         ? pickZonePlayer(rng, attackingPlayers, 'forwardHalf', positionFitMults, clutchCtx, weather)
-        : scorer
+        : player
 
-      const shot = resolveShot(rng, scorer, weather, attMods.accuracyMult * matchupAccuracyMult, venueScoringCoeff)
+      const shot = resolveShot(rng, player, weather, attMods.accuracyMult * matchupAccuracyMult, venueScoringCoeff)
 
       if (shot.isGoal) {
         if (isHome) homeGoals++; else awayGoals++
-        attackingStats[scorerIdx].goals++
-        attackingStats[scorerIdx].scoreInvolvements++
+        attackingStats[playerIdx].goals++
+        attackingStats[playerIdx].scoreInvolvements++
 
-        // Goal assist
-        if (deliverer.id !== scorer.id) {
+        if (deliverer.id !== player.id) {
           const delIdx = findStatIndex(attackingStats, deliverer.id)
           if (delIdx >= 0) {
             attackingStats[delIdx].goalAssists++
@@ -1459,42 +1611,28 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
         }
 
         keyEvents.push({
-          quarter: qNum,
-          minute: currentMinute,
-          type: 'goal',
-          description: `${scorer.firstName} ${scorer.lastName} kicks a goal`,
-          playerId: scorer.id,
-          clubId: attackClubId,
+          quarter: qNum, minute: currentMinute, type: 'goal',
+          description: `${player.firstName} ${player.lastName} kicks a goal`,
+          playerId: player.id, clubId: attackClubId,
         })
-
         pbp.push({
           id: `pbp-${qNum}-${pbpCtr++}`,
           quarter: qNum, minute: currentMinute,
-          type: 'goal', clubId: attackClubId, playerId: scorer.id,
-          receiverPlayerId: deliverer.id !== scorer.id ? deliverer.id : undefined,
+          type: 'goal', clubId: attackClubId, playerId: player.id,
+          receiverPlayerId: deliverer.id !== player.id ? deliverer.id : undefined,
           commentary: pickCommentary(rng, 'goal', name, 'forward50'),
           isHighlight: true,
         })
-
         ticks.push({
-          tickIndex: t,
-          quarter: qNum,
-          minute: currentMinute,
-          zone: 'forward50',
-          possessionType: 'goal',
-          clubId: attackClubId,
-          playerId: scorer.id,
-          playerName: name,
-          homeScore: homeScore(),
-          awayScore: awayScore(),
-          isStoppage: true,
-          stoppageType: 'goal',
-          goalPlayerId: scorer.id,
+          tickIndex: t, quarter: qNum, minute: currentMinute,
+          zone: 'forward50', possessionType: 'goal',
+          clubId: attackClubId, playerId: player.id, playerName: name,
+          homeScore: homeScore(), awayScore: awayScore(),
+          isStoppage: true, stoppageType: 'goal', goalPlayerId: player.id,
           commentary: pickCommentary(rng, 'goal', name, 'forward50'),
           chainId: chain.chainId,
         })
 
-        // Reset to midfield — centre bounce
         const nextTeamHome = rng.chance(adjustedHomeRating / (adjustedHomeRating + adjustedAwayRating))
         startNewChain(nextTeamHome ? homeClubId : awayClubId, 'midfield', true)
         continue
@@ -1502,97 +1640,69 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
 
       if (shot.isBehind) {
         if (isHome) homeBehinds++; else awayBehinds++
-        attackingStats[scorerIdx].behinds++
+        attackingStats[playerIdx].behinds++
 
         keyEvents.push({
-          quarter: qNum,
-          minute: currentMinute,
-          type: 'behind',
-          description: `${scorer.firstName} ${scorer.lastName} kicks a behind`,
-          playerId: scorer.id,
-          clubId: attackClubId,
+          quarter: qNum, minute: currentMinute, type: 'behind',
+          description: `${player.firstName} ${player.lastName} kicks a behind`,
+          playerId: player.id, clubId: attackClubId,
         })
-
         pbp.push({
           id: `pbp-${qNum}-${pbpCtr++}`,
           quarter: qNum, minute: currentMinute,
-          type: 'behind', clubId: attackClubId, playerId: scorer.id,
+          type: 'behind', clubId: attackClubId, playerId: player.id,
           commentary: pickCommentary(rng, 'behind', name, 'forward50'),
           isHighlight: false,
         })
-
         ticks.push({
-          tickIndex: t,
-          quarter: qNum,
-          minute: currentMinute,
-          zone: 'forward50',
-          possessionType: 'behind',
-          clubId: attackClubId,
-          playerId: scorer.id,
-          playerName: name,
-          homeScore: homeScore(),
-          awayScore: awayScore(),
+          tickIndex: t, quarter: qNum, minute: currentMinute,
+          zone: 'forward50', possessionType: 'behind',
+          clubId: attackClubId, playerId: player.id, playerName: name,
+          homeScore: homeScore(), awayScore: awayScore(),
           isStoppage: false,
           commentary: pickCommentary(rng, 'behind', name, 'forward50'),
           chainId: chain.chainId,
         })
 
-        // Behind → kick-in from back50 for defending team
         startNewChain(isHome ? awayClubId : homeClubId, 'back50')
         continue
       }
 
-      // Miss (no score) — ball stays in forward50 area, possible turnover
+      // Miss — no score
       pbp.push({
         id: `pbp-${qNum}-${pbpCtr++}`,
         quarter: qNum, minute: currentMinute,
-        type: 'miss', clubId: attackClubId, playerId: scorer.id,
+        type: 'miss', clubId: attackClubId, playerId: player.id,
         commentary: `${name} has a shot but misses — ball spills in the forward 50`,
         isHighlight: false,
       })
 
-      // After a miss, ~50% turnover (kick-in/rebound), ~50% chain continues with crumbing
       if (rng.chance(0.50)) {
         startNewChain(isHome ? awayClubId : homeClubId, 'back50')
-
         ticks.push({
-          tickIndex: t,
-          quarter: qNum,
-          minute: currentMinute,
-          zone: 'forward50',
-          possessionType: 'spoil',
+          tickIndex: t, quarter: qNum, minute: currentMinute,
+          zone: 'forward50', possessionType: 'spoil',
           clubId: isHome ? awayClubId : homeClubId,
           playerName: name,
-          homeScore: homeScore(),
-          awayScore: awayScore(),
+          homeScore: homeScore(), awayScore: awayScore(),
           isStoppage: false,
           commentary: `${name} misses — ball rebounds out of the forward line`,
           chainId: chain.chainId,
         })
         continue
       }
-      // Chain continues in forward50
       chain.disposalsInChain++
-      disposal = 'contest' // crumbing contest
+      disposal = 'contest'
     }
-
-    // 2. Pick the acting player (zone-aware)
-    const player = pickZonePlayer(rng, attackingPlayers, chain.zone, positionFitMults, clutchCtx, weather)
-    const playerIdx = findStatIndex(attackingStats, player.id)
-    const playerRatings = getGranularRatings(player)
-    const name = getPlayerDisplayName(player)
-
-    // Tactical tag penalty
-    const tacticalFocus = defTactical.focusByTarget.get(player.id)
-    const tagPenalty = tacticalFocus?.tagPressure ?? 0
-    const roughPenalty = tacticalFocus?.roughPressure ?? 0
-    const pressurePenalty = tagPenalty + roughPenalty * 0.6
 
     // 3. Process the disposal and accumulate stats
     let chainBreaks = false
     let newChainTeam: string | null = null
     let newChainZone: FieldZone = chain.zone
     const zoneBeforeDisposal = chain.zone
+    // For tackle/spoil, capture the defending player so the tick attributes correctly
+    let defenderPlayerId: string | undefined
+    let defenderPlayerName: string | undefined
 
     switch (disposal) {
       case 'kick': {
@@ -1682,6 +1792,10 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
         }
 
         chain.zone = advanceZone(rng, chain.zone, 'mark', playerRatings.kicking, moveProfile)
+
+        // After a mark, the same player gets an uncontested kick next tick
+        lastDisposalWasMark = true
+        markPlayerId = player.id
         break
       }
 
@@ -1691,6 +1805,8 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
         const tacklerIdx = findStatIndex(defendingStats, tackler.id)
         const tacklerRatings = getGranularRatings(tackler)
         const tacklerName = getPlayerDisplayName(tackler)
+        defenderPlayerId = tackler.id
+        defenderPlayerName = tacklerName
 
         const tackleGain = rng.chance(
           clampChance(
@@ -1700,6 +1816,12 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
           ),
         ) ? 2 : 1
         defendingStats[tacklerIdx].tackles += tackleGain
+
+        // Track zone possession for tackling defender (mirrored perspective)
+        if (defendingStats[tacklerIdx].zonePossessions) {
+          defendingStats[tacklerIdx].zonePossessions![MIRROR_ZONE[chain.zone]] =
+            (defendingStats[tacklerIdx].zonePossessions![MIRROR_ZONE[chain.zone]] ?? 0) + 1
+        }
 
         // High contact check — free kick to attacking team
         const tacklerFreeRisk = getPlayerFreeRiskMultiplier(tackler, weather)
@@ -1763,7 +1885,7 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
       case 'clearance': {
         attackingStats[playerIdx].clearances++
         attackingStats[playerIdx].contestedPossessions++
-        chain.zone = 'midfield'
+        chain.zone = advanceZone(rng, chain.zone, 'clearance', playerRatings.kicking, moveProfile)
 
         pbp.push({
           id: `pbp-${qNum}-${pbpCtr++}`,
@@ -1797,7 +1919,15 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
         // Spoil is a defensive action
         const spoiler = pickZonePlayer(rng, defendingPlayers, chain.zone, positionFitMults, defClutchCtx, weather)
         const spoilerIdx = findStatIndex(defendingStats, spoiler.id)
+        defenderPlayerId = spoiler.id
+        defenderPlayerName = getPlayerDisplayName(spoiler)
         defendingStats[spoilerIdx].onePercenters++
+
+        // Track zone possession for spoiling defender (mirrored perspective)
+        if (defendingStats[spoilerIdx].zonePossessions) {
+          defendingStats[spoilerIdx].zonePossessions![MIRROR_ZONE[chain.zone]] =
+            (defendingStats[spoilerIdx].zonePossessions![MIRROR_ZONE[chain.zone]] ?? 0) + 1
+        }
 
         chain.zone = advanceZone(rng, chain.zone, 'spoil', playerRatings.kicking, moveProfile)
 
@@ -1830,7 +1960,9 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
       }
 
       case 'out-on-full': {
-        // Turnover — free kick to other team
+        // Turnover — free kick to other team (still counts as a kick disposal)
+        attackingStats[playerIdx].kicks++
+        attackingStats[playerIdx].disposals++
         attackingStats[playerIdx].turnovers++
         attackingStats[playerIdx].clangers++
         chainBreaks = true
@@ -1874,6 +2006,12 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
           ),
         ) ? 2 : 1
         defendingStats[intIdx].intercepts += interceptGain
+
+        // Track zone possession for intercepting defender (mirrored perspective)
+        if (defendingStats[intIdx].zonePossessions) {
+          defendingStats[intIdx].zonePossessions![MIRROR_ZONE[chain.zone]] =
+            (defendingStats[intIdx].zonePossessions![MIRROR_ZONE[chain.zone]] ?? 0) + 1
+        }
 
         pbp.push({
           id: `pbp-${qNum}-${pbpCtr++}`,
@@ -1950,10 +2088,19 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
       attackingStats[playerIdx].insideFifties++
     }
 
-    // Detect if the ball went backward (zone retreated within the same chain)
+    // Detect if the ball went backward or forward within the same chain
     const zoneRetreated = !chainBreaks && ZONE_INDEX[chain.zone] < ZONE_INDEX[zoneBeforeDisposal]
+    const zoneAdvanced = !chainBreaks && ZONE_INDEX[chain.zone] > ZONE_INDEX[zoneBeforeDisposal]
 
-    // Generate the tick
+    // Generate the tick.
+    // For tackles/spoils, attribute the tick to the DEFENDING player who performed
+    // the action — not the attacking player who was tackled/spoiled.
+    const isDefensiveAction = (disposal === 'tackle' || disposal === 'spoil') && defenderPlayerId
+    const tickPlayerId = isDefensiveAction ? defenderPlayerId! : player.id
+    const tickPlayerName = isDefensiveAction ? defenderPlayerName! : name
+    const tickClubId = isDefensiveAction
+      ? (isHome ? awayClubId : homeClubId)
+      : attackClubId
     const isStoppageType = disposal === 'ball-up'
     ticks.push({
       tickIndex: t,
@@ -1961,25 +2108,28 @@ export function simulateQuarterChain(ctx: MatchContext, quarterIndex: number): M
       minute: currentMinute,
       zone: chain.zone,
       possessionType: disposal,
-      clubId: chainBreaks && newChainTeam && (disposal === 'tackle' || disposal === 'spoil')
-        ? newChainTeam // attribute defensive actions to the defending team
-        : attackClubId,
-      playerId: player.id,
-      playerName: name,
+      clubId: tickClubId,
+      playerId: tickPlayerId,
+      playerName: tickPlayerName,
       homeScore: homeScore(),
       awayScore: awayScore(),
       isStoppage: isStoppageType,
       stoppageType: isStoppageType ? 'ball-up' : undefined,
-      commentary: pickCommentary(rng, disposal, name, chain.zone, chain.disposalsInChain, zoneRetreated),
+      commentary: pickCommentary(rng, disposal, tickPlayerName, chain.zone, chain.disposalsInChain, zoneRetreated, zoneAdvanced, zoneBeforeDisposal),
       chainId: chain.chainId,
     })
 
     // Increment chain disposals
     chain.disposalsInChain++
 
-    // Apply chain break if needed
+    // Apply chain break if needed.
+    // Mirror the zone on turnovers — zones are relative to the attacking team,
+    // so the new team's perspective is inverted (their back50 = old team's forward50).
     if (chainBreaks && newChainTeam) {
-      startNewChain(newChainTeam, newChainZone)
+      const mirroredZone = newChainTeam !== chain.clubId
+        ? MIRROR_ZONE[newChainZone]
+        : newChainZone
+      startNewChain(newChainTeam, mirroredZone)
     }
   }
 

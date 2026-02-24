@@ -176,8 +176,8 @@ function incomingCaptainDelta(
 
 function computeSquadRipple(
   ctx: LeadershipChangeContext,
-  prev: ClubLeadership,
-  next: ClubLeadership,
+  _prev: ClubLeadership,
+  _next: ClubLeadership,
   exclude: Set<string>,
 ): Record<string, number> {
   const deltas: Record<string, number> = {}

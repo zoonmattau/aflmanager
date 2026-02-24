@@ -47,18 +47,6 @@ import {
   Palmtree,
 } from 'lucide-react'
 
-function getWeekStart(dateStr: string): string {
-  const d = new Date(dateStr + 'T00:00:00')
-  const day = d.getDay()
-  const diff = day === 0 ? -6 : 1 - day
-  d.setDate(d.getDate() + diff)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
-function getWeekDates(monday: string): string[] {
-  return Array.from({ length: 7 }, (_, i) => addDays(monday, i))
-}
-
 /** Mirrors calendarEngine.ts toMondayAnchor — first Monday on-or-after a date. */
 function toMondayAnchor(dateStr: string): string {
   const d = new Date(`${dateStr}T00:00:00`)

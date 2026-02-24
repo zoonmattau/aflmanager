@@ -25,7 +25,7 @@ import {
   Collapsible, CollapsibleContent, CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 import { Progress } from '@/components/ui/progress'
-import { ChevronDown, Shield, Star, Users, TrendingUp, TrendingDown, ChevronRight, Minus, Bot, UserCheck } from 'lucide-react'
+import { ChevronDown, Shield, Star, Users, TrendingUp, ChevronRight, Minus, Bot, UserCheck } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -472,7 +472,6 @@ export function LeadershipPage() {
   const phase = useGameStore((s) => s.phase)
   const currentRound = useGameStore((s) => s.currentRound)
   const applyLeadershipChange = useGameStore((s) => s.applyLeadershipChange)
-  const setClubLeadership = useGameStore((s) => s.setClubLeadership)
   const setLeadershipDelegated = useGameStore((s) => s.setLeadershipDelegated)
 
   const clubId = viewedTeamClubId ?? playerClubId ?? ''

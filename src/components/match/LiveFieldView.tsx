@@ -17,7 +17,7 @@ import type {
   MatchupInstructionIntensity,
   HardTagInstruction,
 } from '@/types/game'
-import type { MatchKeyEvent } from '@/types/match'
+import type { MatchKeyEvent, MatchPlayerStats } from '@/types/match'
 import type { MatchTick } from '@/types/matchTick'
 
 // ---------------------------------------------------------------------------
@@ -66,6 +66,15 @@ export interface LiveFieldViewProps {
   ballZone?: string
   /** When true the animation loop freezes all player magnets in place. */
   paused?: boolean
+  /** Per-player match stats keyed by playerId — used for spectator mode stat popup. */
+  matchStats?: Record<string, MatchPlayerStats>
+  /** Current tick's possession type — used to snap opponents near the ball on tackles/contests. */
+  currentPossessionType?: string
+  /** True during centre bounces (after goals, start of quarter) — only 4 per team in centre square. */
+  isCentreBounce?: boolean
+  /** Pre-game animation override targets. When set, magnets spring toward these
+   *  positions instead of their tick-driven/drift targets. */
+  animTargetOverrides?: Map<string, { top: number; left: number }> | null
 }
 
 // ---------------------------------------------------------------------------
@@ -99,7 +108,7 @@ function getDrift(
   gameplan: ClubGameplan | null,
 ): { dy: number; dx: number } {
   const tempo = gameplan?.tempo ?? 'medium'
-  const amp = tempo === 'fast' ? 1.6 : tempo === 'slow' ? 0.6 : 1.0
+  const amp = tempo === 'fast' ? 2.0 : tempo === 'slow' ? 0.4 : 1.0
 
   const isFwd = FWD_SLOTS.has(slot)
   const isMid = MID_SLOTS.has(slot)
@@ -110,19 +119,19 @@ function getDrift(
   switch (phase) {
     case 'attack':
       // Move RIGHT (positive dx) — toward attacking goals
-      dx = (isFwd ? 5.0 : isMid ? 2.5 : 0.8) * amp
+      dx = (isFwd ? 8.0 : isMid ? 5.0 : 2.0) * amp
       break
     case 'defense':
       // Move LEFT (negative dx) — drop back toward own goals
-      dx = (isFwd ? -3.5 : isMid ? -4.5 : -1.5) * amp
+      dx = (isFwd ? -5.5 : isMid ? -7.0 : -3.0) * amp
       break
     case 'stoppage':
       dx = (isFwd ? 1.0 : isMid ? 0 : -0.5) * amp
       // Wings contract vertically toward centre in landscape
-      if (slot === 'LW') dy = 5.0 * amp        // LW at top ~16%, move DOWN toward centre
-      else if (slot === 'RW') dy = -5.0 * amp   // RW at bottom ~84%, move UP toward centre
-      else if (slot === 'ROV' || slot === 'RR') dy = 3.0 * amp
-      else if (slot === 'RK' || slot === 'C') dy = -3.0 * amp
+      if (slot === 'LW') dy = 8.0 * amp        // LW at top ~16%, move DOWN toward centre
+      else if (slot === 'RW') dy = -8.0 * amp   // RW at bottom ~84%, move UP toward centre
+      else if (slot === 'ROV' || slot === 'RR') dy = 5.0 * amp
+      else if (slot === 'RK' || slot === 'C') dy = -5.0 * amp
       break
     case 'midfield':
     default:
@@ -168,21 +177,27 @@ function ballZoneToX(zone: string | undefined, teamAttacksRight: boolean): numbe
   return teamAttacksRight ? baseX : 100 - baseX
 }
 
-const SPRING_K = 0.09
-const SPRING_DAMP = 0.78
+const SPRING_K = 0.14
+const SPRING_DAMP = 0.74
 
 // Jitter = subtle "alive" sway, NOT the primary source of movement.
 // Purposeful movement comes from leads, man-marking, ball attraction, etc.
 const JITTER_AMP: Record<RoleGroup, number> = {
-  follower: 0.45, wing: 0.38, halfback: 0.25, forward: 0.38, back: 0.14,
+  follower: 0.65, wing: 0.55, halfback: 0.40, forward: 0.55, back: 0.25,
 }
 const BALL_ATTRACTION: Record<RoleGroup, number> = {
-  follower: 0.72, wing: 0.45, halfback: 0.22, forward: 0.18, back: 0.05,
+  follower: 0.60, wing: 0.45, halfback: 0.28, forward: 0.25, back: 0.08,
 }
+/** Minimum distance (% of field) before same-team players repel each other. */
+const REPULSION_RADIUS = 7
+/** Strength of the repulsion nudge per frame. */
+const REPULSION_STRENGTH = 0.35
 
 interface PlayerAnimState {
   x: number; y: number; vx: number; vy: number
   phaseX: number; phaseY: number
+  /** Smoothed base position — lerps toward the raw drift-adjusted slot pos to prevent jumps. */
+  smoothBaseX: number; smoothBaseY: number
 }
 
 interface AnimParams {
@@ -195,6 +210,15 @@ interface AnimParams {
   ballZone: string | undefined
   ballCarrierPlayerId: string | undefined
   paused: boolean
+  /** Timestamp (ms) until which the animation loop should keep running despite being paused.
+   *  Used to let players settle into new positions after a step-forward tick. */
+  animateUntil: number
+  /** Current tick's possession type — used to snap opponents near the ball on tackles. */
+  currentPossessionType?: string
+  /** True during centre bounces — only 4 per team allowed in the centre square. */
+  isCentreBounce?: boolean
+  /** Pre-game animation override targets — magnets spring to these instead of normal positions. */
+  animTargetOverrides?: Map<string, { top: number; left: number }> | null
 }
 
 // TagLineOverlay — landscape 700×540 viewBox
@@ -505,13 +529,17 @@ function usePlayerAnimation() {
     userSlotLineup: {}, opponentSlotLineup: {}, userGameplan: null,
     activePhase: 'midfield', oppPhase: 'midfield',
     teamAttacksRight: true, ballZone: undefined, ballCarrierPlayerId: undefined,
-    paused: false,
+    paused: false, animateUntil: 0, animTargetOverrides: null,
   })
   const animStatesRef = useRef(new Map<string, PlayerAnimState>())
   const elMapRef = useRef(new Map<string, HTMLElement>())
   const slotPosRef = useRef(new Map<string, PlayerPos>())
   const rafRef = useRef<number>(0)
   const prevTsRef = useRef<number>(0)
+  /** Smoothed ball X — lerps toward the discrete zone X to prevent all-player jumps. */
+  const smoothBallXRef = useRef<number>(50)
+  /** Ball dot element — positioned directly from RAF loop so it tracks carrier every frame. */
+  const ballElRef = useRef<HTMLElement | null>(null)
 
   const registerEl = useCallback((
     slotKey: string,
@@ -526,6 +554,7 @@ function usePlayerAnimation() {
           x: initialLeft, y: initialTop, vx: 0, vy: 0,
           phaseX: Math.random() * Math.PI * 2,
           phaseY: Math.random() * Math.PI * 2,
+          smoothBaseX: initialLeft, smoothBaseY: initialTop,
         })
       }
       const s = animStatesRef.current.get(slotKey)!
@@ -543,8 +572,9 @@ function usePlayerAnimation() {
       if (!running) return
       rafRef.current = requestAnimationFrame(tick)
 
-      // When the game is paused, freeze magnets in place
-      if (paramsRef.current.paused) {
+      // When the game is paused, freeze magnets in place — unless we're in a
+      // post-step animation burst (animateUntil) to settle players into position.
+      if (paramsRef.current.paused && ts > paramsRef.current.animateUntil) {
         prevTsRef.current = ts  // keep timestamp fresh so resume doesn't jump
         return
       }
@@ -557,9 +587,16 @@ function usePlayerAnimation() {
       const {
         userSlotLineup, opponentSlotLineup, userGameplan,
         activePhase, oppPhase, teamAttacksRight, ballZone, ballCarrierPlayerId,
+        isCentreBounce: centreBounce, animTargetOverrides,
       } = paramsRef.current
 
-      const ballX = ballZoneToX(ballZone, teamAttacksRight)
+      // Smooth ball X — lerp toward the discrete zone position so all players
+      // transition gradually instead of snapping when the zone changes.
+      // Moderate rate (0.08) — spreads zone jumps over ~20 frames (~0.33s) for a
+      // natural-looking drift; the spring physics add further smoothing on top.
+      const targetBallX = ballZoneToX(ballZone, teamAttacksRight)
+      smoothBallXRef.current += (targetBallX - smoothBallXRef.current) * Math.min(0.08 * dt, 1)
+      const ballX = smoothBallXRef.current
       // Corridor: cluster tactic tucks wings/mids through the center channel
       const useCorridor = userGameplan?.centreTactic === 'cluster'
       // Rush bonus: push-forward stoppages or run midfield line = mids/HBF burst harder
@@ -596,8 +633,49 @@ function usePlayerAnimation() {
             x: baseLeft, y: baseTop, vx: 0, vy: 0,
             phaseX: Math.random() * Math.PI * 2,
             phaseY: Math.random() * Math.PI * 2,
+            smoothBaseX: baseLeft, smoothBaseY: baseTop,
           }
           animStatesRef.current.set(slotKey, state)
+        }
+
+        // ── Smooth base position ────────────────────────────────────────────
+        // Lerp toward the raw drift-adjusted slot position so phase changes and
+        // drift transitions are gradual, not instant.  Per-player variation in
+        // the lerp rate (seeded from phaseX) prevents robotic lockstep motion.
+        // Fast rate (0.12–0.18) — just converts discrete jumps into brief ramps;
+        // the spring physics handle the actual smooth animation to the final pos.
+        const baseLerpRate = 0.12 + Math.abs(Math.sin(state.phaseX)) * 0.06
+        const baseLerp = Math.min(baseLerpRate * dt, 1)
+        state.smoothBaseX += (baseLeft - state.smoothBaseX) * baseLerp
+        state.smoothBaseY += (baseTop - state.smoothBaseY) * baseLerp
+        baseLeft = state.smoothBaseX
+        baseTop = state.smoothBaseY
+
+        // ── Pre-game animation override ─────────────────────────────────────
+        // When animTargetOverrides is set, magnets spring toward those positions
+        // instead of their normal tick-driven/drift targets. Skip all
+        // role-specific targeting — the spring physics still apply naturally.
+        if (animTargetOverrides) {
+          const override = animTargetOverrides.get(slotKey)
+          if (override) {
+            const overrideTargetX = clamp(override.left, 3, 97)
+            const overrideTargetY = clamp(override.top, 3, 97)
+            const jX = (Math.sin(t * 0.3 + state.phaseX) * 0.4)
+            const jY = (Math.cos(t * 0.25 + state.phaseY) * 0.4)
+            const ax = (overrideTargetX + jX - state.x) * SPRING_K
+            const ay = (overrideTargetY + jY - state.y) * SPRING_K
+            state.vx = (state.vx + ax) * SPRING_DAMP
+            state.vy = (state.vy + ay) * SPRING_DAMP
+            const spd = Math.sqrt(state.vx * state.vx + state.vy * state.vy)
+            if (spd > 2.0) { const sc = 2.0 / spd; state.vx *= sc; state.vy *= sc }
+            state.x = clamp(state.x + state.vx * dt, 3, 97)
+            state.y = clamp(state.y + state.vy * dt, 3, 97)
+            if (el) { el.style.left = `${state.x}%`; el.style.top = `${state.y}%` }
+            slotPosRef.current.set(playerId, {
+              x: state.x * 7.0, y: state.y * 5.4, top: state.y, left: state.x,
+            })
+            return
+          }
         }
 
         // ── Proximity factor ──────────────────────────────────────────────────
@@ -605,7 +683,7 @@ function usePlayerAnimation() {
         // else is walking or standing still.  Scale all oscillation + jitter by
         // how close this player's slot position is to the ball zone.
         const distFromBall = Math.abs(baseLeft - attractionBallX)
-        const proximityFactor = clamp(1 - distFromBall / 40, 0.08, 1)
+        const proximityFactor = clamp(1 - distFromBall / 55, 0.20, 1)
 
         let targetX: number
         let targetY: number
@@ -613,8 +691,18 @@ function usePlayerAnimation() {
         // ── Role-specific targeting ────────────────────────────────────────────
 
         if (isBallCarrier) {
-          // Ball carrier is stationary — deciding where to dispose
-          targetX = baseLeft
+          // Ball carrier must be AT the ball zone — snap position directly.
+          // Spring physics are too slow (next tick fires before they arrive),
+          // so bypass the spring and directly lerp position each frame.
+          // 0.45/frame ≈ 90% converged in ~4 frames (~67ms at 60fps).
+          const carrierTargetX = attractionBallX + (baseLeft - attractionBallX) * 0.15
+          state.x += (carrierTargetX - state.x) * Math.min(0.45 * dt, 1)
+          state.y += (baseTop - state.y) * Math.min(0.30 * dt, 1)
+          state.vx = 0
+          state.vy = 0
+          // Set targets for spring code below (won't move much since
+          // position was already snapped, keeps code path clean).
+          targetX = carrierTargetX
           targetY = baseTop
 
         } else if (roleGroup === 'back') {
@@ -624,26 +712,29 @@ function usePlayerAnimation() {
           const oppFwd = oppFwdSlot ? animStatesRef.current.get(`${oppPrefix}-${oppFwdSlot}`) : null
 
           if (phase === 'attack') {
-            // Team has the ball — push up based on how deep the ball is in attack
+            // Team has the ball — push up strongly to compress the ground.
+            // In real AFL backs push 30-40m past centre when the ball is deep forward.
             const ballForwardness = attackDir > 0
               ? clamp((attractionBallX - 50) / 50, 0, 1)
               : clamp((50 - attractionBallX) / 50, 0, 1)
-            const pushUp = ballForwardness * 12          // up to 12 % toward midfield
+            const pushUp = ballForwardness * 22          // up to 22 % toward midfield
             targetX = baseLeft + attackDir * pushUp
             // Loose tracking of opponent forward — hold Y zone but shade their way
             if (oppFwd) {
-              targetY = baseTop * 0.82 + oppFwd.y * 0.18
+              targetY = baseTop * 0.72 + oppFwd.y * 0.28
             } else {
               targetY = baseTop
             }
           } else {
-            // Defending — station goalside between opponent forward and own goal
+            // Defending — station goalside between opponent forward and own goal.
+            // Anchor more strongly to base Y so backs maintain their spread
+            // (LBP/RBP/FB should NOT converge to the same Y).
             if (oppFwd) {
               const clampedX = attackDir > 0
                 ? Math.min(oppFwd.x, baseLeft + 15)
                 : Math.max(oppFwd.x, baseLeft - 15)
               targetX = baseLeft * 0.60 + clampedX * 0.40
-              targetY = baseTop * 0.72 + oppFwd.y * 0.28
+              targetY = baseTop * 0.70 + oppFwd.y * 0.30
             } else {
               targetX = baseLeft
               targetY = baseTop
@@ -655,10 +746,11 @@ function usePlayerAnimation() {
           const oppHF = oppHFSlot ? animStatesRef.current.get(`${oppPrefix}-${oppHFSlot}`) : null
 
           if (phase === 'attack') {
-            // Overlap — burst forward to become a handball/kick option ahead of the ball
+            // Overlap — burst forward to become a handball/kick option near the ball.
+            // In real AFL, HBFs overlap through midfield and are prime handball targets.
             const rushPct = rushBonus ? 30 : 24
             const rushTarget = clamp(baseLeft + attackDir * rushPct, 5, 92)
-            targetX = rushTarget * 0.55 + attractionBallX * 0.45
+            targetX = rushTarget * 0.35 + attractionBallX * 0.65
             targetY = baseTop
           } else {
             // Defending — mark opponent half-forward; drop deeper when ball is nearby
@@ -687,16 +779,17 @@ function usePlayerAnimation() {
             : clamp((attractionBallX - baseLeft) / 40, 0, 1)
 
           if (ballBehindPct > 0.25) {
-            // Ball is behind — hard lead toward the ball carrier
-            const leadStrength = 0.28 + ballBehindPct * 0.18     // 28–46 % pull toward ball
+            // Ball is behind — hard lead toward the ball carrier.
+            // In real AFL, forwards lead 30-40m to present as a target.
+            const leadStrength = 0.50 + ballBehindPct * 0.25     // 50–75 % pull toward ball
             targetX = baseLeft + (attractionBallX - baseLeft) * leadStrength
             // Spread laterally to avoid crowding other forwards
-            const lateralSpread = Math.sin(t * 0.30 + state.phaseX) * 4 * proximityFactor
+            const lateralSpread = Math.sin(t * 0.30 + state.phaseX) * 6 * proximityFactor
             targetY = baseTop + lateralSpread
           } else {
             // Ball is near or ahead — hold deep near goal, crumb laterally
             targetX = baseLeft + attackDir * 3
-            const crumb = Math.sin(t * 0.35 + state.phaseX) * 5 * proximityFactor
+            const crumb = Math.sin(t * 0.35 + state.phaseX) * 7 * proximityFactor
             targetY = baseTop + crumb
           }
 
@@ -706,41 +799,84 @@ function usePlayerAnimation() {
             targetX = baseLeft + (attractionBallX - baseLeft) * 0.50
             targetY = baseTop * 0.35 + 50 * 0.65
           } else {
-            // Wings run with the play — strong X tracking, hold the boundary width
-            targetX = baseLeft + (attractionBallX - baseLeft) * 0.55
+            // Wings run with the play — strong X tracking, hold the boundary width.
+            // Wings in AFL are the link players — always within a kick of the ball.
+            targetX = baseLeft + (attractionBallX - baseLeft) * 0.70
             const flankDrift = Math.sin(t * 0.22 + state.phaseX) * 3 * proximityFactor
             targetY = baseTop + flankDrift
           }
 
         } else {
-          // Follower (C, RK, RR, ROV): strongest ball magnet, contest everything
-          targetX = baseLeft + (attractionBallX - baseLeft) * BALL_ATTRACTION['follower']
-          // Strong pull toward field centre-Y where contests concentrate
-          targetY = baseTop + (50 - baseTop) * 0.45
+          // Follower (C, RK, RR, ROV): track the ball closely.
+          // Mids and rucks are always in the thick of the contest — they
+          // should cluster tightly around the ball zone.
+          const ballPull = 0.78
+          targetX = baseLeft + (attractionBallX - baseLeft) * ballPull
+          // Offset each follower differently around the ball — seeded by phaseX
+          const spreadOffset = Math.sin(state.phaseX) * 6  // ±6% spread
+          targetY = baseTop + (50 - baseTop) * 0.30 + spreadOffset
           if (phase === 'attack' && rushBonus) {
             targetX = clamp(targetX + attackDir * 5, 5, 95)
           }
         }
 
-        // ── Stoppage convergence ─────────────────────────────────────────────────
-        // Everyone floods toward the contest zone — the AFL 'pack'.
-        if (phase === 'stoppage' && !isBallCarrier) {
-          const xPull = roleGroup === 'back' ? 0.08 : roleGroup === 'forward' ? 0.14 : 0.22
-          const yPull = roleGroup === 'back' ? 0.06 : 0.13
+        // ── Centre bounce — only 4 per team in the square ────────────────────────
+        // After goals and at the start of quarters, only the 4 followers (RK, RR,
+        // ROV, C) are allowed inside the centre square.  Wings sit on the boundary.
+        // All other players are pushed away from the centre zone.
+        if (centreBounce && !isBallCarrier) {
+          const centreX = teamAttacksRight ? 50 : 50
+          if (roleGroup === 'follower') {
+            // RK, RR, ROV, C — pull into centre square with spread
+            targetX = targetX + (centreX - targetX) * 0.80
+            targetY = targetY + (50 - targetY) * 0.45
+          } else if (roleGroup === 'wing') {
+            // Wings sit on the centre square boundary (wide of centre)
+            targetX = targetX + (centreX - targetX) * 0.25
+            // Hold at their natural wing Y (top/bottom edge of square)
+          } else {
+            // Everyone else: push AWAY from centre if they've drifted in
+            // Centre square spans roughly X: 35–65, Y: 30–70 on the field
+            const tooCloseX = Math.abs(targetX - centreX) < 18
+            const tooCloseY = Math.abs(targetY - 50) < 22
+            if (tooCloseX && tooCloseY) {
+              // Nudge toward their own half of the field
+              const pushDir = targetX < centreX ? -1 : 1
+              targetX = targetX + pushDir * 6
+            }
+          }
+        }
+
+        // ── Stoppage convergence (non-centre-bounce) ────────────────────────────
+        // At a ball-up/throw-in, players flood the contest.
+        if (phase === 'stoppage' && !isBallCarrier && !centreBounce) {
+          const xPull = roleGroup === 'back' ? 0.15
+            : roleGroup === 'forward' ? 0.40
+            : roleGroup === 'halfback' ? 0.55
+            : 0.70   // follower / wing — right at the contest
+          const yPull = roleGroup === 'back' ? 0.08
+            : roleGroup === 'forward' ? 0.18
+            : 0.25
           targetX = targetX + (attractionBallX - targetX) * xPull
           targetY = targetY + (50 - targetY) * yPull
         }
 
         // ── Phase-based field shape ──────────────────────────────────────────────
         // Attack: the whole team fans out wider to create passing options.
-        // Defence: the whole team compresses toward centre to cut passing lanes.
+        // Defence: slight compression toward centre to cut passing lanes — but
+        // light enough that players maintain their structural spread.
         if (!isBallCarrier) {
           if (phase === 'attack') {
-            targetY = targetY + (targetY - 50) * 0.12         // push away from centre
+            targetY = targetY + (targetY - 50) * 0.18         // push away from centre
           } else if (phase === 'defense') {
-            targetY = targetY + (50 - targetY) * 0.12         // pull toward centre
+            targetY = targetY + (50 - targetY) * 0.08         // gentle pull toward centre
           }
         }
+
+        // Clamp targets to field bounds — unclamped targets cause players to
+        // pile up at the edges and drift off-screen.
+        targetX = clamp(targetX, 4, 96)
+        targetY = clamp(targetY, 4, 96)
 
         // Jitter scaled by proximity — players far from the ball are nearly still
         const jitterAmp = (isBallCarrier ? 0.10 : JITTER_AMP[roleGroup]) * proximityFactor
@@ -761,8 +897,18 @@ function usePlayerAnimation() {
         const ay = (targetY + jitterY - state.y) * SPRING_K
         state.vx = (state.vx + ax) * SPRING_DAMP
         state.vy = (state.vy + ay) * SPRING_DAMP
-        state.x = clamp(state.x + state.vx * dt, 1, 99)
-        state.y = clamp(state.y + state.vy * dt, 1, 99)
+        // Hard cap on velocity — prevents players teleporting when targets jump.
+        // Ball carrier gets a higher cap (2.5) so they reach the ball zone quickly
+        // when they receive a handball/kick; everyone else moves at ≤1.0 %/frame.
+        const maxSpeed = isBallCarrier ? 2.5 : 1.0
+        const speed = Math.sqrt(state.vx * state.vx + state.vy * state.vy)
+        if (speed > maxSpeed) {
+          const scale = maxSpeed / speed
+          state.vx *= scale
+          state.vy *= scale
+        }
+        state.x = clamp(state.x + state.vx * dt, 3, 97)
+        state.y = clamp(state.y + state.vy * dt, 3, 97)
 
         if (el) {
           el.style.left = `${state.x}%`
@@ -803,8 +949,116 @@ function usePlayerAnimation() {
           ? clamp(100 - slotPos.left - oppDrift.dx * oppDriftMod, 5, 95)
           : clamp(slotPos.left + oppDrift.dx * oppDriftMod, 5, 95)
         const baseTop = clamp(100 - slotPos.top, 3, 97)
+        // attractionBallX = ballX (NOT 100-ballX) because opponent baseLeft is
+        // already mirrored into visual coordinates — both teams share the same
+        // on-screen space, so both must be attracted to the same physical ball pos.
         processPlayer(slot, playerId, `opp-${slot}`, false, baseLeft, baseTop,
-          getRoleGroup(slot), 100 - ballX, false, oppPhase)
+          getRoleGroup(slot), ballX, false, oppPhase)
+      }
+
+      // ── Contest snap — pull nearest opponent to the ball on tackles/contests ──
+      // When a tackle, contest, or spoil tick fires the opponent magnets may be
+      // far from the ball carrier.  Find the 2 nearest opponents and give them
+      // a strong instantaneous pull toward the ball so the visual matches the action.
+      const contestType = paramsRef.current.currentPossessionType
+      if (contestType === 'tackle' || contestType === 'contest' || contestType === 'spoil') {
+        const carrierPos = ballCarrierPlayerId
+          ? (slotPosRef.current.get(ballCarrierPlayerId) ?? null)
+          : null
+        const snapX = carrierPos?.left ?? ballX
+        const snapY = carrierPos?.top ?? 50
+
+        const oppEntries: { key: string; st: PlayerAnimState; dist: number }[] = []
+        for (const slotPos of FIELD_SLOTS_LANDSCAPE) {
+          const pid = opponentSlotLineup[slotPos.slot]
+          if (!pid) continue
+          const st = animStatesRef.current.get(`opp-${slotPos.slot}`)
+          if (!st) continue
+          const ddx = st.x - snapX
+          const ddy = st.y - snapY
+          oppEntries.push({ key: `opp-${slotPos.slot}`, st, dist: Math.sqrt(ddx * ddx + ddy * ddy) })
+        }
+        oppEntries.sort((a, b) => a.dist - b.dist)
+
+        for (let ci = 0; ci < Math.min(2, oppEntries.length); ci++) {
+          const opp = oppEntries[ci]
+          const pull = ci === 0 ? 0.30 : 0.15
+          opp.st.x += (snapX - opp.st.x) * pull * dt
+          opp.st.y += (snapY - opp.st.y) * pull * dt
+          opp.st.vx *= 0.3
+          opp.st.vy *= 0.3
+          const el = elMapRef.current.get(opp.key)
+          if (el) {
+            el.style.left = `${opp.st.x}%`
+            el.style.top = `${opp.st.y}%`
+          }
+          const oppSlot = opp.key.replace('opp-', '')
+          const oppPid = opponentSlotLineup[oppSlot]
+          if (oppPid) {
+            slotPosRef.current.set(oppPid, {
+              x: opp.st.x * 7.0, y: opp.st.y * 5.4, top: opp.st.y, left: opp.st.x,
+            })
+          }
+        }
+      }
+
+      // ── Same-team repulsion pass ───────────────────────────────────────────
+      // Prevents player magnets from stacking on top of each other.  For each
+      // pair of same-team players within REPULSION_RADIUS, nudge them apart
+      // along the line between them.  O(n²) per team but n=18 so ~153 pairs
+      // is negligible at 60fps.
+      function applyRepulsion(prefix: string, lineup: Record<string, string>) {
+        const keys: string[] = []
+        for (const slotPos of FIELD_SLOTS_LANDSCAPE) {
+          if (lineup[slotPos.slot]) keys.push(`${prefix}-${slotPos.slot}`)
+        }
+        for (let i = 0; i < keys.length; i++) {
+          const a = animStatesRef.current.get(keys[i])
+          if (!a) continue
+          for (let j = i + 1; j < keys.length; j++) {
+            const b = animStatesRef.current.get(keys[j])
+            if (!b) continue
+            const dx = a.x - b.x
+            const dy = a.y - b.y
+            const dist = Math.sqrt(dx * dx + dy * dy)
+            if (dist < REPULSION_RADIUS && dist > 0.1) {
+              const overlap = REPULSION_RADIUS - dist
+              const force = (overlap / REPULSION_RADIUS) * REPULSION_STRENGTH * dt
+              const nx = dx / dist
+              const ny = dy / dist
+              a.x = clamp(a.x + nx * force, 3, 97)
+              a.y = clamp(a.y + ny * force, 3, 97)
+              b.x = clamp(b.x - nx * force, 3, 97)
+              b.y = clamp(b.y - ny * force, 3, 97)
+              // Write updated positions to DOM
+              const elA = elMapRef.current.get(keys[i])
+              const elB = elMapRef.current.get(keys[j])
+              if (elA) { elA.style.left = `${a.x}%`; elA.style.top = `${a.y}%` }
+              if (elB) { elB.style.left = `${b.x}%`; elB.style.top = `${b.y}%` }
+            }
+          }
+        }
+      }
+      applyRepulsion('user', userSlotLineup)
+      applyRepulsion('opp', opponentSlotLineup)
+
+      // ── Ball dot positioning ────────────────────────────────────────────
+      // Position the ball dot directly from the RAF loop so it tracks the
+      // carrier magnet every frame instead of only on React re-renders.
+      const ballEl = ballElRef.current
+      if (ballEl) {
+        const isStop = paramsRef.current.activePhase === 'stoppage'
+        if (!isStop && ballCarrierPlayerId) {
+          const carrierPos = slotPosRef.current.get(ballCarrierPlayerId)
+          if (carrierPos) {
+            ballEl.style.left = `${clamp(carrierPos.left, 4, 96)}%`
+            ballEl.style.top = `${clamp(carrierPos.top, 5, 95)}%`
+          }
+        } else if (isStop) {
+          // During stoppages, park the ball at the zone centre
+          ballEl.style.left = `${clamp(ballX, 4, 96)}%`
+          ballEl.style.top = '50%'
+        }
       }
 
     }
@@ -816,7 +1070,7 @@ function usePlayerAnimation() {
     }
   }, []) // intentionally empty — paramsRef.current always has fresh data
 
-  return { registerEl, paramsRef, slotPosRef }
+  return { registerEl, paramsRef, slotPosRef, ballElRef }
 }
 
 // ---------------------------------------------------------------------------
@@ -867,10 +1121,9 @@ function ChainArrowOverlay({
   const markerId = `ca-${teamColor.replace(/[^a-z0-9]/gi, '')}`
 
   // Zone → SVG X mapping (700px wide viewBox).
-  // X is ALWAYS derived from the zone so the ball visibly progresses through the field.
-  // Y comes from the player's animated position for natural lateral variety.
+  // Matches ballZoneToX() percentages × 7.0 so chain arrows align with the ball dot.
   const ZONE_X: Record<string, number> = {
-    back50: 72, backHalf: 196, midfield: 350, forwardHalf: 504, forward50: 628,
+    back50: 84, backHalf: 196, midfield: 350, forwardHalf: 504, forward50: 616,
   }
   const possTeamId = visible[0]?.clubId ?? ''
   const isUserTeam = possTeamId === userClubId
@@ -883,20 +1136,28 @@ function ChainArrowOverlay({
 
   // Resolve each link's position:
   // 1. Return frozen snapshot if this tick was already positioned (prevents drift).
-  // 2. First time: X from zone (shows realistic field progression),
-  //    Y from player's animated position (shows which side the play was on).
+  // 2. First time: use the player's actual animated position so chain arrows
+  //    match where the ball dot is shown. Fall back to zone-based X + centre Y
+  //    when the player isn't on the field (ball-up, sub, etc.).
   function getLinkPos(link: MatchTick, _arrayIdx: number): { x: number; y: number } {
     const existing = posSnapshotRef.current.get(link.tickIndex)
     if (existing) return existing
 
-    // X: always from the zone — this is the game-state truth
-    const x = zoneToSvgX(link.zone)
+    let x: number
+    let y: number
 
-    // Y: from the player's current position on the field (lateral variety)
-    let y = 270 // field centre fallback
     if (link.playerId) {
       const animPos = playerPosRef.current.get(link.playerId)
-      if (animPos) y = animPos.y
+      if (animPos) {
+        x = animPos.x
+        y = animPos.y
+      } else {
+        x = zoneToSvgX(link.zone)
+        y = 270
+      }
+    } else {
+      x = zoneToSvgX(link.zone)
+      y = 270
     }
 
     const pos = { x, y }
@@ -948,39 +1209,24 @@ function ChainArrowOverlay({
         )
       })}
 
-      {/* Dot at each node — grows brighter and larger toward latest */}
+      {/* Dot at each node — skip the latest node because the ball dot already marks it.
+          This avoids a visual double-up where the chain dot appears instantly at the new
+          carrier while the ball dot is still transitioning there. */}
       {pts.map(({ x, y, link, idx }) => {
-        const isLatest = idx === count - 1
+        if (idx === count - 1) return null // ball dot handles this
         const opacity = 0.25 + (idx / count) * 0.75
         return (
           <circle
             key={`${link.tickIndex}-node`}
             cx={x}
             cy={y}
-            r={isLatest ? 5.5 : 3}
+            r={3}
             fill={teamColor}
             opacity={opacity}
             style={{ pointerEvents: 'none' }}
           />
         )
       })}
-
-      {/* Pulsing ring at the latest node */}
-      {count > 0 && (
-        <circle
-          cx={pts[count - 1].x}
-          cy={pts[count - 1].y}
-          r={9}
-          fill="none"
-          stroke={teamColor}
-          strokeWidth={1.5}
-          opacity={0.5}
-          style={{ pointerEvents: 'none' }}
-        >
-          <animate attributeName="r" values="7;14;7" dur="1.4s" repeatCount="indefinite" />
-          <animate attributeName="opacity" values="0.55;0.1;0.55" dur="1.4s" repeatCount="indefinite" />
-        </circle>
-      )}
     </g>
   )
 }
@@ -998,7 +1244,7 @@ interface LivePlayerMagnetProps {
   hasTag: boolean
   isBallCarrier: boolean
   club: Club | undefined
-  onSelect: () => void
+  onSelect?: () => void
 }
 
 function LivePlayerMagnet({
@@ -1084,7 +1330,7 @@ function LivePlayerMagnet({
     </div>
   )
 
-  if (isUser) {
+  if (onSelect) {
     return (
       <button
         type="button"
@@ -1103,6 +1349,94 @@ function LivePlayerMagnet({
       title={player ? `#${num} ${player.firstName} ${player.lastName}` : undefined}
     >
       {dot}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// SpectatorStatPopup — compact sports-card tooltip on magnet click
+// ---------------------------------------------------------------------------
+
+function SpectatorStatPopup({
+  player,
+  stats,
+  club,
+  onClose,
+}: {
+  player: Player
+  stats: MatchPlayerStats | undefined
+  club: Club | undefined
+  onClose: () => void
+}) {
+  const primary = club?.colors.primary ?? '#2563eb'
+  const textColor = getLuminance(primary) > 0.35 ? '#000' : '#fff'
+  const d = stats?.disposals ?? 0
+  const hasStats = stats && d + (stats.marks ?? 0) + (stats.tackles ?? 0) + (stats.goals ?? 0) + (stats.behinds ?? 0) > 0
+
+  return (
+    <div
+      className="absolute z-50 pointer-events-auto"
+      style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}
+    >
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onClose() }}
+        className="rounded-lg shadow-xl overflow-hidden"
+        style={{
+          background: 'rgba(10,10,10,0.95)',
+          border: `1.5px solid ${primary}`,
+          cursor: 'pointer',
+          padding: 0,
+          minWidth: 140,
+        }}
+      >
+        {/* Name bar */}
+        <div
+          className="flex items-center gap-1.5 px-2 py-1"
+          style={{ backgroundColor: primary }}
+        >
+          <span className="font-bold tabular-nums" style={{ color: textColor, fontSize: 9 }}>
+            {player.jerseyNumber}
+          </span>
+          <span className="font-semibold truncate" style={{ color: textColor, fontSize: 10 }}>
+            {player.firstName.charAt(0)}. {player.lastName}
+          </span>
+        </div>
+
+        {/* Stat row */}
+        {hasStats ? (
+          <div className="flex items-center justify-center gap-0 px-1 py-1.5">
+            <MiniStat label="K" value={stats.kicks} />
+            <MiniStat label="H" value={stats.handballs} />
+            <MiniStat label="M" value={stats.marks} />
+            <MiniStat label="T" value={stats.tackles} />
+            <MiniStat label="G" value={stats.goals} highlight={stats.goals > 0} />
+            <MiniStat label="B" value={stats.behinds} dim={stats.behinds === 0} />
+          </div>
+        ) : (
+          <div className="px-2 py-1.5 text-muted-foreground" style={{ fontSize: 9 }}>
+            No stats yet
+          </div>
+        )}
+      </button>
+    </div>
+  )
+}
+
+function MiniStat({ label, value, highlight, dim }: { label: string; value: number; highlight?: boolean; dim?: boolean }) {
+  return (
+    <div className="flex flex-col items-center" style={{ width: 22 }}>
+      <span
+        className={`tabular-nums font-bold leading-none ${
+          highlight ? 'text-orange-400' : dim ? 'text-muted-foreground/50' : 'text-foreground'
+        }`}
+        style={{ fontSize: 11 }}
+      >
+        {value}
+      </span>
+      <span className="text-muted-foreground leading-none" style={{ fontSize: 7 }}>
+        {label}
+      </span>
     </div>
   )
 }
@@ -1131,6 +1465,10 @@ export function LiveFieldView({
   teamAttacksRight = true,
   ballZone,
   paused = false,
+  matchStats,
+  currentPossessionType,
+  isCentreBounce = false,
+  animTargetOverrides,
 }: LiveFieldViewProps) {
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null)
   const [swapSourceSlot, setSwapSourceSlot] = useState<string | null>(null)
@@ -1140,6 +1478,10 @@ export function LiveFieldView({
   )
   const [flashSlot, setFlashSlot] = useState<string | null>(null)
   const lastFlashKeyRef = useRef<string | null>(null)
+  /** Tracks where the ball last was — used to freeze the ball in place during stoppages. */
+  const lastBallPosRef = useRef<{ top: number; left: number } | null>(null)
+  /** Spectator mode: player ID whose stats popup is shown. */
+  const [spectatorPlayerId, setSpectatorPlayerId] = useState<string | null>(null)
 
   // Sync when parent lineup changes (e.g. new match starts)
   useEffect(() => {
@@ -1244,7 +1586,7 @@ export function LiveFieldView({
   )
 
   // Animation hook — runs RAF loop, writes left/top directly to player wrapper DOMs
-  const { registerEl, paramsRef: animParamsRef, slotPosRef } = usePlayerAnimation()
+  const { registerEl, paramsRef: animParamsRef, slotPosRef, ballElRef } = usePlayerAnimation()
 
   // Active play phase — drives player drift and zone overlays
   const activePhase: PlayPhase = livePlayPhase ?? 'midfield'
@@ -1253,6 +1595,24 @@ export function LiveFieldView({
     activePhase === 'attack' ? 'defense' :
     activePhase === 'defense' ? 'attack' :
     activePhase
+
+  // When paused, detect phase/zone/carrier changes (i.e. user stepped forward)
+  // and grant a brief animation window so players settle into new positions.
+  const prevPhaseRef = useRef(activePhase)
+  const prevBallZoneRef = useRef(ballZone)
+  const prevCarrierRef = useRef(ballCarrierPlayerId)
+  let animateUntil = animParamsRef.current.animateUntil ?? 0
+  if (paused && (
+    activePhase !== prevPhaseRef.current ||
+    ballZone !== prevBallZoneRef.current ||
+    ballCarrierPlayerId !== prevCarrierRef.current
+  )) {
+    // ~400ms is enough for the spring physics to mostly settle
+    animateUntil = performance.now() + 400
+  }
+  prevPhaseRef.current = activePhase
+  prevBallZoneRef.current = ballZone
+  prevCarrierRef.current = ballCarrierPlayerId
 
   // Keep animation params ref fresh every render (no re-render triggered — ref only)
   animParamsRef.current = {
@@ -1265,6 +1625,10 @@ export function LiveFieldView({
     ballZone,
     ballCarrierPlayerId,
     paused,
+    animateUntil,
+    currentPossessionType,
+    isCentreBounce,
+    animTargetOverrides,
   }
 
   // Build player position map for chain arrows + ball dot.
@@ -1290,32 +1654,54 @@ export function LiveFieldView({
       : clamp(slotPos.left + oppDrift.dx, 5, 95)
     playerPosMap.set(playerId, { x: left * 7.0, y: top * 5.4, top, left })
   }
-  const ballCarrierPos = ballCarrierPlayerId ? playerPosMap.get(ballCarrierPlayerId) : null
+  // Ball position tracks the carrier's animated magnet position.
+  // The carrier's magnet is pulled toward the ball zone in the RAF loop,
+  // so it's always near the correct area of the field.
+  const isStoppage = activePhase === 'stoppage'
+  const zoneX = ballZoneToX(ballZone, teamAttacksRight)
+  const ballCarrierPos = !isStoppage && ballCarrierPlayerId
+    ? (slotPosRef.current.get(ballCarrierPlayerId) ?? playerPosMap.get(ballCarrierPlayerId) ?? null)
+    : null
+  if (ballCarrierPos) {
+    lastBallPosRef.current = { top: ballCarrierPos.top, left: ballCarrierPos.left }
+  }
+  // Fallback: use zone centre if no carrier position is available
+  const zoneFallbackPos = { top: 50, left: zoneX }
+  const ballStoppagePos = isStoppage
+    ? (lastBallPosRef.current ?? zoneFallbackPos)
+    : null
+  // Ball should always be visible — use carrier pos, stoppage pos, last known pos, or zone centre
+  const ballPos = ballCarrierPos ?? ballStoppagePos ?? lastBallPosRef.current ?? zoneFallbackPos
 
   const hardTags = localTactics?.hardTags ?? []
   const taggedPlayerIds = new Set(hardTags.map((t) => t.taggerPlayerId))
   const selectedPlayer = selectedSlot ? players[localLineup[selectedSlot]] : null
   const selectedSlotData = selectedSlot ? FIELD_SLOT_MAP.get(selectedSlot) : null
 
+  // Labels for the direction arrows
+  const leftTeamLabel = teamAttacksRight
+    ? (opponentClub?.abbreviation ?? 'OPP')
+    : (userClub?.abbreviation ?? 'USR')
+  const rightTeamLabel = teamAttacksRight
+    ? (userClub?.abbreviation ?? 'USR')
+    : (opponentClub?.abbreviation ?? 'OPP')
+  const leftTeamColor = teamAttacksRight
+    ? opponentClub?.colors.primary
+    : userClub?.colors.primary
+  const rightTeamColor = teamAttacksRight
+    ? userClub?.colors.primary
+    : opponentClub?.colors.primary
+
   return (
     <div className="space-y-2">
-      {/* Header row */}
-      <div className="flex items-center justify-between text-xs">
-        <span className="text-muted-foreground">
-          {teamAttacksRight ? (
-            <><span className="font-medium text-foreground">◀ Defending</span>{'  '}Attacking ▶</>
-          ) : (
-            <>◀ Attacking{'  '}<span className="font-medium text-foreground">Defending ▶</span></>
-          )}
-        </span>
-        <div className="flex items-center gap-2">
-          {hardTags.length > 0 && (
-            <span className="inline-flex items-center gap-1 rounded border border-orange-500/40 bg-orange-500/10 px-1.5 py-0.5 text-[10px] text-orange-400">
-              🏷 {hardTags.length} tag{hardTags.length !== 1 ? 's' : ''}
-            </span>
-          )}
+      {/* Tags badge row (if any) */}
+      {hardTags.length > 0 && (
+        <div className="flex justify-end">
+          <span className="inline-flex items-center gap-1 rounded border border-orange-500/40 bg-orange-500/10 px-1.5 py-0.5 text-[10px] text-orange-400">
+            {hardTags.length} tag{hardTags.length !== 1 ? 's' : ''}
+          </span>
         </div>
-      </div>
+      )}
 
       {/* Swap mode banner */}
       {swapSourceSlot && (
@@ -1335,12 +1721,37 @@ export function LiveFieldView({
         </div>
       )}
 
+      {/* Direction labels — above the field, positioned at left and right */}
+      <div className="flex items-center justify-between px-[20%] mx-auto" style={{ maxWidth: 720 }}>
+        <div
+          className="flex items-center gap-1.5 rounded-md border px-3 py-1 text-xs font-semibold"
+          style={{
+            borderColor: `${leftTeamColor}40`,
+            backgroundColor: `${leftTeamColor}20`,
+            color: leftTeamColor,
+          }}
+        >
+          <span>← {leftTeamLabel}</span>
+        </div>
+        <div
+          className="flex items-center gap-1.5 rounded-md border px-3 py-1 text-xs font-semibold"
+          style={{
+            borderColor: `${rightTeamColor}40`,
+            backgroundColor: `${rightTeamColor}20`,
+            color: rightTeamColor,
+          }}
+        >
+          <span>{rightTeamLabel} →</span>
+        </div>
+      </div>
+
       {/* Field container — landscape 35:27 */}
       <div
         className="relative mx-auto overflow-hidden rounded select-none"
-        style={{ aspectRatio: '35 / 27', maxWidth: 560 }}
+        style={{ aspectRatio: '35 / 27', maxWidth: 720 }}
         onClick={() => {
           if (!swapSourceSlot) setSelectedSlot(null)
+          setSpectatorPlayerId(null)
         }}
       >
         {/* Ground SVG (landscape) */}
@@ -1383,27 +1794,46 @@ export function LiveFieldView({
           />
         )}
 
-        {/* Animated ball dot — floats above ball carrier, high z-index, smooth transition */}
-        {ballCarrierPos && (
+        {/* Ball dot — positioned by RAF loop (ballElRef) so it tracks the
+            carrier magnet every frame, not just on React re-renders. */}
+        {ballPos && (
           <div
+            ref={(el) => { ballElRef.current = el }}
             style={{
               position: 'absolute',
-              top: `${ballCarrierPos.top}%`,
-              left: `${ballCarrierPos.left}%`,
-              transform: 'translate(-50%, calc(-100% - 6px))',
+              top: `${clamp(ballPos.top, 5, 95)}%`,
+              left: `${clamp(ballPos.left, 4, 96)}%`,
+              // Hover above carrier when someone has it; centred during stoppages.
+              transform: isStoppage
+                ? 'translate(-50%, -50%)'
+                : 'translate(-50%, calc(-100% - 10px))',
               zIndex: 30,
               pointerEvents: 'none',
-              transition: 'top 0.7s ease, left 0.7s ease',
             }}
           >
+            {/* Outer pulse ring — faster pulse during stoppages to show contested ball */}
             <div
-              className="animate-bounce"
+              className={isStoppage ? 'animate-pulse' : 'animate-ping'}
               style={{
-                width: 10,
-                height: 10,
+                position: 'absolute',
+                inset: isStoppage ? -8 : -4,
                 borderRadius: '50%',
-                backgroundColor: chainTeamColor ?? '#facc15',
-                boxShadow: `0 0 6px ${chainTeamColor ?? '#facc15'}cc`,
+                backgroundColor: isStoppage ? '#f97316' : '#facc15',
+                opacity: isStoppage ? 0.3 : 0.4,
+              }}
+            />
+            {/* Ball */}
+            <div
+              style={{
+                position: 'relative',
+                width: 16,
+                height: 16,
+                borderRadius: '50%',
+                backgroundColor: isStoppage ? '#f97316' : '#facc15',
+                border: `2px solid ${isStoppage ? '#fbbf24' : '#ffffff'}`,
+                boxShadow: isStoppage
+                  ? '0 0 10px #f97316, 0 0 20px rgba(249,115,22,0.5)'
+                  : '0 0 10px #facc15, 0 0 20px rgba(250,204,21,0.5)',
               }}
             />
           </div>
@@ -1417,6 +1847,7 @@ export function LiveFieldView({
           const pos = playerPosMap.get(playerId)
           const initLeft = pos?.left ?? (100 - slotPos.left)
           const initTop = pos?.top ?? (100 - slotPos.top)
+          const hasStats = !!matchStats
           return (
             <div
               key={`opp-${slot}`}
@@ -1424,21 +1855,23 @@ export function LiveFieldView({
               style={{
                 position: 'absolute',
                 transform: 'translate(-50%, -50%)',
-                zIndex: 5,
+                zIndex: spectatorPlayerId === playerId ? 20 : 5,
                 willChange: 'top, left',
-                pointerEvents: 'none',
+                pointerEvents: hasStats ? 'auto' : 'none',
               }}
             >
               <LivePlayerMagnet
                 player={players[playerId]}
                 isUser={false}
-                isSelected={false}
+                isSelected={spectatorPlayerId === playerId}
                 isFlashing={false}
                 isSwapTarget={false}
                 hasTag={false}
                 isBallCarrier={ballCarrierPlayerId === playerId}
                 club={opponentClub}
-                onSelect={() => {}}
+                onSelect={hasStats ? () => setSpectatorPlayerId(
+                  spectatorPlayerId === playerId ? null : playerId,
+                ) : undefined}
               />
             </div>
           )
@@ -1456,7 +1889,6 @@ export function LiveFieldView({
           const isSelected = selectedSlot === slot
           const isSwapSrc = swapSourceSlot === slot
           const isSwapTarget = Boolean(swapSourceSlot) && !isSwapSrc
-
           return (
             <div
               key={slot}
@@ -1464,24 +1896,31 @@ export function LiveFieldView({
               style={{
                 position: 'absolute',
                 transform: 'translate(-50%, -50%)',
-                zIndex: isSelected ? 20 : 10,
+                zIndex: (isSelected || spectatorPlayerId === playerId) ? 20 : 10,
                 willChange: 'top, left',
               }}
             >
               <LivePlayerMagnet
                 player={players[playerId]}
                 isUser
-                isSelected={isSelected}
+                isSelected={isSelected || spectatorPlayerId === playerId}
                 isFlashing={flashSlot === slot}
                 isSwapTarget={isSwapTarget}
                 hasTag={taggedPlayerIds.has(playerId)}
                 isBallCarrier={ballCarrierPlayerId === playerId}
                 club={userClub}
                 onSelect={() => {
-                  if (swapSourceSlot && !isSwapSrc) {
-                    handlePositionSwap(slot)
-                  } else if (!isSwapSrc) {
-                    setSelectedSlot(isSelected ? null : slot)
+                  if (localTactics) {
+                    if (swapSourceSlot && !isSwapSrc) {
+                      handlePositionSwap(slot)
+                      return
+                    } else if (!isSwapSrc) {
+                      setSelectedSlot(isSelected ? null : slot)
+                    }
+                  }
+                  // Always toggle stat popup when matchStats available
+                  if (matchStats) {
+                    setSpectatorPlayerId(spectatorPlayerId === playerId ? null : playerId)
                   }
                 }}
               />
@@ -1490,7 +1929,7 @@ export function LiveFieldView({
         })}
 
         {/* Instruction panel (shown when a player is selected) */}
-        {selectedSlot && selectedPlayer && selectedSlotData && (
+        {selectedSlot && selectedPlayer && selectedSlotData && localTactics && (
           <PlayerInstructionPanel
             player={selectedPlayer}
             slotLabel={selectedSlotData.label}
@@ -1502,6 +1941,20 @@ export function LiveFieldView({
             onClose={() => setSelectedSlot(null)}
             anchorTop={selectedSlotData.top}
             anchorLeft={selectedSlotData.left}
+          />
+        )}
+
+        {/* Spectator stat popup — shown when clicking any magnet in spectator mode */}
+        {spectatorPlayerId && matchStats && players[spectatorPlayerId] && (
+          <SpectatorStatPopup
+            player={players[spectatorPlayerId]}
+            stats={matchStats[spectatorPlayerId]}
+            club={
+              Object.values(opponentSlotLineup).includes(spectatorPlayerId)
+                ? opponentClub
+                : userClub
+            }
+            onClose={() => setSpectatorPlayerId(null)}
           />
         )}
       </div>

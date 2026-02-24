@@ -150,7 +150,7 @@ function buildPrivateMessage(
   stripped: Player,
   newCaptain: Player | null,
   squadResponse: SquadResponseModifier,
-  fairnessScore: number,
+  _fairnessScore: number,
   rng: SeededRNG,
 ): string {
   const sn = `${stripped.firstName} ${stripped.lastName}`
@@ -193,8 +193,8 @@ function buildPrivateMessage(
 
 function buildSquadResponse(
   stripped: Player,
-  newCaptainId: string | null,
-  players: Record<string, Player>,
+  _newCaptainId: string | null,
+  _players: Record<string, Player>,
   fairnessScore: number,
   reactionType: CaptaincyReactionType,
   rng: SeededRNG,

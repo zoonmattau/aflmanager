@@ -7,13 +7,10 @@ import type {
   NegotiationThread,
   NegotiationRound,
   NegotiationRoundStatus,
-  AiResponseSignal,
   ClubLeverageState,
 } from '@/types/negotiation'
 import {
   evaluateForClub,
-  getDeadlinePressure,
-  getTradeDeadlineDate,
 } from '@/engine/trades/tradeNegotiationEngine'
 import type { OfferEvalContext } from '@/engine/trades/tradeNegotiationEngine'
 import { getResponseDelayDays, computeAiCounterOffer } from '@/engine/trades/leverageEngine'
@@ -247,7 +244,7 @@ export function userCounterRound(
   personality: Club['aiPersonality'],
   deadlinePressure: number,
   rng: SeededRNG,
-  players: Record<string, Player>,
+  _players: Record<string, Player>,
 ): NegotiationThread {
   if (thread.rounds.length >= thread.maxRounds) return thread
   if (thread.status !== 'active') return thread

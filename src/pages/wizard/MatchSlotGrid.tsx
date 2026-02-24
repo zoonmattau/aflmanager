@@ -65,7 +65,6 @@ export function MatchSlotGrid({ slots, onChange }: MatchSlotGridProps) {
 
   const toggleDayGroup = (days: MatchDay[], on: boolean) => {
     const daysSet = new Set<string>(days)
-    const groupSlots = slots.filter((s) => daysSet.has(s.day))
     if (!on) {
       // Don't allow disabling if it would leave 0 enabled slots
       const wouldRemain = slots.filter((s) => !daysSet.has(s.day) && s.enabled).length

@@ -12,6 +12,10 @@ interface LiveScoreboardProps {
   awayColor: string
   homeScore: number
   awayScore: number
+  homeGoals?: number
+  homeBehinds?: number
+  awayGoals?: number
+  awayBehinds?: number
   quarter: number          // 1-4 (current/active quarter)
   minute: number
   speed: PlaybackSpeed
@@ -30,6 +34,10 @@ export function LiveScoreboard({
   awayColor,
   homeScore,
   awayScore,
+  homeGoals,
+  homeBehinds,
+  awayGoals,
+  awayBehinds,
   quarter,
   minute,
   speed,
@@ -61,9 +69,13 @@ export function LiveScoreboard({
         {/* Score + time */}
         <div className="flex flex-col items-center gap-0.5 flex-shrink-0 text-center">
           <div className="text-2xl font-bold tabular-nums leading-none">
-            {homeScore}
+            {homeGoals != null && homeBehinds != null ? (
+              <><span className="text-sm font-medium text-muted-foreground">{homeGoals}.{homeBehinds}.</span>{homeScore}</>
+            ) : homeScore}
             <span className="text-muted-foreground mx-1.5">–</span>
-            {awayScore}
+            {awayGoals != null && awayBehinds != null ? (
+              <><span className="text-sm font-medium text-muted-foreground">{awayGoals}.{awayBehinds}.</span>{awayScore}</>
+            ) : awayScore}
           </div>
           <div className="text-[11px] text-muted-foreground font-mono">
             {quarterLabel} &middot; {minute}'

@@ -1,7 +1,7 @@
 import type { GameHistory, SeasonRecord, DraftHistoryEntry } from '@/types/history'
 import type { Match } from '@/types/match'
 import type { LadderEntry } from '@/types/season'
-import type { Player, PlayerCareerStats } from '@/types/player'
+import type { Player, NumericCareerStatKey } from '@/types/player'
 
 /**
  * Record the result of a completed season into the game history.
@@ -118,7 +118,7 @@ export interface CareerLeaderEntry {
  */
 export function getCareerLeaders(
   players: Record<string, Player>,
-  stat: keyof PlayerCareerStats,
+  stat: NumericCareerStatKey,
   limit: number = 10,
 ): CareerLeaderEntry[] {
   return Object.values(players)

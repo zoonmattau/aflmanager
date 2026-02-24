@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { ArrowLeft, ArrowLeftRight, AlertTriangle, Trophy, Info, Shield, TrendingUp, ArrowUp } from 'lucide-react'
+import { ArrowLeft, ArrowLeftRight, AlertTriangle, Trophy, Shield, TrendingUp, ArrowUp } from 'lucide-react'
 import { FieldSvg } from '@/components/lineup/FieldSvg'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { Player, PlayerJumperPreferenceLevel, PlayerPositionType, PlayerTrainingFocus } from '@/types/player'
@@ -25,15 +25,14 @@ import { ATTR_CATEGORIES, attrColor, attrBgColor } from '@/lib/attributeCategori
 import { matchRatingColorClass } from '@/engine/match/matchRatings'
 import { getPlayerRecentGames } from '@/lib/formGuide'
 import { getTotalGamesMissed, getRecurringBodyRegions, bodyRegionLabel, getInjuryRiskLevel, injuryRiskDisplay } from '@/lib/injuryRisk'
-import { FormDots } from '@/components/player/FormDots'
 import { MomentsFeed } from '@/components/player/MomentsFeed'
 import { isPlayerRFA } from '@/engine/contracts/freeAgency'
 import { cn } from '@/lib/utils'
-import { calcDisposalEfficiency, calcKickingAccuracy, calcContestedPossessionPct, calcKickToHandballRatio, fmtPct, fmtKHRatio } from '@/lib/efficiencyStats'
 import { computePlayerArc, ARC_META } from '@/engine/player/storyArc'
 import { computeAllTrends } from '@/engine/player/trendEngine'
 import type { AttributeTrendData } from '@/engine/player/trendEngine'
 import { AttributeTrendBadge } from '@/components/player/AttributeTrendBadge'
+import { PossessionHeatmap } from '@/components/player/PossessionHeatmap'
 
 function moraleLabel(morale: number): string {
   if (morale >= 90) return 'Ecstatic'
@@ -48,10 +47,6 @@ function jumperPreferenceLabel(level: PlayerJumperPreferenceLevel | undefined): 
   if (level === 'demand') return 'Demands specific jumper number(s)'
   if (level === 'want') return 'Prefers specific jumper number(s)'
   return 'No strong jumper number preference'
-}
-
-function formatSignedDelta(value: number): string {
-  return value > 0 ? `+${value}` : `${value}`
 }
 
 function getJumperPreferenceMoraleImpact(player: Player): number {
@@ -128,6 +123,8 @@ export function PlayerProfilePage() {
   const [previewFocus, setPreviewFocus] = useState<PlayerTrainingFocus | null | '__current__'>('__current__')
   const [trendWindow, setTrendWindow] = useState<1 | 2 | 3>(1)
   const [ybyMode, setYbyMode] = useState<'avg' | 'total'>('avg')
+  const [selectedGameId, setSelectedGameId] = useState<string | null>(null)
+  const [heatmapScope, setHeatmapScope] = useState<'season' | 'career'>('season')
   const setPlayerTrainingFocus = useGameStore((s) => s.setPlayerTrainingFocus)
 
   const playerId = useMemo(() => {
@@ -289,16 +286,6 @@ export function PlayerProfilePage() {
         ...historicalSeasonRows.map((entry) => ({ ...entry, inProgress: false })),
         ...preGameRows,
       ].sort((a, b) => b.year - a.year)
-  const ratingProgressionRows = [...yearByYearRows]
-    .sort((a, b) => a.year - b.year)
-    .map((entry, index, list) => {
-      const prev = index > 0 ? list[index - 1] : null
-      return {
-        ...entry,
-        overallDelta: prev ? entry.overall - prev.overall : null,
-      }
-    })
-    .reverse()
   const secondaryPositions = new Set(player.position.secondary)
   const alternatePositions = getPlayerEligiblePositionTypes(player, { includeRated: false }).filter(
     (pos) => pos !== player.position.primary,
@@ -382,18 +369,6 @@ export function PlayerProfilePage() {
 
   // Key stats for overview
   const gp = ss.gamesPlayed
-
-  // Form trend computation
-  const formRecent5 = (player.matchRatingHistory ?? []).slice(-5)
-  const formAvg5 = formRecent5.length > 0 ? formRecent5.reduce((a, b) => a + b, 0) / formRecent5.length : 0
-  const formTrendLabel = formAvg5 >= 8.5 ? 'On Fire' : formAvg5 >= 7.0 ? 'Good Form' : formAvg5 >= 5.5 ? 'Steady' : 'Poor Form'
-  const formStripCls = formAvg5 >= 8.5
-    ? 'border-green-500/40 bg-green-500/10 text-green-600 dark:text-green-400'
-    : formAvg5 >= 7.0
-      ? 'border-blue-500/40 bg-blue-500/10 text-blue-600 dark:text-blue-400'
-      : formAvg5 >= 5.5
-        ? 'border-yellow-500/40 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
-        : 'border-red-500/40 bg-red-500/10 text-red-500 dark:text-red-400'
 
   return (
     <div className="flex items-start gap-0">
@@ -818,6 +793,69 @@ export function PlayerProfilePage() {
 
             </div>
 
+            {/* ── Possession Heatmap ─────────────────────────────────── */}
+            {(() => {
+              const selectedGame = selectedGameId
+                ? recentGames.find((g) => g.matchId === selectedGameId)
+                : null
+              const heatmapData = selectedGame
+                ? selectedGame.stats.zonePossessions
+                : heatmapScope === 'career'
+                  ? player.careerStats.zonePossessions
+                  : player.seasonStats.zonePossessions
+              const hasAnyZoneData = heatmapData && Object.values(heatmapData).some((v) => (v ?? 0) > 0)
+              const heatmapLabel = selectedGame
+                ? `${selectedGame.isFinal ? (selectedGame.finalType ?? 'F') : `Rd ${selectedGame.round + 1}`} vs ${clubs[selectedGame.opponentClubId]?.abbreviation ?? '???'}`
+                : heatmapScope === 'career' ? 'Career' : 'Season'
+
+              return hasAnyZoneData ? (
+                <Card>
+                  <CardHeader className="py-2.5 px-3 flex flex-row items-center justify-between">
+                    <CardTitle className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">
+                      Possession Heatmap
+                    </CardTitle>
+                    <div className="flex items-center gap-1">
+                      {selectedGame ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-5 px-2 text-[10px]"
+                          onClick={() => setSelectedGameId(null)}
+                        >
+                          Clear
+                        </Button>
+                      ) : (
+                        <>
+                          <Button
+                            variant={heatmapScope === 'season' ? 'secondary' : 'ghost'}
+                            size="sm"
+                            className="h-5 px-2 text-[10px]"
+                            onClick={() => setHeatmapScope('season')}
+                          >
+                            Season
+                          </Button>
+                          <Button
+                            variant={heatmapScope === 'career' ? 'secondary' : 'ghost'}
+                            size="sm"
+                            className="h-5 px-2 text-[10px]"
+                            onClick={() => setHeatmapScope('career')}
+                          >
+                            Career
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </CardHeader>
+                  <CardContent className="px-3 pb-3">
+                    <PossessionHeatmap
+                      zonePossessions={heatmapData}
+                      label={heatmapLabel}
+                    />
+                  </CardContent>
+                </Card>
+              ) : null
+            })()}
+
             {/* ── Career Moments feed ──────────────────────────────────── */}
             {(player.moments && player.moments.length > 0) && (
               <div className="space-y-2">
@@ -861,13 +899,15 @@ export function PlayerProfilePage() {
                         const opp = clubs[g.opponentClubId]
                         const rating = g.stats.matchRating
                         const isEven = idx % 2 === 0
+                        const isSelected = selectedGameId === g.matchId
                         return (
                           <tr
                             key={g.matchId}
                             className={cn(
-                              'border-b border-border/20 last:border-0',
-                              isEven ? 'bg-muted/10' : '',
+                              'border-b border-border/20 last:border-0 cursor-pointer transition-colors hover:bg-muted/30',
+                              isSelected ? 'bg-amber-500/10 border-l-2 border-l-amber-500' : isEven ? 'bg-muted/10' : '',
                             )}
+                            onClick={() => setSelectedGameId(isSelected ? null : g.matchId)}
                           >
                             {/* Round */}
                             <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
@@ -1604,102 +1644,3 @@ function OverviewStatsPanel({
   )
 }
 
-function StatsTable({
-  stats,
-  gamesPlayed,
-}: {
-  stats: import('@/types/player').PlayerCareerStats
-  gamesPlayed: number
-}) {
-  if (gamesPlayed === 0) {
-    return <p className="text-sm text-muted-foreground">No stats recorded.</p>
-  }
-
-  const rows: { code: string; label: string; desc: string; total: number; avg: number | null; formatTotal?: (v: number) => string }[] = [
-    { code: 'GP', label: 'Games Played', desc: 'Matches played.', total: gamesPlayed, avg: null },
-    { code: 'AF', label: 'AFL Fantasy', desc: 'AFL Fantasy points total.', total: stats.aflFantasyPoints, avg: stats.aflFantasyPoints / gamesPlayed },
-    { code: 'SC', label: 'SuperCoach', desc: 'SuperCoach-style points total.', total: stats.superCoachPoints, avg: stats.superCoachPoints / gamesPlayed },
-    { code: 'G', label: 'Goals', desc: '6-point scoring shots.', total: stats.goals, avg: stats.goals / gamesPlayed },
-    { code: 'B', label: 'Behinds', desc: '1-point scoring shots.', total: stats.behinds, avg: stats.behinds / gamesPlayed },
-    { code: 'D', label: 'Disposals', desc: 'Kicks + handballs.', total: stats.disposals, avg: stats.disposals / gamesPlayed },
-    { code: 'K', label: 'Kicks', desc: 'Total kicks.', total: stats.kicks, avg: stats.kicks / gamesPlayed },
-    { code: 'HB', label: 'Handballs', desc: 'Total handballs.', total: stats.handballs, avg: stats.handballs / gamesPlayed },
-    {
-      code: 'K:H',
-      label: 'K:H Ratio',
-      desc: 'Kicks per handball — higher means more kick-dominant style. Season average.',
-      total: stats.handballs > 0 ? stats.kicks / stats.handballs : 0,
-      avg: null,
-      formatTotal: (v: number) => stats.handballs > 0 ? `${v.toFixed(1)}:1` : '-',
-    },
-    { code: 'M', label: 'Marks', desc: 'Total marks.', total: stats.marks, avg: stats.marks / gamesPlayed },
-    { code: 'CM', label: 'Contested Marks', desc: 'Marks taken under physical pressure.', total: stats.contestedMarks, avg: stats.contestedMarks / gamesPlayed },
-    { code: 'T', label: 'Tackles', desc: 'Successful tackles.', total: stats.tackles, avg: stats.tackles / gamesPlayed },
-    { code: 'HO', label: 'Hitouts', desc: 'Ruck hitouts won.', total: stats.hitouts, avg: stats.hitouts / gamesPlayed },
-    { code: 'CP', label: 'Contested Poss', desc: 'Possessions won in contest.', total: stats.contestedPossessions, avg: stats.contestedPossessions / gamesPlayed },
-    { code: 'UP', label: 'Uncontested Poss', desc: 'Possessions won without direct contest.', total: stats.uncontestedPossessions, avg: stats.uncontestedPossessions / gamesPlayed },
-    { code: 'CL', label: 'Clearances', desc: 'First effective possession from stoppage.', total: stats.clearances, avg: stats.clearances / gamesPlayed },
-    { code: 'I50', label: 'Inside 50s', desc: 'Entries into forward 50.', total: stats.insideFifties, avg: stats.insideFifties / gamesPlayed },
-    { code: 'R50', label: 'Rebound 50s', desc: 'Possessions exiting defensive 50.', total: stats.rebound50s, avg: stats.rebound50s / gamesPlayed },
-    { code: 'FF', label: 'Frees For', desc: 'Free kicks received.', total: stats.freesFor, avg: stats.freesFor / gamesPlayed },
-    { code: 'FA', label: 'Frees Against', desc: 'Free kicks conceded.', total: stats.freesAgainst, avg: stats.freesAgainst / gamesPlayed },
-    { code: 'GA', label: 'Goal Assists', desc: 'Final pass/chain contribution to a goal.', total: stats.goalAssists, avg: stats.goalAssists / gamesPlayed },
-    { code: 'SI', label: 'Score Involvements', desc: 'Involvement in scoring chains.', total: stats.scoreInvolvements, avg: stats.scoreInvolvements / gamesPlayed },
-    { code: 'MG', label: 'Metres Gained', desc: 'Net territory gained from possessions.', total: stats.metresGained, avg: stats.metresGained / gamesPlayed },
-    { code: 'INT', label: 'Intercepts', desc: 'Possessions won from opposition ball movement.', total: stats.intercepts, avg: stats.intercepts / gamesPlayed },
-    { code: '1%', label: 'One Percenters', desc: 'Spoils, smothers, knock-ons and similar team acts.', total: stats.onePercenters, avg: stats.onePercenters / gamesPlayed },
-    { code: 'TO', label: 'Turnovers', desc: 'Possessions lost to opposition.', total: stats.turnovers, avg: stats.turnovers / gamesPlayed },
-    { code: 'CLG', label: 'Clangers', desc: 'Significant errors leading to negative outcomes.', total: stats.clangers, avg: stats.clangers / gamesPlayed },
-    { code: 'BO', label: 'Bounces', desc: 'Running bounces with possession.', total: stats.bounces, avg: stats.bounces / gamesPlayed },
-  ]
-
-  return (
-    <TooltipProvider delayDuration={120}>
-      <div className="text-sm space-y-0.5">
-        <div className="flex text-xs text-muted-foreground font-medium mb-1">
-          <span className="flex-1 flex items-center gap-1.5">
-            Stat
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button type="button" className="inline-flex items-center text-muted-foreground hover:text-foreground">
-                  <Info className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right" className="max-w-xs">
-                <div className="space-y-1">
-                  <p className="font-semibold">Stat Abbreviations</p>
-                  <p>`GP` Games Played, `AF` AFL Fantasy, `SC` SuperCoach</p>
-                  <p>`D` Disposals, `K` Kicks, `HB` Handballs, `M` Marks</p>
-                  <p>`CP` Contested Possessions, `UP` Uncontested Possessions, `CL` Clearances</p>
-                  <p>`I50` Inside 50s, `R50` Rebound 50s, `FF/FA` Frees For/Against</p>
-                  <p>`GA` Goal Assists, `SI` Score Involvements, `INT` Intercepts, `1%` One Percenters</p>
-                  <p>`TO` Turnovers, `CLG` Clangers, `BO` Bounces, `MG` Metres Gained</p>
-                </div>
-              </TooltipContent>
-            </Tooltip>
-          </span>
-          <span className="w-14 text-right">Total</span>
-          <span className="w-14 text-right">Avg</span>
-        </div>
-        {rows.map((r) => (
-          <div key={r.code} className="flex">
-            <span className="flex-1 text-muted-foreground">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="cursor-help">{r.code} - {r.label}</span>
-                </TooltipTrigger>
-                <TooltipContent side="right">{r.desc}</TooltipContent>
-              </Tooltip>
-            </span>
-            <span className="w-14 text-right font-mono">
-              {r.formatTotal ? r.formatTotal(r.total) : r.total}
-            </span>
-            <span className="w-14 text-right font-mono text-muted-foreground">
-              {r.avg !== null ? r.avg.toFixed(1) : '-'}
-            </span>
-          </div>
-        ))}
-      </div>
-    </TooltipProvider>
-  )
-}

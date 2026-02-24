@@ -73,7 +73,7 @@ function analyzeContested(
 }
 
 function analyzePhysical(
-  stats: MatchPlayerStats[],
+  _stats: MatchPlayerStats[],
   userScores: QuarterScore[],
 ): TrainingImpactFinding | null {
   if (userScores.length < 4) return null

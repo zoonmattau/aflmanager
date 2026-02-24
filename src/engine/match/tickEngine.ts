@@ -175,6 +175,11 @@ function pickCommentary(rng: SeededRNG, type: PossessionType, name: string, zone
 
 const ZONES: FieldZone[] = ['back50', 'backHalf', 'midfield', 'forwardHalf', 'forward50']
 const ZONE_INDEX: Record<FieldZone, number> = { back50: 0, backHalf: 1, midfield: 2, forwardHalf: 3, forward50: 4 }
+/** Mirror a zone so the same physical location is expressed from the other team's perspective. */
+const ZONE_MIRROR: Record<FieldZone, FieldZone> = {
+  back50: 'forward50', backHalf: 'forwardHalf', midfield: 'midfield',
+  forwardHalf: 'backHalf', forward50: 'back50',
+}
 
 /** Pick an initial zone for a new chain (biased toward midfield / back-half). */
 function chainStartZone(rng: SeededRNG): FieldZone {
@@ -212,11 +217,7 @@ function advanceZone(rng: SeededRNG, prevZone: FieldZone, possession: Possession
   }
 
   if (possession === 'tackle' || possession === 'contest') {
-    // Contested — 30% pushed back, 50% stays, 20% breaks forward
-    const roll = rng.nextFloat(0, 1)
-    if (roll < 0.30 && idx > 0) return ZONES[idx - 1]
-    if (roll < 0.80) return prevZone
-    if (idx < 4) return ZONES[idx + 1]
+    // Tackle / contest — ball is held up at the spot. Zone stays.
     return prevZone
   }
 
@@ -244,8 +245,19 @@ function advanceZone(rng: SeededRNG, prevZone: FieldZone, possession: Possession
   return prevZone
 }
 
-function goalZone(rng: SeededRNG): FieldZone {
-  return rng.chance(0.7) ? 'forward50' : 'forwardHalf'
+/**
+ * Scoring zone — goals/behinds must come from the forward end.
+ * If currentZone is already forward, use it.  Otherwise advance at most
+ * one zone forward from where the ball is so the visual doesn't teleport.
+ */
+function scoringZone(rng: SeededRNG, currentZone: FieldZone): FieldZone {
+  const idx = ZONE_INDEX[currentZone]
+  // Already in the forward arc — use it directly
+  if (idx >= 3) return rng.chance(0.65) ? 'forward50' : 'forwardHalf'
+  // Midfield — push into forwardHalf (one zone advance)
+  if (idx === 2) return 'forwardHalf'
+  // Deep in defence — advance one zone (long bomb / fast break)
+  return ZONES[Math.min(idx + 1, 4)]
 }
 
 // ---------------------------------------------------------------------------
@@ -367,15 +379,15 @@ function pickPossessionType(
 // Player name helpers
 // ---------------------------------------------------------------------------
 
-function pickPlayerName(
+function pickPlayer(
   rng: SeededRNG,
   ids: string[],
   playerNames: Record<string, string>,
   fallback: string,
-): string {
-  if (ids.length === 0) return fallback
+): { id: string | undefined; name: string } {
+  if (ids.length === 0) return { id: undefined, name: fallback }
   const id = ids[rng.nextInt(0, ids.length - 1)]
-  return playerNames[id] ?? fallback
+  return { id, name: playerNames[id] ?? fallback }
 }
 
 // ---------------------------------------------------------------------------
@@ -549,8 +561,11 @@ export function generateQuarterTicks(
       if (keyEvt.type === 'goal') {
         // Goals end the current chain — keep same chainId so they belong to the chain that scored.
         // After this tick, the chain resets (next possession increments chainId automatically).
-        if (keyEvt.clubId !== lastChainClubId) { chainId++; lastChainClubId = keyEvt.clubId; currentZone = chainStartZone(displayRng) }
-        const zone = goalZone(displayRng)
+        if (keyEvt.clubId !== lastChainClubId) {
+          if (lastChainClubId !== '') currentZone = ZONE_MIRROR[currentZone]
+          chainId++; lastChainClubId = keyEvt.clubId
+        }
+        const zone = scoringZone(displayRng, currentZone)
         currentZone = zone
         homeGoals += keyEvt.clubId === homeClubId ? 1 : 0
         awayGoals += keyEvt.clubId === awayClubId ? 1 : 0
@@ -577,8 +592,11 @@ export function generateQuarterTicks(
         lastChainClubId = ''
         currentZone = 'midfield'
       } else if (keyEvt.type === 'behind') {
-        if (keyEvt.clubId !== lastChainClubId) { chainId++; lastChainClubId = keyEvt.clubId; currentZone = chainStartZone(displayRng) }
-        const zone = goalZone(displayRng)
+        if (keyEvt.clubId !== lastChainClubId) {
+          if (lastChainClubId !== '') currentZone = ZONE_MIRROR[currentZone]
+          chainId++; lastChainClubId = keyEvt.clubId
+        }
+        const zone = scoringZone(displayRng, currentZone)
         currentZone = zone
         homeBehinds += keyEvt.clubId === homeClubId ? 1 : 0
         awayBehinds += keyEvt.clubId === awayClubId ? 1 : 0
@@ -600,7 +618,8 @@ export function generateQuarterTicks(
           chainId,
         })
         lastChainClubId = ''
-        currentZone = 'midfield'
+        // Kick-in from back50 after a behind
+        currentZone = 'back50'
       } else if (keyEvt.type === 'injury') {
         // Injuries always start a new chain
         chainId++
@@ -628,9 +647,11 @@ export function generateQuarterTicks(
         // milestone, tactical-change etc — treat as normal possession tick
         const pt = pickPossessionType(displayRng, possessionTable)
         if (keyEvt.clubId !== lastChainClubId || pt === 'clearance') {
+          const teamChanged = lastChainClubId !== '' && keyEvt.clubId !== lastChainClubId
           chainId++
           lastChainClubId = keyEvt.clubId
-          currentZone = pt === 'clearance' ? 'midfield' : chainStartZone(displayRng)
+          if (pt === 'clearance') currentZone = 'midfield'
+          else if (teamChanged) currentZone = ZONE_MIRROR[currentZone]
         } else {
           currentZone = advanceZone(displayRng, currentZone, pt)
         }
@@ -654,11 +675,14 @@ export function generateQuarterTicks(
       const clubId = extraScore.clubId
       const abbr = clubId === homeClubId ? homeAbbr : awayAbbr
       const playerIds = clubId === homeClubId ? homePlayerIds : awayPlayerIds
-      const name = pickPlayerName(displayRng, playerIds, playerNames, abbr)
+      const picked = pickPlayer(displayRng, playerIds, playerNames, abbr)
 
       if (extraScore.isGoal) {
-        if (clubId !== lastChainClubId) { chainId++; lastChainClubId = clubId; currentZone = chainStartZone(displayRng) }
-        const zone = goalZone(displayRng)
+        if (clubId !== lastChainClubId) {
+          if (lastChainClubId !== '') currentZone = ZONE_MIRROR[currentZone]
+          chainId++; lastChainClubId = clubId
+        }
+        const zone = scoringZone(displayRng, currentZone)
         currentZone = zone
         homeGoals += clubId === homeClubId ? 1 : 0
         awayGoals += clubId === awayClubId ? 1 : 0
@@ -671,19 +695,24 @@ export function generateQuarterTicks(
           zone,
           possessionType: 'goal',
           clubId,
-          playerName: name,
+          playerId: picked.id,
+          playerName: picked.name,
+          goalPlayerId: picked.id,
           homeScore: homeTotal,
           awayScore: awayTotal,
           isStoppage: true,
           stoppageType: 'goal',
-          commentary: pickCommentary(displayRng, 'goal', name, zone),
+          commentary: pickCommentary(displayRng, 'goal', picked.name, zone),
           chainId,
         })
         lastChainClubId = ''
         currentZone = 'midfield'
       } else {
-        if (clubId !== lastChainClubId) { chainId++; lastChainClubId = clubId; currentZone = chainStartZone(displayRng) }
-        const zone = goalZone(displayRng)
+        if (clubId !== lastChainClubId) {
+          if (lastChainClubId !== '') currentZone = ZONE_MIRROR[currentZone]
+          chainId++; lastChainClubId = clubId
+        }
+        const zone = scoringZone(displayRng, currentZone)
         currentZone = zone
         homeBehinds += clubId === homeClubId ? 1 : 0
         awayBehinds += clubId === awayClubId ? 1 : 0
@@ -696,15 +725,17 @@ export function generateQuarterTicks(
           zone,
           possessionType: 'behind',
           clubId,
-          playerName: name,
+          playerId: picked.id,
+          playerName: picked.name,
           homeScore: homeTotal,
           awayScore: awayTotal,
           isStoppage: false,
-          commentary: pickCommentary(displayRng, 'behind', name, zone),
+          commentary: pickCommentary(displayRng, 'behind', picked.name, zone),
           chainId,
         })
         lastChainClubId = ''
-        currentZone = 'midfield'
+        // Kick-in from back50 after a behind
+        currentZone = 'back50'
       }
     } else {
       // --- Synthetic possession tick ---
@@ -713,20 +744,22 @@ export function generateQuarterTicks(
       const abbr = clubId === homeClubId ? homeAbbr : awayAbbr
       const playerIds = clubId === homeClubId ? homePlayerIds : awayPlayerIds
       const pt = pickPossessionType(displayRng, possessionTable)
-      const name = pickPlayerName(displayRng, playerIds, playerNames, abbr)
+      const picked = pickPlayer(displayRng, playerIds, playerNames, abbr)
 
       const isStoppageType = pt === 'ball-up'
       const isChainBreaker = pt === 'clearance' || pt === 'ball-up' || pt === 'out-of-bounds' || pt === 'out-on-full'
 
       // New chain when team changes, or after stoppages / turnovers
       if (clubId !== lastChainClubId || isChainBreaker) {
+        const teamChanged = lastChainClubId !== '' && clubId !== lastChainClubId
         chainId++
         lastChainClubId = clubId
-        if (pt === 'clearance' || pt === 'ball-up') {
-          // Stoppages restart from roughly the same zone or midfield
-          currentZone = pt === 'clearance' ? 'midfield' : currentZone
-        } else {
-          currentZone = chainStartZone(displayRng)
+        if (pt === 'clearance') {
+          currentZone = 'midfield'
+        } else if (teamChanged) {
+          // Turnover / throw-in / free kick — mirror the zone so the ball stays
+          // at the same physical location from the new team's perspective.
+          currentZone = ZONE_MIRROR[currentZone]
         }
       } else {
         currentZone = advanceZone(displayRng, currentZone, pt)
@@ -739,12 +772,13 @@ export function generateQuarterTicks(
         zone: currentZone,
         possessionType: pt,
         clubId,
-        playerName: name,
+        playerId: picked.id,
+        playerName: picked.name,
         homeScore: homeTotal,
         awayScore: awayTotal,
         isStoppage: isStoppageType,
         stoppageType: isStoppageType ? 'ball-up' : undefined,
-        commentary: pickCommentary(displayRng, pt, name, currentZone),
+        commentary: pickCommentary(displayRng, pt, picked.name, currentZone),
         chainId,
       })
     }

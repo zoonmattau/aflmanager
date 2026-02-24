@@ -42,6 +42,8 @@ interface Props {
   onSlidersChange: (sliders: GameplanSliders) => void
   /** When true, hide collapse toggle and Match Stats tab; show Bench + Gameplan stacked. */
   embedded?: boolean
+  /** Compact mode for command-center sidebar — tighter spacing, single-line sliders, stacked sections. */
+  compact?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +89,7 @@ export function BenchTacticsPanel({
   pendingSliders,
   onSlidersChange,
   embedded = false,
+  compact = false,
 }: Props) {
   const [open, setOpen] = useState(true)
   const [tab, setTab] = useState<'bench' | 'gameplan' | 'stats'>('bench')
@@ -155,6 +158,128 @@ export function BenchTacticsPanel({
   ]
 
   const hasPendingChanges = queuedRotations.length > 0 || !!pendingSliders
+
+  // Compact mode: tighter layout for command-center sidebar (260px)
+  if (compact) {
+    return (
+      <div className="space-y-3">
+        {/* ── GAMEPLAN SLIDERS (compact) ── */}
+        <div className="space-y-1.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Gameplan</div>
+          {SLIDERS.map(({ key, label, lo, hi }) => (
+            <div key={key}>
+              <div className="flex items-center justify-between text-[10px] mb-0.5">
+                <span className="font-medium">{label}</span>
+                <span className="tabular-nums text-muted-foreground">{localSliders[key]}</span>
+              </div>
+              <Slider
+                min={0}
+                max={100}
+                step={5}
+                value={[localSliders[key]]}
+                onValueChange={([v]) => {
+                  const updated = { ...localSliders, [key]: v ?? 50 }
+                  setLocalSliders(updated)
+                  onSlidersChange(updated)
+                }}
+              />
+              <div className="flex justify-between text-[8px] text-muted-foreground -mt-0.5">
+                <span>{lo}</span>
+                <span>{hi}</span>
+              </div>
+            </div>
+          ))}
+          {pendingSliders && (
+            <Badge variant="secondary" className="text-[9px]">
+              Changes queued
+            </Badge>
+          )}
+        </div>
+
+        {/* ── QUEUED ROTATIONS (compact) ── */}
+        {queuedRotations.length > 0 && (
+          <div className="space-y-1">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Queued Rotations</div>
+            {queuedRotations.map((r, i) => {
+              const onP = players[r.onId]
+              const offP = players[r.offId]
+              return (
+                <div
+                  key={i}
+                  className="flex items-center gap-1.5 rounded border border-dashed border-primary/40 bg-primary/5 px-1.5 py-0.5 text-[10px]"
+                >
+                  <span className="text-green-500 font-medium truncate">
+                    {onP ? `${onP.firstName[0]}. ${onP.lastName}` : r.onId}
+                  </span>
+                  <ArrowLeftRight className="h-2.5 w-2.5 shrink-0 text-muted-foreground" />
+                  <span className="text-red-500 font-medium truncate">
+                    {offP ? `${offP.firstName[0]}. ${offP.lastName}` : r.offId}
+                  </span>
+                  <button
+                    type="button"
+                    className="ml-auto text-muted-foreground hover:text-foreground shrink-0"
+                    onClick={() => onCancelRotation(i)}
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* ── BENCH ROTATION PICKER (compact) ── */}
+        <div className="space-y-1">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Bench Rotations
+          </div>
+          {benchPlayerIds.length === 0 ? (
+            <p className="text-[10px] text-muted-foreground italic">All on field</p>
+          ) : (
+            <div className="flex flex-wrap gap-1">
+              {benchPlayerIds.map((id) => {
+                const p = players[id]
+                if (!p) return null
+                const selected = subOnId === id
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setSubOnId(selected ? null : id)}
+                    className={`rounded border px-1.5 py-0.5 text-[10px] font-medium transition-colors ${
+                      selected
+                        ? 'border-primary bg-primary/10 text-foreground'
+                        : 'border-border text-muted-foreground hover:border-primary/50 hover:text-foreground'
+                    }`}
+                  >
+                    {p.firstName[0]}. {p.lastName}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          {subOnId && (
+            <div className="flex flex-wrap gap-1 mt-1">
+              <div className="text-[9px] text-amber-500 font-medium w-full mb-0.5">Tap to bring off:</div>
+              {onFieldPlayers.slice(0, 10).map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    onQueueRotation(subOnId, p.id)
+                    setSubOnId(null)
+                  }}
+                  className="rounded border border-amber-500/50 bg-amber-500/5 px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:border-amber-500 hover:bg-amber-500/15 transition-colors"
+                >
+                  {p.firstName[0]}. {p.lastName}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   // In embedded mode, render Bench + Gameplan stacked with no chrome
   if (embedded) {

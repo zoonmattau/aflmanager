@@ -10,8 +10,8 @@ import { useState, useMemo } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-  MapPin, Wind, Cloud, Droplets, Thermometer, Play,
-  Trophy, TrendingUp, TrendingDown, Minus, RefreshCw,
+  MapPin, Wind, Play,
+  RefreshCw,
 } from 'lucide-react'
 import type { Club } from '@/types/club'
 import type { Player } from '@/types/player'
@@ -59,23 +59,6 @@ export interface PreGameScreenProps {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function _weatherLabel(cond: string): string {
-  const m: Record<string, string> = {
-    clear: 'Clear', windy: 'Windy', wet: 'Wet', hot: 'Hot', humid: 'Humid',
-  }
-  return m[cond] ?? cond
-}
-
-function _weatherIcon(condition: string) {
-  switch (condition) {
-    case 'wet':   return <Droplets className="h-3.5 w-3.5" />
-    case 'windy': return <Wind className="h-3.5 w-3.5" />
-    case 'hot':   return <Thermometer className="h-3.5 w-3.5" />
-    case 'humid': return <Droplets className="h-3.5 w-3.5 opacity-60" />
-    default:      return <Cloud className="h-3.5 w-3.5" />
-  }
-}
 
 function playerShortName(p: Player) {
   return `${p.firstName[0]}. ${p.lastName}`
@@ -386,77 +369,6 @@ function CoinToss({
 }
 
 // ---------------------------------------------------------------------------
-// H2H summary
-// ---------------------------------------------------------------------------
-
-function _H2HSummary({
-  homeClubId, awayClubId, h2hRecords, clubs,
-}: {
-  homeClubId: string
-  awayClubId: string
-  h2hRecords: Record<string, H2HRecord>
-  clubs: Record<string, Club>
-}) {
-  const key = h2hKey(homeClubId, awayClubId)
-  const rec = h2hRecords[key]
-
-  if (!rec) {
-    return (
-      <div className="text-[11px] text-muted-foreground italic">No previous meetings recorded.</div>
-    )
-  }
-
-  const homeAbbr = clubs[homeClubId]?.abbreviation ?? 'HOM'
-  const awayAbbr = clubs[awayClubId]?.abbreviation ?? 'AWY'
-
-  // Determine wins from the club perspective
-  const homeIsId0 = rec.clubId0 === homeClubId
-  const homeWins = homeIsId0 ? rec.wins0 : rec.wins1
-  const awayWins = homeIsId0 ? rec.wins1 : rec.wins0
-  const total = homeWins + awayWins + rec.draws
-
-  const streak = rec.streak
-    ? `${clubs[rec.streak.clubId]?.abbreviation ?? rec.streak.clubId} W${rec.streak.length}`
-    : null
-
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center gap-3 text-[12px]">
-        <span className="font-bold tabular-nums" style={{ color: clubs[homeClubId]?.colors.primary }}>
-          {homeWins}
-        </span>
-        <span className="text-muted-foreground text-[10px] flex-1 text-center">
-          wins  (of {total} meetings)
-        </span>
-        <span className="font-bold tabular-nums" style={{ color: clubs[awayClubId]?.colors.primary }}>
-          {awayWins}
-        </span>
-      </div>
-      <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-        <span>{homeAbbr}</span>
-        {rec.draws > 0 && <span>{rec.draws} draws</span>}
-        <span>{awayAbbr}</span>
-      </div>
-      {streak && (
-        <div className="text-[10px] text-muted-foreground">
-          Current streak: <span className="font-semibold text-foreground">{streak}</span>
-        </div>
-      )}
-      {rec.lastMeeting && (
-        <div className="text-[10px] text-muted-foreground">
-          Last meeting: {rec.lastMeeting.score0 > rec.lastMeeting.score1
-            ? `${clubs[rec.clubId0]?.abbreviation} won`
-            : rec.lastMeeting.score1 > rec.lastMeeting.score0
-              ? `${clubs[rec.clubId1]?.abbreviation} won`
-              : 'Draw'
-          } — {rec.lastMeeting.score0}–{rec.lastMeeting.score1} (Yr {rec.lastMeeting.year}, R{rec.lastMeeting.round})
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -528,6 +440,19 @@ export function PreGameScreen({
 
   return (
     <div className="space-y-2">
+
+      {/* Skip pre-game button — top right */}
+      <div className="flex justify-end">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-xs text-muted-foreground hover:text-foreground gap-1"
+          onClick={handleQuickKickOff}
+        >
+          Skip to match
+          <Play className="h-3 w-3" />
+        </Button>
+      </div>
 
       {/* Compact header: Home — vs / Rd / Venue — Away */}
       <div className="flex items-center gap-2">

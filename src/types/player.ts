@@ -337,7 +337,11 @@ export interface PlayerCareerStats {
   bounces: number
   clangers: number
   goalAssists: number
+  zonePossessions?: Partial<Record<import('@/types/matchTick').FieldZone, number>>
 }
+
+/** Keys of PlayerCareerStats that are guaranteed to be `number` (excludes zonePossessions). */
+export type NumericCareerStatKey = Exclude<keyof PlayerCareerStats, 'zonePossessions'>
 
 export interface MoraleFactors {
   teamSuccess: number

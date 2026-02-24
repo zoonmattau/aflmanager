@@ -41,6 +41,10 @@ export interface LiveStatsDashboardProps {
   players: Record<string, Player>
   /** When provided, hide internal tab bar and render only this view. */
   activeView?: 'match' | 'players'
+  /** All ticks for the current quarter — used to compute live team totals from revealed ticks. */
+  ticks?: import('@/types/matchTick').MatchTick[]
+  /** Home club ID — needed to split tick stats by team. */
+  homeClubId?: string
 }
 
 // Flat team-total shape used for the stat bars
@@ -86,6 +90,90 @@ function sumStats(arr: MatchPlayerStats[]): TeamTotals {
     z.metresGained         += s.metresGained
   }
   return z
+}
+
+/**
+ * Compute team totals from revealed ticks only — ensures stats update live
+ * and match what the player leaders panel shows.
+ *
+ * Stats directly derivable from ticks: disposals, kicks (implicit in disposals),
+ * marks, tackles, goals, behinds, clearances.
+ *
+ * Stats that can't be accurately derived from ticks (hitouts, contested possessions,
+ * rebound 50s, inside 50s, intercepts, turnovers, metres gained) use interpolated values.
+ */
+function teamTotalsFromTicks(
+  ticks: import('@/types/matchTick').MatchTick[],
+  displayTickIndex: number,
+  homeClubId: string,
+  interpolatedHome: TeamTotals,
+  interpolatedAway: TeamTotals,
+): { home: TeamTotals; away: TeamTotals } {
+  const home: TeamTotals = {
+    disposals: 0, marks: 0, tackles: 0, goals: 0, behinds: 0,
+    clearances: 0,
+    // These stats require engine-internal logic and fall back to interpolation
+    hitouts: interpolatedHome.hitouts,
+    insideFifties: interpolatedHome.insideFifties,
+    rebound50s: interpolatedHome.rebound50s,
+    contestedPossessions: interpolatedHome.contestedPossessions,
+    turnovers: interpolatedHome.turnovers,
+    intercepts: interpolatedHome.intercepts,
+    metresGained: interpolatedHome.metresGained,
+  }
+  const away: TeamTotals = {
+    disposals: 0, marks: 0, tackles: 0, goals: 0, behinds: 0,
+    clearances: 0,
+    hitouts: interpolatedAway.hitouts,
+    insideFifties: interpolatedAway.insideFifties,
+    rebound50s: interpolatedAway.rebound50s,
+    contestedPossessions: interpolatedAway.contestedPossessions,
+    turnovers: interpolatedAway.turnovers,
+    intercepts: interpolatedAway.intercepts,
+    metresGained: interpolatedAway.metresGained,
+  }
+
+  for (let i = 0; i < displayTickIndex; i++) {
+    const tick = ticks[i]
+    if (!tick) continue
+    const isHome = tick.clubId === homeClubId
+    const t = isHome ? home : away
+    const pt = tick.possessionType
+
+    switch (pt) {
+      case 'kick':
+        t.disposals++
+        break
+      case 'handball':
+        t.disposals++
+        break
+      case 'out-on-full':
+        // Counts as a kick disposal (failed kick)
+        t.disposals++
+        break
+      case 'clearance':
+        // Clearance is also a disposal (kick or handball to exit congestion)
+        t.disposals++
+        t.clearances++
+        break
+      case 'mark':
+        t.marks++
+        break
+      case 'tackle':
+        t.tackles++
+        break
+      case 'goal':
+        t.goals++
+        break
+      case 'behind':
+        t.behinds++
+        break
+      default:
+        break
+    }
+  }
+
+  return { home, away }
 }
 
 /**
@@ -398,6 +486,8 @@ export function LiveStatsDashboard({
   awayAbbr,
   players,
   activeView,
+  ticks: ticksProp,
+  homeClubId,
 }: LiveStatsDashboardProps) {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<ActiveTab>('match')
@@ -408,7 +498,7 @@ export function LiveStatsDashboard({
   // How far through the current quarter's tick sequence (0–1)
   const liveFraction = displayTickIndex / Math.max(1, totalTicks)
 
-  // Interpolated live player stats for both teams
+  // Interpolated live player stats for both teams (used for player tab + fallback stats)
   const homeLive = useMemo(
     () => computeLiveStats(quarterSnapshots, liveQuarter, liveFraction, true),
     [quarterSnapshots, liveQuarter, liveFraction],
@@ -418,8 +508,17 @@ export function LiveStatsDashboard({
     [quarterSnapshots, liveQuarter, liveFraction],
   )
 
-  const homeTeam = useMemo(() => sumStats(homeLive), [homeLive])
-  const awayTeam = useMemo(() => sumStats(awayLive), [awayLive])
+  // Interpolated team totals (used as fallback for stats not derivable from ticks)
+  const homeInterp = useMemo(() => sumStats(homeLive), [homeLive])
+  const awayInterp = useMemo(() => sumStats(awayLive), [awayLive])
+
+  // Tick-based team totals: accurate real-time stats matching revealed action
+  const { home: homeTeam, away: awayTeam } = useMemo(() => {
+    if (ticksProp && homeClubId) {
+      return teamTotalsFromTicks(ticksProp, displayTickIndex, homeClubId, homeInterp, awayInterp)
+    }
+    return { home: homeInterp, away: awayInterp }
+  }, [ticksProp, displayTickIndex, homeClubId, homeInterp, awayInterp])
 
   // Total match time elapsed (minutes)
   const totalMatchMinutes = (liveQuarter - 1) * 30 + liveMinute

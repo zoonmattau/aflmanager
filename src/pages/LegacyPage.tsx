@@ -9,7 +9,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Trophy,
   Star,
-  TrendingUp,
   Target,
   Clock,
   CheckCircle2,

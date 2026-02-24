@@ -7,7 +7,6 @@ import type {
   FinalPosition,
   ChallengeTemplate,
   ActiveChallenge,
-  ChallengeId,
 } from '@/types/legacy'
 import type { CareerObjective } from '@/types/achievements'
 
@@ -269,8 +268,6 @@ export function escalateBoardExpectation(
 ): BoardExpectation {
   if (history.length === 0) return prev
 
-  const lastN = (n: number) => history.slice(-n)
-  const allMet = (n: number) => lastN(n).every((e) => e.boardMet)
   const finalsStreak = countTrailingFinals(history)
   const top4Streak = countTrailingTop4(history)
   const gfStreak = countTrailingGF(history)

@@ -17,14 +17,14 @@ import { getBrownlowLeaderboard, getColemanLeaderboard } from '@/engine/awards/a
 import { getEffectiveFinalsFormat, hasTopFourDoubleChanceAdvantage, getFinalsZones } from '@/engine/season/finalsFormats'
 import { labelLadderQualification, computeQualificationRules } from '@/engine/season/finalsQualification'
 import { sortLadderEntries } from '@/engine/season/ladderSorting'
-import type { PlayerCareerStats } from '@/types/player'
+import type { NumericCareerStatKey } from '@/types/player'
 import { Trophy, Medal, Star, Lock } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { getPlayerStarRating } from '@/engine/player/playerRating'
 import { PlayerStarRating } from '@/components/player/PlayerStarRating'
 
-const LEADER_STATS: { key: keyof PlayerCareerStats; label: string }[] = [
+const LEADER_STATS: { key: NumericCareerStatKey; label: string }[] = [
   { key: 'gamesPlayed', label: 'Games' },
   { key: 'aflFantasyPoints', label: 'AFL Fantasy' },
   { key: 'superCoachPoints', label: 'SuperCoach' },
@@ -80,7 +80,7 @@ function CareerLeadersTable({
   players,
   clubs,
 }: {
-  stat: keyof PlayerCareerStats
+  stat: NumericCareerStatKey
   label: string
   players: Record<string, import('@/types/player').Player>
   clubs: Record<string, { name: string; abbreviation: string }>
@@ -178,7 +178,7 @@ export function LadderPage() {
   )
   const seasonLeaders = useMemo(() => {
     const pool = Object.values(players).filter((p) => p.seasonStats.gamesPlayed > 0)
-    const by = (key: keyof PlayerCareerStats) =>
+    const by = (key: NumericCareerStatKey) =>
       [...pool]
         .sort((a, b) => b.seasonStats[key] - a.seasonStats[key])
         .slice(0, 5)

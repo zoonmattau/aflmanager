@@ -31,6 +31,8 @@ export interface LiveInterchangePanelProps {
   interchangeCount: number
   /** Called with the two slot IDs that should be swapped. */
   onInterchange: (slotA: string, slotB: string) => void
+  /** When true, render ONLY the bench badge strip — no mini-field. */
+  compact?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -43,6 +45,7 @@ export function LiveInterchangePanel({
   club,
   interchangeCount,
   onInterchange,
+  compact = false,
 }: LiveInterchangePanelProps) {
   const [dragging, setDragging] = useState<{ slot: string; playerId: string } | null>(null)
   const [dragOverSlot, setDragOverSlot] = useState<string | null>(null)
@@ -137,6 +140,23 @@ export function LiveInterchangePanel({
         {!compact && (
           <div style={{ fontSize: 6, lineHeight: 1, opacity: 0.55 }}>{slot}</div>
         )}
+      </div>
+    )
+  }
+
+  if (compact) {
+    return (
+      <div
+        className="flex flex-wrap items-center gap-1 rounded border border-border/50 bg-muted/20 px-2 py-1.5"
+        onDragOver={(e) => e.preventDefault()}
+      >
+        <span className="text-[9px] text-muted-foreground self-center mr-1 uppercase tracking-wide">
+          Bench
+        </span>
+        {activeBenchSlots.map((slot) => (
+          <PlayerBadge key={slot} slot={slot} />
+        ))}
+        <span className="text-[8px] text-muted-foreground ml-auto">Drag to field</span>
       </div>
     )
   }

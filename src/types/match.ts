@@ -39,6 +39,7 @@ export interface MatchPlayerStats {
   clangers: number
   goalAssists: number
   matchRating?: number
+  zonePossessions?: Partial<Record<import('@/types/matchTick').FieldZone, number>>
 }
 
 export interface MatchKeyEvent {

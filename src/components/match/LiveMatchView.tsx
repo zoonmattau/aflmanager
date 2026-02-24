@@ -1,9 +1,11 @@
-import { useCallback, useRef, useState, useMemo } from 'react'
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { TacticalTimeoutPanel } from '@/components/match/TacticalTimeoutPanel'
-import { LiveScoreboard, type PlaybackSpeed } from '@/components/match/LiveScoreboard'
+import { type PlaybackSpeed } from '@/components/match/LiveScoreboard'
+import { CompactScoreBar } from '@/components/match/CompactScoreBar'
+import { PlayerLeadersMini } from '@/components/match/PlayerLeadersMini'
 import { CommentaryFeed } from '@/components/match/CommentaryFeed'
 import { InjuryStoppagePanel } from '@/components/match/InjuryStoppagePanel'
 import { SpeechSystem } from '@/components/matchviewer/SpeechSystem'
@@ -43,6 +45,7 @@ import type {
 import type { WeeklyMatchupTactics } from '@/types/game'
 import type { SpeechTone, SpeechEffect, SpeechDelivery } from '@/engine/coach/speechEngine'
 import { LiveFieldView, type FieldInstruction, type PlayPhase } from '@/components/match/LiveFieldView'
+import { usePreGameAnimation, type BannerAnchor } from '@/components/match/usePreGameAnimation'
 import { LiveInterchangePanel } from '@/components/match/LiveInterchangePanel'
 import { FIELD_SLOTS_LANDSCAPE } from '@/components/lineup/fieldConstants'
 import { PossessionChainView } from '@/components/match/PossessionChainView'
@@ -53,7 +56,7 @@ import { generateMatchWeather } from '@/engine/match/weatherEngine'
 import { venueHasRoof } from '@/data/venues'
 import type { MatchWeatherData } from '@/engine/match/weatherEngine'
 import type { H2HRecord } from '@/types/history'
-import { Play, ChevronRight, MapPin, Users, X, BarChart3, UserRound, Wrench, MessageSquare } from 'lucide-react'
+import { Play, ChevronRight, MapPin, Users, X } from 'lucide-react'
 import { BenchTacticsPanel, type QueuedRotation } from '@/components/match/BenchTacticsPanel'
 import { getOverallRating } from '@/engine/player/playerRating'
 import { VENUES } from '@/data/venues'
@@ -62,7 +65,7 @@ import { VENUES } from '@/data/venues'
 // Types
 // ---------------------------------------------------------------------------
 
-type MatchPhase = 'pre-match' | 'playing' | 'quarter-break' | 'complete'
+type MatchPhase = 'pre-match' | 'pre-game-anim' | 'playing' | 'quarter-break' | 'complete'
 
 type StoppageState =
   | null
@@ -229,6 +232,15 @@ const SPEED_MS: Record<PlaybackSpeed, number | null> = {
   fast: 100,
 }
 
+/** Mirror zone from attacking-team perspective to absolute visual coordinates.
+ *  The engine records zones relative to the possessing team (forward50 = their scoring end),
+ *  but the visual field is oriented to the user's perspective. When the opponent has the ball,
+ *  their forward50 is physically the user's back50 — so we mirror for correct visual placement. */
+const ZONE_VISUAL_MIRROR: Record<string, string> = {
+  back50: 'forward50', backHalf: 'forwardHalf', midfield: 'midfield',
+  forwardHalf: 'backHalf', forward50: 'back50',
+}
+
 export function LiveMatchView({
   simInput,
   userClubId,
@@ -269,6 +281,8 @@ export function LiveMatchView({
   // Tick playback refs (mutated at high frequency — not state)
   const ticksRef = useRef<MatchTick[]>([])
   const tickIndexRef = useRef(0)
+  // Cumulative goals/behinds from completed quarters (base for live derivation)
+  const baseGoalsRef = useRef({ homeGoals: 0, homeBehinds: 0, awayGoals: 0, awayBehinds: 0 })
 
   // React state
   const [phase, setPhase] = useState<MatchPhase>('pre-match')
@@ -294,9 +308,6 @@ export function LiveMatchView({
   // Live match tactical state — applied at the next quarter break via handleContinue
   const [queuedRotations, setQueuedRotations] = useState<QueuedRotation[]>([])
   const [pendingSliders, setPendingSliders] = useState<GameplanSliders | null>(null)
-  // Sidebar tab for the playing phase command panel
-  type SidebarTab = 'stats' | 'players' | 'tactics' | 'commentary'
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('stats')
   // Speech system state
   const [breakSubStage, setBreakSubStage] = useState<'speech' | 'strategy'>('speech')
   const [toneHistory, setToneHistory] = useState<Partial<Record<SpeechTone, number>>>({})
@@ -382,7 +393,8 @@ export function LiveMatchView({
   // Advance one tick
   // ---------------------------------------------------------------------------
 
-  const advanceTick = useCallback(() => {
+  /** Advance one tick (used by the interval timer during auto-play). */
+  const advanceOneTick = useCallback(() => {
     const ticks = ticksRef.current
     const idx = tickIndexRef.current
     if (idx >= ticks.length) {
@@ -397,9 +409,54 @@ export function LiveMatchView({
     setLiveMinute(tick.minute)
 
     if (tick.isStoppage && !spectatorMode) {
-      // Goal stoppages no longer trigger a decision panel — just let play continue.
       if (tick.stoppageType === 'injury' && tick.injuryPlayerId) {
         const inj = currentQInjuriesRef.current.find((i) => i.playerId === tick.injuryPlayerId)
+        if (inj && inj.clubId === userClubId) {
+          setStoppageState({ type: 'injury', injury: inj })
+        }
+      }
+    }
+  }, [handleQuarterComplete, userClubId])
+
+  /** Step button — advances to the next meaningful play.
+   *  Batches through centre bounce setup ticks (contest → clearance → exit)
+   *  so each click lands on a real possession or scoring event. */
+  const advanceTick = useCallback(() => {
+    const ticks = ticksRef.current
+    let idx = tickIndexRef.current
+    if (idx >= ticks.length) {
+      handleQuarterComplete()
+      return
+    }
+
+    // Always advance at least one tick
+    const firstTick = ticks[idx]
+    const startChainId = firstTick.chainId
+    idx++
+
+    // If we just consumed a centre bounce setup tick (contest/clearance at
+    // the start of a new chain), keep advancing through the rest of the
+    // bounce sequence so the user lands on the first real general-play tick.
+    const isBounceSetup = (pt: string) => pt === 'contest' || pt === 'clearance'
+    if (isBounceSetup(firstTick.possessionType)) {
+      while (idx < ticks.length) {
+        const next = ticks[idx]
+        // Stop if we've left the same chain or hit a non-bounce tick
+        if (next.chainId !== startChainId || !isBounceSetup(next.possessionType)) break
+        idx++
+      }
+    }
+
+    const finalTick = ticks[idx - 1]
+    tickIndexRef.current = idx
+    setDisplayTickIndex(idx)
+    setLiveHomeScore(finalTick.homeScore)
+    setLiveAwayScore(finalTick.awayScore)
+    setLiveMinute(finalTick.minute)
+
+    if (finalTick.isStoppage && !spectatorMode) {
+      if (finalTick.stoppageType === 'injury' && finalTick.injuryPlayerId) {
+        const inj = currentQInjuriesRef.current.find((i) => i.playerId === finalTick.injuryPlayerId)
         if (inj && inj.clubId === userClubId) {
           setStoppageState({ type: 'injury', injury: inj })
         }
@@ -431,7 +488,7 @@ export function LiveMatchView({
   useInterval(
     () => {
       if (stoppageState) return
-      advanceTick()
+      advanceOneTick()
     },
     phase === 'playing' ? SPEED_MS[speed] : null,
   )
@@ -456,10 +513,14 @@ export function LiveMatchView({
 
     // Cumulative score at start of this quarter (for initial display)
     let homeStartTotal = 0, awayStartTotal = 0
+    let hg = 0, hb = 0, ag = 0, ab = 0
     for (let q = 0; q < quarterIndex; q++) {
       homeStartTotal += ctx.homeScores[q].total
       awayStartTotal += ctx.awayScores[q].total
+      hg += ctx.homeScores[q].goals; hb += ctx.homeScores[q].behinds
+      ag += ctx.awayScores[q].goals; ab += ctx.awayScores[q].behinds
     }
+    baseGoalsRef.current = { homeGoals: hg, homeBehinds: hb, awayGoals: ag, awayBehinds: ab }
 
     ticksRef.current = ticks
     tickIndexRef.current = 0
@@ -498,8 +559,46 @@ export function LiveMatchView({
     currentQInjuriesRef.current = []
     // Seed BenchTacticsPanel's queue with any rotations planned in the Strategy tab
     setQueuedRotations(plannedRotations)
+    // Transition to pre-game animation instead of directly starting Q1
+    setPhase('pre-game-anim')
+  }, [simInput, preMatchGameplan, userClubId, plannedRotations])
+
+  // ---------------------------------------------------------------------------
+  // Pre-game animation complete — start Q1
+  // ---------------------------------------------------------------------------
+
+  const handleAnimComplete = useCallback(() => {
     beginQuarter(0)
-  }, [simInput, beginQuarter, preMatchGameplan, userClubId, plannedRotations])
+  }, [beginQuarter])
+
+  // Pre-game animation hook
+  const isImportantMatch = !!(simInput.isFinal || simInput.isBlockbuster || simInput.isRivalry)
+  const fieldSlotNames = useMemo(() => new Set(FIELD_SLOTS_LANDSCAPE.map((f) => f.slot as string)), [])
+  const preGameUserSlots = useMemo(() => {
+    const isHome = userClubId === simInput.homeClubId
+    const lineup = isHome
+      ? (homeSlotLineup ?? simInput.homeLineupSlots ?? {})
+      : (awaySlotLineup ?? simInput.awayLineupSlots ?? {})
+    return Object.keys(lineup).filter((s) => fieldSlotNames.has(s))
+  }, [userClubId, simInput.homeClubId, homeSlotLineup, awaySlotLineup, simInput.homeLineupSlots, simInput.awayLineupSlots, fieldSlotNames])
+  const preGameOppSlots = useMemo(() => {
+    const isHome = userClubId === simInput.homeClubId
+    const lineup = isHome
+      ? (awaySlotLineup ?? simInput.awayLineupSlots ?? {})
+      : (homeSlotLineup ?? simInput.homeLineupSlots ?? {})
+    return Object.keys(lineup).filter((s) => fieldSlotNames.has(s))
+  }, [userClubId, simInput.homeClubId, homeSlotLineup, awaySlotLineup, simInput.homeLineupSlots, simInput.awayLineupSlots, fieldSlotNames])
+  const preGameAnim = usePreGameAnimation({
+    active: phase === 'pre-game-anim',
+    isImportant: isImportantMatch,
+    userSlots: preGameUserSlots,
+    opponentSlots: preGameOppSlots,
+    onComplete: handleAnimComplete,
+  })
+
+  const handleSkipAnimation = useCallback(() => {
+    beginQuarter(0)
+  }, [beginQuarter])
 
   // ---------------------------------------------------------------------------
   // Quarter-break: continue
@@ -548,6 +647,19 @@ export function LiveMatchView({
     finalMatchRef.current = null
     if (match) onComplete(match)
   }, [onComplete])
+
+  // Save finalized match if the user navigates away before clicking "Continue"
+  const onCompleteRef = useRef(onComplete)
+  onCompleteRef.current = onComplete
+  useEffect(() => {
+    return () => {
+      const match = finalMatchRef.current
+      if (match) {
+        finalMatchRef.current = null
+        onCompleteRef.current(match)
+      }
+    }
+  }, [])
 
   // ---------------------------------------------------------------------------
   // Quarter-break decisions
@@ -651,6 +763,65 @@ export function LiveMatchView({
     [baseUserSlotLineup, liveLineupOverrides],
   )
 
+  // Live stat map — single source of truth built from revealed ticks.
+  // Used by both the spectator stat popup AND the player leaders card.
+  const livePlayerStats = useMemo(() => {
+    const map: Record<string, MatchPlayerStats> = {}
+    const tks = ticksRef.current
+    function ensure(pid: string) {
+      if (!map[pid]) {
+        map[pid] = {
+          playerId: pid, participated: true, minutesPlayed: 0,
+          aflFantasyPoints: 0, superCoachPoints: 0,
+          disposals: 0, kicks: 0, handballs: 0, marks: 0, tackles: 0,
+          goals: 0, behinds: 0, hitouts: 0,
+          contestedPossessions: 0, uncontestedPossessions: 0, clearances: 0,
+          insideFifties: 0, rebound50s: 0, freesFor: 0, freesAgainst: 0,
+          contestedMarks: 0, scoreInvolvements: 0, metresGained: 0,
+          turnovers: 0, intercepts: 0, onePercenters: 0, bounces: 0,
+          clangers: 0, goalAssists: 0,
+        }
+      }
+      return map[pid]
+    }
+    for (let i = 0; i < displayTickIndex; i++) {
+      const t = tks[i]
+      if (!t?.playerId) continue
+      const s = ensure(t.playerId)
+      const pt = t.possessionType
+      if (pt === 'kick' || pt === 'clearance' || pt === 'out-on-full') { s.kicks++; s.disposals++ }
+      if (pt === 'handball') { s.handballs++; s.disposals++ }
+      if (pt === 'mark') s.marks++
+      if (pt === 'tackle') s.tackles++
+      if (pt === 'goal') s.goals++
+      if (pt === 'behind') s.behinds++
+      if (pt === 'clearance') s.clearances++
+      if (pt === 'contest') s.contestedPossessions++
+      if (pt === 'free-for') s.freesFor++
+      if (pt === 'spoil') s.onePercenters++
+      if (t.goalPlayerId && t.goalPlayerId !== t.playerId) {
+        ensure(t.goalPlayerId).goals++
+      }
+    }
+    return map
+  }, [displayTickIndex])
+
+  // Live goals/behinds — derived from base (completed quarters) + current quarter's revealed ticks.
+  const { liveHomeGoals, liveHomeBehinds, liveAwayGoals, liveAwayBehinds } = useMemo(() => {
+    const base = baseGoalsRef.current
+    let hg = base.homeGoals, hb = base.homeBehinds, ag = base.awayGoals, ab = base.awayBehinds
+    const tks = ticksRef.current
+    for (let i = 0; i < displayTickIndex; i++) {
+      const t = tks[i]
+      if (t.possessionType === 'goal') {
+        if (t.clubId === simInput.homeClubId) hg++; else ag++
+      } else if (t.possessionType === 'behind') {
+        if (t.clubId === simInput.homeClubId) hb++; else ab++
+      }
+    }
+    return { liveHomeGoals: hg, liveHomeBehinds: hb, liveAwayGoals: ag, liveAwayBehinds: ab }
+  }, [displayTickIndex, simInput.homeClubId])
+
   // Handle drag-drop interchange from LiveInterchangePanel
   const handleInterchange = useCallback((slotA: string, slotB: string) => {
     const playerA = userSlotLineup[slotA]
@@ -695,7 +866,10 @@ export function LiveMatchView({
   const livePlayPhase: PlayPhase = (() => {
     if (!latestChainTick) return 'midfield'
     const { possessionType, zone, clubId } = latestChainTick
-    if (possessionType === 'clearance' || possessionType === 'ball-up') return 'stoppage'
+    // Contested actions → stoppage phase so players converge on the ball
+    if (possessionType === 'clearance' || possessionType === 'ball-up'
+      || possessionType === 'tackle' || possessionType === 'contest'
+      || possessionType === 'spoil') return 'stoppage'
     const isUserPossession = clubId === userClubId
     if (zone === 'forward50' || zone === 'forwardHalf') {
       return isUserPossession ? 'attack' : 'defense'
@@ -777,6 +951,10 @@ export function LiveMatchView({
   // ---------------------------------------------------------------------------
 
   function renderScoreHeader(labelBadge: React.ReactNode) {
+    const hg = breakDisplay.homeScores.reduce((s, q) => s + q.goals, 0)
+    const hb = breakDisplay.homeScores.reduce((s, q) => s + q.behinds, 0)
+    const ag = breakDisplay.awayScores.reduce((s, q) => s + q.goals, 0)
+    const ab = breakDisplay.awayScores.reduce((s, q) => s + q.behinds, 0)
     return (
       <div className="rounded-md border p-4 text-center">
         <div className="flex items-center justify-center gap-6">
@@ -786,7 +964,11 @@ export function LiveMatchView({
           </div>
           <div>
             <div className="text-3xl font-bold tabular-nums">
-              {breakDisplay.homeTotalScore} – {breakDisplay.awayTotalScore}
+              <span className="text-lg font-medium text-muted-foreground">{hg}.{hb}.</span>
+              {breakDisplay.homeTotalScore}
+              <span className="text-muted-foreground mx-2">–</span>
+              <span className="text-lg font-medium text-muted-foreground">{ag}.{ab}.</span>
+              {breakDisplay.awayTotalScore}
             </div>
             {labelBadge}
           </div>
@@ -824,6 +1006,353 @@ export function LiveMatchView({
   // Render
   // ---------------------------------------------------------------------------
 
+  // ---------------------------------------------------------------------------
+  // Pre-game animation phase — full-bleed field with overlay labels
+  // ---------------------------------------------------------------------------
+
+  if (phase === 'pre-game-anim') {
+    return (
+      <div className="flex flex-col h-[calc(100vh-7rem)]">
+        {/* Compact score bar showing 0-0 */}
+        <CompactScoreBar
+          homeAbbr={homeAbbr}
+          awayAbbr={awayAbbr}
+          homeColor={homeColor}
+          awayColor={awayColor}
+          homeScore={0}
+          awayScore={0}
+          homeGoals={0}
+          homeBehinds={0}
+          awayGoals={0}
+          awayBehinds={0}
+          quarter={1}
+          minute={0}
+          speed="paused"
+          onSpeedChange={() => {}}
+          onSkip={() => {}}
+          onStep={() => {}}
+        />
+
+        {/* Field with animation overrides */}
+        <div className="flex-1 min-h-0 relative mt-1.5">
+          <LiveFieldView
+            userSlotLineup={userSlotLineup}
+            opponentSlotLineup={opponentSlotLineup}
+            players={simInput.players}
+            userClub={userIsHome ? homeClub : awayClub}
+            opponentClub={userIsHome ? awayClub : homeClub}
+            userClubId={userClubId}
+            userGameplan={null}
+            userMatchupTactics={null}
+            matchPhase="pre-match"
+            quartersCompleted={0}
+            recentKeyEvents={[]}
+            paused={false}
+            teamAttacksRight
+            onInstruction={() => {}}
+            animTargetOverrides={preGameAnim.targetOverrides}
+          />
+
+          {/* Coloured paper banners at the 50m/boundary intersections */}
+          {preGameAnim.bannerAnchors && preGameAnim.bannerAnchors.map((anchor: BannerAnchor) => {
+            const color = anchor.side === 'user'
+              ? (userIsHome ? homeColor : awayColor)
+              : (userIsHome ? awayColor : homeColor)
+            // Tear effect: as progress advances past ~60%, banner starts to fade/tear
+            const tearProgress = Math.max(0, (preGameAnim.progress - 0.5) / 0.5)
+            const opacity = 1 - tearProgress * 0.8
+            return (
+              <div
+                key={anchor.side}
+                className="absolute pointer-events-none z-15"
+                style={{
+                  left: `${anchor.left}%`,
+                  top: `${anchor.top}%`,
+                  transform: 'translate(-50%, -50%)',
+                }}
+              >
+                {/* Banner strip — vertical ribbon across the boundary */}
+                <div
+                  style={{
+                    width: 6,
+                    height: 48,
+                    backgroundColor: color,
+                    borderRadius: 3,
+                    opacity,
+                    boxShadow: `0 0 12px ${color}80, 0 0 24px ${color}40`,
+                    transition: 'opacity 0.3s ease-out',
+                  }}
+                />
+                {/* Secondary colour accent stripe */}
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 4,
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    width: 2,
+                    height: 40,
+                    backgroundColor: '#ffffff',
+                    borderRadius: 1,
+                    opacity: opacity * 0.6,
+                  }}
+                />
+              </div>
+            )
+          })}
+
+          {/* Phase label overlay */}
+          {preGameAnim.phaseLabel && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+              <div className="bg-black/70 backdrop-blur-sm rounded-lg px-6 py-3 text-center">
+                <div className="text-white text-sm font-bold tracking-widest uppercase">
+                  {preGameAnim.phaseLabel}
+                </div>
+                {/* Progress bar */}
+                <div className="mt-2 h-0.5 w-32 mx-auto rounded-full bg-white/20 overflow-hidden">
+                  <div
+                    className="h-full bg-white/80 rounded-full transition-all duration-100"
+                    style={{ width: `${preGameAnim.progress * 100}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Skip button */}
+          <div className="absolute bottom-4 right-4 z-30">
+            <Button
+              variant="secondary"
+              size="sm"
+              className="gap-1.5 opacity-80 hover:opacity-100"
+              onClick={handleSkipAnimation}
+            >
+              Skip
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+  // Playing phase uses a full-bleed command center layout (no Card wrapper).
+  // ---------------------------------------------------------------------------
+
+  if (phase === 'playing') {
+    return (
+      <div className="flex flex-col h-[calc(100vh-7rem)]">
+        {/* Compact score bar */}
+        <CompactScoreBar
+          homeAbbr={homeAbbr}
+          awayAbbr={awayAbbr}
+          homeColor={homeColor}
+          awayColor={awayColor}
+          homeScore={liveHomeScore}
+          awayScore={liveAwayScore}
+          homeGoals={liveHomeGoals}
+          homeBehinds={liveHomeBehinds}
+          awayGoals={liveAwayGoals}
+          awayBehinds={liveAwayBehinds}
+          quarter={liveQuarter}
+          minute={liveMinute}
+          speed={stoppageState ? 'paused' : speed}
+          onSpeedChange={(s) => {
+            setSpeed(s)
+            if (stoppageState) setStoppageState(null)
+          }}
+          onSkip={skipToQuarterEnd}
+          onStep={advanceTick}
+        />
+
+        {/* Injury stoppage overlay */}
+        {!spectatorMode && stoppageState?.type === 'injury' && (
+          <InjuryStoppagePanel
+            injury={stoppageState.injury}
+            subName={subName}
+            subActivated={isSubActivated}
+            onActivateSub={handleActivateSub}
+            onContinue={handleStoppageContinue}
+          />
+        )}
+
+        {/* ── 3-column command center grid ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr_260px] gap-1.5 flex-1 min-h-0 mt-1.5">
+
+          {/* ═══ LEFT PANEL: Team Stats ═══ */}
+          <div className="rounded-md border bg-card overflow-y-auto p-2 hidden lg:block" style={{ maxHeight: 'calc(100vh - 10rem)' }}>
+            <LiveStatsDashboard
+              ctx={ctxRef.current}
+              liveQuarter={liveQuarter}
+              liveMinute={liveMinute}
+              displayTickIndex={displayTickIndex}
+              totalTicks={ticksRef.current.length}
+              quarterSnapshots={snapshots}
+              homeClub={homeClub}
+              awayClub={awayClub}
+              homeColor={homeColor}
+              awayColor={awayColor}
+              homeAbbr={homeAbbr}
+              awayAbbr={awayAbbr}
+              userClubId={userClubId}
+              players={simInput.players}
+              activeView="match"
+              ticks={ticksRef.current}
+              homeClubId={simInput.homeClubId}
+            />
+          </div>
+
+          {/* ═══ CENTER PANEL: Field + Chain + Interchange ═══ */}
+          <div className="flex flex-col gap-1.5 min-h-0 overflow-hidden">
+            {/* Field view — shrinks to fit, doesn't push chain/interchange off-screen */}
+            <div className="min-h-0 overflow-hidden" style={{ flex: '1 1 0%' }}>
+              <LiveFieldView
+                userSlotLineup={userSlotLineup}
+                opponentSlotLineup={opponentSlotLineup}
+                players={simInput.players}
+                userClub={userIsHome ? homeClub : awayClub}
+                opponentClub={userIsHome ? awayClub : homeClub}
+                userClubId={userClubId}
+                userGameplan={fieldGameplan}
+                userMatchupTactics={spectatorMode ? null : fieldMatchupTactics}
+                matchPhase="simulating-quarter"
+                quartersCompleted={liveQuarter - 1}
+                recentKeyEvents={[]}
+                ballCarrierPlayerId={ticksRef.current[displayTickIndex - 1]?.playerId}
+                ballZone={(() => {
+                  const t = ticksRef.current[displayTickIndex - 1]
+                  if (!t) return undefined
+                  // Mirror zone when opponent has possession — their forward50 is
+                  // physically the user's back50 on the visual field.
+                  return t.clubId === userClubId ? t.zone : ZONE_VISUAL_MIRROR[t.zone] ?? t.zone
+                })()}
+                possessionChain={possessionChain}
+                chainTeamColor={chainTeamColor}
+                livePlayPhase={livePlayPhase}
+                teamAttacksRight={teamAttacksRight}
+                runningOffAnim={spectatorMode ? null : runningOffAnim}
+                paused={speed === 'paused'}
+                onInstruction={spectatorMode ? () => {} : handleFieldInstruction}
+                matchStats={livePlayerStats}
+                currentPossessionType={ticksRef.current[displayTickIndex - 1]?.possessionType}
+                isCentreBounce={(() => {
+                  // Centre bounce: after a goal or at the very start of a quarter
+                  if (displayTickIndex === 0) return true  // start of quarter
+                  const t = ticksRef.current[displayTickIndex - 1]
+                  if (!t) return false
+                  // Current tick is a goal stoppage → teams returning to centre
+                  if (t.stoppageType === 'goal') return true
+                  // First 2 ticks after a goal (restart from centre bounce)
+                  if (displayTickIndex >= 2) {
+                    const prev = ticksRef.current[displayTickIndex - 2]
+                    if (prev?.stoppageType === 'goal') return true
+                  }
+                  // First tick of a new quarter (quarter changed from previous tick)
+                  if (displayTickIndex >= 2) {
+                    const prev = ticksRef.current[displayTickIndex - 2]
+                    if (prev && t.quarter !== prev.quarter) return true
+                  }
+                  return false
+                })()}
+              />
+            </div>
+
+            {/* Possession chain strip */}
+            <div className="rounded-md border overflow-hidden shrink-0">
+              <PossessionChainView
+                ticks={ticksRef.current}
+                currentIndex={displayTickIndex}
+                homeClubId={simInput.homeClubId}
+                homeColor={homeColor}
+                awayColor={awayColor}
+                homeAbbr={homeAbbr}
+                awayAbbr={awayAbbr}
+                noBorder
+              />
+            </div>
+
+            {/* Compact interchange strip — user only */}
+            {!spectatorMode && (
+              <div className="shrink-0">
+                <LiveInterchangePanel
+                  slotLineup={userSlotLineup}
+                  players={simInput.players}
+                  club={userIsHome ? homeClub : awayClub}
+                  interchangeCount={simInput.matchRules?.interchangePlayers ?? 4}
+                  onInterchange={handleInterchange}
+                  compact
+                />
+              </div>
+            )}
+          </div>
+
+          {/* ═══ RIGHT PANEL: Commentary + Leaders + Tactics ═══ */}
+          <div className="rounded-md border bg-card overflow-y-auto hidden lg:flex lg:flex-col" style={{ maxHeight: 'calc(100vh - 10rem)' }}>
+
+            {/* Commentary feed (top) */}
+            <div className="border-b p-2 flex-shrink-0" style={{ maxHeight: spectatorMode ? '55%' : '40%', minHeight: 120 }}>
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Commentary</div>
+              <CommentaryFeed
+                ticks={ticksRef.current}
+                currentIndex={displayTickIndex}
+                homeColor={homeColor}
+                awayColor={awayColor}
+                homeClubId={simInput.homeClubId}
+              />
+            </div>
+
+            {/* Player leaders (middle) */}
+            <div className={`border-b p-2 ${spectatorMode ? 'flex-1' : 'flex-shrink-0'}`}>
+              <PlayerLeadersMini
+                ctx={ctxRef.current}
+                homeClubId={simInput.homeClubId}
+                homeColor={homeColor}
+                awayColor={awayColor}
+                homeAbbr={homeAbbr}
+                awayAbbr={awayAbbr}
+                players={simInput.players}
+                livePlayerStats={livePlayerStats}
+                count={spectatorMode ? 7 : 5}
+              />
+            </div>
+
+            {/* Tactics + bench rotations (bottom) — user only */}
+            {!spectatorMode && (
+              <div className="p-2 flex-1 overflow-y-auto">
+                <BenchTacticsPanel
+                  ctx={ctxRef.current}
+                  userIsHome={userIsHome}
+                  userSlotLineup={userSlotLineup}
+                  players={simInput.players}
+                  interchangeCount={simInput.matchRules?.interchangePlayers ?? 5}
+                  homeColor={homeColor}
+                  awayColor={awayColor}
+                  homeAbbr={homeAbbr}
+                  awayAbbr={awayAbbr}
+                  queuedRotations={queuedRotations}
+                  onQueueRotation={(onId, offId) =>
+                    setQueuedRotations((prev) => [...prev, { onId, offId }])
+                  }
+                  onCancelRotation={(idx) =>
+                    setQueuedRotations((prev) => prev.filter((_, i) => i !== idx))
+                  }
+                  pendingSliders={pendingSliders}
+                  onSlidersChange={setPendingSliders}
+                  compact
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+  // Non-playing phases: pre-match, quarter-break, complete — Card wrapper
+  // ---------------------------------------------------------------------------
+
   return (
     <Card className="border-primary/50">
       <CardHeader className="flex flex-row items-center justify-between">
@@ -843,7 +1372,6 @@ export function LiveMatchView({
         {/* PRE-MATCH — Overview | Lineup | Strategy tabs */}
         {phase === 'pre-match' && (
           <>
-            {/* Tab bar — extra tabs only for the user's own match */}
             {!spectatorMode && (
               <div className="flex rounded-md border border-border overflow-hidden text-xs font-medium">
                 {(['overview', 'lineup', 'strategy'] as const).map((tab) => (
@@ -858,7 +1386,6 @@ export function LiveMatchView({
               </div>
             )}
 
-            {/* Overview tab — form guide, H2H, conditions, coin toss */}
             {(spectatorMode || preMatchTab === 'overview') && (
               <PreGameScreen
                 homeClubId={simInput.homeClubId}
@@ -890,7 +1417,6 @@ export function LiveMatchView({
               />
             )}
 
-            {/* Lineup tab — landscape field (with bench) + squad list sidebar */}
             {!spectatorMode && preMatchTab === 'lineup' && (
               <div className="space-y-3">
                 <PreMatchLineupEditor
@@ -915,7 +1441,6 @@ export function LiveMatchView({
               </div>
             )}
 
-            {/* Strategy tab — hard tags + physical pressure assignments */}
             {!spectatorMode && preMatchTab === 'strategy' && (
               <div className="space-y-3">
                 <PreMatchStrategyPanel
@@ -940,226 +1465,6 @@ export function LiveMatchView({
                 </div>
               </div>
             )}
-          </>
-        )}
-
-        {/* PLAYING — live tick view */}
-        {phase === 'playing' && (
-          <>
-            <LiveScoreboard
-              homeName={homeClub?.name ?? homeAbbr}
-              awayName={awayClub?.name ?? awayAbbr}
-              homeAbbr={homeAbbr}
-              awayAbbr={awayAbbr}
-              homeColor={homeColor}
-              awayColor={awayColor}
-              homeScore={liveHomeScore}
-              awayScore={liveAwayScore}
-              quarter={liveQuarter}
-              minute={liveMinute}
-              speed={stoppageState ? 'paused' : speed}
-              onSpeedChange={(s) => {
-                setSpeed(s)
-                if (stoppageState) setStoppageState(null)
-              }}
-              onSkip={skipToQuarterEnd}
-              onStep={advanceTick}
-            />
-
-            {/* Possession chain + commentary banner — merged into one compact row */}
-            <div className="flex flex-col lg:flex-row rounded-md border overflow-hidden">
-              <div className="flex-[3] min-w-0">
-                <PossessionChainView
-                  ticks={ticksRef.current}
-                  currentIndex={displayTickIndex}
-                  homeClubId={simInput.homeClubId}
-                  homeColor={homeColor}
-                  awayColor={awayColor}
-                  homeAbbr={homeAbbr}
-                  awayAbbr={awayAbbr}
-                  noBorder
-                />
-              </div>
-              {latestChainTick && (
-                <div
-                  key={displayTickIndex}
-                  className="flex-[2] min-w-0 border-t lg:border-t-0 lg:border-l px-3 py-2"
-                  style={{ borderLeftWidth: 3, borderLeftColor: chainTeamColor ?? '#6b7280' }}
-                >
-                  <div className="flex items-center gap-1.5 mb-0.5">
-                    <span
-                      className="inline-block h-2 w-2 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: chainTeamColor ?? '#6b7280' }}
-                    />
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      {latestChainTick.clubId === simInput.homeClubId ? homeAbbr : awayAbbr}
-                      {' · Q'}{latestChainTick.quarter} {latestChainTick.minute}'
-                    </span>
-                  </div>
-                  <p className="text-xs font-medium leading-snug line-clamp-2">{latestChainTick.commentary}</p>
-                </div>
-              )}
-            </div>
-
-            {!spectatorMode && stoppageState?.type === 'injury' && (
-              <InjuryStoppagePanel
-                injury={stoppageState.injury}
-                subName={subName}
-                subActivated={isSubActivated}
-                onActivateSub={handleActivateSub}
-                onContinue={handleStoppageContinue}
-              />
-            )}
-
-            {/* ── Main play area: field (left) + tabbed command panel (right) ── */}
-            <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-2 items-start">
-
-              {/* Left column: animated field view */}
-              <div>
-                <LiveFieldView
-                  userSlotLineup={userSlotLineup}
-                  opponentSlotLineup={opponentSlotLineup}
-                  players={simInput.players}
-                  userClub={userIsHome ? homeClub : awayClub}
-                  opponentClub={userIsHome ? awayClub : homeClub}
-                  userClubId={userClubId}
-                  userGameplan={fieldGameplan}
-                  userMatchupTactics={spectatorMode ? null : fieldMatchupTactics}
-                  matchPhase="simulating-quarter"
-                  quartersCompleted={liveQuarter - 1}
-                  recentKeyEvents={[]}
-                  ballCarrierPlayerId={ticksRef.current[displayTickIndex - 1]?.playerId}
-                  ballZone={ticksRef.current[displayTickIndex - 1]?.zone}
-                  possessionChain={possessionChain}
-                  chainTeamColor={chainTeamColor}
-                  livePlayPhase={livePlayPhase}
-                  teamAttacksRight={teamAttacksRight}
-                  runningOffAnim={spectatorMode ? null : runningOffAnim}
-                  paused={speed === 'paused'}
-                  onInstruction={spectatorMode ? () => {} : handleFieldInstruction}
-                />
-
-                {/* Interchange panel — below the field, user only */}
-                {!spectatorMode && (
-                  <LiveInterchangePanel
-                    slotLineup={userSlotLineup}
-                    players={simInput.players}
-                    club={userIsHome ? homeClub : awayClub}
-                    interchangeCount={simInput.matchRules?.interchangePlayers ?? 4}
-                    onInterchange={handleInterchange}
-                  />
-                )}
-              </div>
-
-              {/* Right column: tabbed command panel */}
-              <div className="rounded-md border bg-card overflow-hidden lg:sticky lg:top-2 flex flex-col" style={{ maxHeight: 'calc(100vh - 8rem)' }}>
-                {/* Tab bar */}
-                <div className="flex border-b text-[11px] font-medium shrink-0">
-                  {([
-                    { id: 'stats' as const, icon: BarChart3, label: 'Stats' },
-                    { id: 'players' as const, icon: UserRound, label: 'Players' },
-                    ...(!spectatorMode ? [{ id: 'tactics' as const, icon: Wrench, label: 'Tactics' }] : []),
-                    { id: 'commentary' as const, icon: MessageSquare, label: 'Feed' },
-                  ] as Array<{ id: SidebarTab; icon: typeof BarChart3; label: string }>).map(({ id, icon: Icon, label }) => (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => setSidebarTab(id)}
-                      className={[
-                        'flex-1 py-1.5 flex items-center justify-center gap-1 transition-colors',
-                        sidebarTab === id
-                          ? 'bg-muted/60 text-foreground border-b-2 border-primary'
-                          : 'text-muted-foreground hover:text-foreground hover:bg-muted/30',
-                      ].join(' ')}
-                    >
-                      <Icon className="h-3 w-3" />
-                      <span>{label}</span>
-                    </button>
-                  ))}
-                </div>
-
-                {/* Tab content — fills available height with scrolling */}
-                <div className="flex-1 overflow-y-auto p-2.5">
-                  {/* Stats tab */}
-                  {sidebarTab === 'stats' && (
-                    <LiveStatsDashboard
-                      ctx={ctxRef.current}
-                      liveQuarter={liveQuarter}
-                      liveMinute={liveMinute}
-                      displayTickIndex={displayTickIndex}
-                      totalTicks={ticksRef.current.length}
-                      quarterSnapshots={snapshots}
-                      homeClub={homeClub}
-                      awayClub={awayClub}
-                      homeColor={homeColor}
-                      awayColor={awayColor}
-                      homeAbbr={homeAbbr}
-                      awayAbbr={awayAbbr}
-                      userClubId={userClubId}
-                      players={simInput.players}
-                      activeView="match"
-                    />
-                  )}
-
-                  {/* Players tab */}
-                  {sidebarTab === 'players' && (
-                    <LiveStatsDashboard
-                      ctx={ctxRef.current}
-                      liveQuarter={liveQuarter}
-                      liveMinute={liveMinute}
-                      displayTickIndex={displayTickIndex}
-                      totalTicks={ticksRef.current.length}
-                      quarterSnapshots={snapshots}
-                      homeClub={homeClub}
-                      awayClub={awayClub}
-                      homeColor={homeColor}
-                      awayColor={awayColor}
-                      homeAbbr={homeAbbr}
-                      awayAbbr={awayAbbr}
-                      userClubId={userClubId}
-                      players={simInput.players}
-                      activeView="players"
-                    />
-                  )}
-
-                  {/* Tactics tab (user matches only) */}
-                  {sidebarTab === 'tactics' && !spectatorMode && (
-                    <BenchTacticsPanel
-                      ctx={ctxRef.current}
-                      userIsHome={userIsHome}
-                      userSlotLineup={userSlotLineup}
-                      players={simInput.players}
-                      interchangeCount={simInput.matchRules?.interchangePlayers ?? 5}
-                      homeColor={homeColor}
-                      awayColor={awayColor}
-                      homeAbbr={homeAbbr}
-                      awayAbbr={awayAbbr}
-                      queuedRotations={queuedRotations}
-                      onQueueRotation={(onId, offId) =>
-                        setQueuedRotations((prev) => [...prev, { onId, offId }])
-                      }
-                      onCancelRotation={(idx) =>
-                        setQueuedRotations((prev) => prev.filter((_, i) => i !== idx))
-                      }
-                      pendingSliders={pendingSliders}
-                      onSlidersChange={setPendingSliders}
-                      embedded
-                    />
-                  )}
-
-                  {/* Commentary tab */}
-                  {sidebarTab === 'commentary' && (
-                    <CommentaryFeed
-                      ticks={ticksRef.current}
-                      currentIndex={displayTickIndex}
-                      homeColor={homeColor}
-                      awayColor={awayColor}
-                      homeClubId={simInput.homeClubId}
-                    />
-                  )}
-                </div>
-              </div>
-            </div>
           </>
         )}
 
@@ -1280,7 +1585,6 @@ export function LiveMatchView({
                 ) : null,
               )}
             </div>
-
 
             {breakDisplay.adjustmentsMade.length > 0 && (
               <div className="space-y-1">

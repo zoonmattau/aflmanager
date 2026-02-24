@@ -142,6 +142,19 @@ export function processMatchResults(
           ;(player.seasonStats as unknown as Record<string, number>)[key] += value
           ;(player.careerStats as unknown as Record<string, number>)[key] += value
         }
+
+        // Merge zone possession data into season & career stats
+        if (stat.zonePossessions) {
+          if (!player.seasonStats.zonePossessions) player.seasonStats.zonePossessions = {}
+          if (!player.careerStats.zonePossessions) player.careerStats.zonePossessions = {}
+          for (const zone of ['back50', 'backHalf', 'midfield', 'forwardHalf', 'forward50'] as const) {
+            const val = stat.zonePossessions[zone] ?? 0
+            if (val > 0) {
+              player.seasonStats.zonePossessions[zone] = (player.seasonStats.zonePossessions[zone] ?? 0) + val
+              player.careerStats.zonePossessions[zone] = (player.careerStats.zonePossessions[zone] ?? 0) + val
+            }
+          }
+        }
       }
     })
   }

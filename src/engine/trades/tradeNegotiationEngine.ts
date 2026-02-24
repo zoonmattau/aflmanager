@@ -1390,7 +1390,7 @@ function generateTargetedInboundOffer(
 function improveOffer(
   base: TradeNegotiationOffer,
   players: Record<string, Player>,
-  rng: SeededRNG,
+  _rng: SeededRNG,
 ): TradeNegotiationOffer {
   const improved = structuredClone(base)
   improved.id = base.id // keep same id so we can patch-in-place

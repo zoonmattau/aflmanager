@@ -1035,6 +1035,7 @@ export function createMatchContext(input: SimulateMatchInput): MatchContext {
     .filter((p) => p.clubId === awayClubId && !p.injury && !isPlayerSuspended(p) && p.fitness >= 50)
     .sort((a, b) => getOverall(b) - getOverall(a))
 
+  const ON_FIELD_COUNT = 18
   const homePlayers = getClubPlayers(players, homeClubId, requiredSelected, input.homeLineupPlayerIds)
   const awayPlayers = getClubPlayers(players, awayClubId, requiredSelected, input.awayLineupPlayerIds)
   const substitutesEnabled = Boolean(matchRules?.enableSubstitutes)
@@ -1154,8 +1155,8 @@ export function createMatchContext(input: SimulateMatchInput): MatchContext {
   return {
     rng,
     input,
-    homeActivePlayers: [...homePlayers],
-    awayActivePlayers: [...awayPlayers],
+    homeActivePlayers: homePlayers.slice(0, ON_FIELD_COUNT),
+    awayActivePlayers: awayPlayers.slice(0, ON_FIELD_COUNT),
     homePlayers,
     awayPlayers,
     allHomePlayers: homeAvailablePlayers,
@@ -1633,7 +1634,7 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
     }
 
     const inside50Chance = clampChance(
-      (0.14 + primaryRatings.kicking * 0.0014 + primaryRatings.speed * 0.0008 + primaryRatings.decisionMaking * 0.0012)
+      (0.09 + primaryRatings.kicking * 0.0005 + primaryRatings.speed * 0.0003 + primaryRatings.decisionMaking * 0.0004)
       * attMods.inside50Mult
       * matchupInside50Mult
       * (1 - pressurePenalty * 0.18),
@@ -1653,14 +1654,14 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
         isHighlight: false,
       })
 
-      const scoreChance = clampChance(0.16 + i50Ratings.decisionMaking * 0.0015 + i50Ratings.kicking * 0.001)
+      const scoreChance = clampChance(0.36 + i50Ratings.decisionMaking * 0.0006 + i50Ratings.kicking * 0.0004)
       if (rng.chance(scoreChance)) {
         const scorer = pickScoringPlayer(rng, attackingPlayers, attClutchCtx, positionOverrides, positionFitMults)
         const scorerIdx = attackingStats.findIndex((s) => s.playerId === scorer.id)
         const scorerRatings = getGranularRatings(scorer)
 
         const goalChance = clampChance(
-          (0.2 + scorerRatings.goalSense * 0.005 + scorerRatings.kicking * 0.001)
+          (0.42 + scorerRatings.goalSense * 0.0013 + scorerRatings.kicking * 0.0004)
           * attMods.accuracyMult,
         )
         if (rng.chance(clampChance(goalChance * matchupAccuracyMult * weather.accuracyMult * venueScoringCoeff))) {
@@ -1789,6 +1790,50 @@ export function simulateQuarter(ctx: MatchContext, quarterIndex: number): void {
 
     if (rng.chance(clampChance(0.01 + primaryRatings.speed * 0.0002 + primaryRatings.agility * 0.0002))) {
       attackingStats[primaryStatIndex].bounces++
+    }
+  }
+
+  // ── Post-hoc zone distribution for background engine ──────────────────────
+  // Distribute each player's disposals across zones based on position line.
+  // Deterministic (no RNG) so it doesn't affect simulation reproducibility.
+  const LINE_ZONE_DIST: Record<string, [number, number, number, number, number]> = {
+    DEF: [0.32, 0.30, 0.20, 0.12, 0.06],
+    MID: [0.10, 0.22, 0.36, 0.22, 0.10],
+    FWD: [0.06, 0.12, 0.20, 0.30, 0.32],
+    RK:  [0.08, 0.18, 0.48, 0.18, 0.08],
+  }
+  const ZONE_KEYS: Array<'back50' | 'backHalf' | 'midfield' | 'forwardHalf' | 'forward50'> = [
+    'back50', 'backHalf', 'midfield', 'forwardHalf', 'forward50',
+  ]
+  const allTeamData: Array<{ stats: MatchPlayerStats[]; players: Player[] }> = [
+    { stats: homeStats, players: ctx.allHomePlayers },
+    { stats: awayStats, players: ctx.allAwayPlayers },
+  ]
+  for (const { stats: teamStats, players: teamPlayers } of allTeamData) {
+    for (const stat of teamStats) {
+      const total = stat.disposals
+      if (total <= 0) continue
+      const pl = teamPlayers.find((p) => p.id === stat.playerId)
+      if (!pl) continue
+      const line = POSITION_LINE[pl.position.primary] ?? 'MID'
+      const weights = LINE_ZONE_DIST[line] ?? LINE_ZONE_DIST['MID']
+      if (!stat.zonePossessions) {
+        stat.zonePossessions = { back50: 0, backHalf: 0, midfield: 0, forwardHalf: 0, forward50: 0 }
+      }
+      let allocated = 0
+      let maxIdx = 0
+      let maxW = 0
+      for (let z = 0; z < 5; z++) {
+        const count = Math.round(total * weights[z])
+        stat.zonePossessions[ZONE_KEYS[z]] = (stat.zonePossessions[ZONE_KEYS[z]] ?? 0) + count
+        allocated += count
+        if (weights[z] > maxW) { maxW = weights[z]; maxIdx = z }
+      }
+      // Assign remainder to the dominant zone
+      const remainder = total - allocated
+      if (remainder !== 0) {
+        stat.zonePossessions[ZONE_KEYS[maxIdx]] = (stat.zonePossessions[ZONE_KEYS[maxIdx]] ?? 0) + remainder
+      }
     }
   }
 
@@ -2175,6 +2220,7 @@ function createEmptyPlayerStats(playerId: string): MatchPlayerStats {
     bounces: 0,
     clangers: 0,
     goalAssists: 0,
+    zonePossessions: { back50: 0, backHalf: 0, midfield: 0, forwardHalf: 0, forward50: 0 },
   }
 }
 
@@ -2210,6 +2256,7 @@ function initPlayerStats(players: Player[], substitute?: Player | null): MatchPl
     bounces: 0,
     clangers: 0,
     goalAssists: 0,
+    zonePossessions: { back50: 0, backHalf: 0, midfield: 0, forwardHalf: 0, forward50: 0 },
   }))
   if (substitute) {
     stats.push({
@@ -2244,6 +2291,7 @@ function initPlayerStats(players: Player[], substitute?: Player | null): MatchPl
       bounces: 0,
       clangers: 0,
       goalAssists: 0,
+      zonePossessions: { back50: 0, backHalf: 0, midfield: 0, forwardHalf: 0, forward50: 0 },
     })
   }
   return stats

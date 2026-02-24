@@ -30,7 +30,7 @@ import {
 } from '@/components/ui/dialog'
 import { useGameStore } from '@/stores/gameStore'
 import { ATTR_CATEGORIES, attrColor } from '@/lib/attributeCategories'
-import type { Player, PlayerPositionType, PlayerPreferredRole, PlayerArchetype, AgentArchetype, PlayerAttributes, PlayerCareerStats } from '@/types/player'
+import type { Player, PlayerPositionType, PlayerPreferredRole, PlayerArchetype, AgentArchetype, PlayerAttributes, PlayerCareerStats, NumericCareerStatKey } from '@/types/player'
 import type { ContractStructure } from '@/types/contract'
 import clubsJson from '@/data/clubs.json'
 
@@ -70,7 +70,7 @@ const CLAUSE_TYPES = [
 
 const LIST_STATUSES = ['senior', 'reserves', 'injured-list'] as const
 
-const CAREER_STAT_FIELDS: (keyof PlayerCareerStats)[] = [
+const CAREER_STAT_FIELDS: NumericCareerStatKey[] = [
   'gamesPlayed', 'goals', 'behinds', 'disposals', 'kicks', 'handballs', 'marks', 'tackles',
   'hitouts', 'contestedPossessions', 'uncontestedPossessions', 'clearances', 'insideFifties',
   'rebound50s', 'freesFor', 'freesAgainst', 'contestedMarks', 'scoreInvolvements',
@@ -78,7 +78,7 @@ const CAREER_STAT_FIELDS: (keyof PlayerCareerStats)[] = [
   'goalAssists', 'aflFantasyPoints', 'superCoachPoints',
 ]
 
-const STAT_LABELS: Partial<Record<keyof PlayerCareerStats, string>> = {
+const STAT_LABELS: Partial<Record<NumericCareerStatKey, string>> = {
   gamesPlayed: 'Games Played', goals: 'Goals', behinds: 'Behinds', disposals: 'Disposals',
   kicks: 'Kicks', handballs: 'Handballs', marks: 'Marks', tackles: 'Tackles',
   hitouts: 'Hit-outs', contestedPossessions: 'Contested Poss.', uncontestedPossessions: 'Uncontested Poss.',

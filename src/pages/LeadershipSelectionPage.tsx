@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useGameStore } from '@/stores/gameStore'
-import { getLeadershipScore, getTeamLeadershipRating, autoSelectLeadership } from '@/engine/leadership/leadershipEngine'
+import { getLeadershipScore, getTeamLeadershipRating } from '@/engine/leadership/leadershipEngine'
 import { getOverallRating } from '@/engine/player/playerRating'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
